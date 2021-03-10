@@ -1,4 +1,4 @@
-/* $NetBSD: efifdt.h,v 1.5 2019/04/21 22:30:41 thorpej Exp $ */
+/* $NetBSD: efifdt.h,v 1.10 2020/10/10 19:17:39 jmcneill Exp $ */
 
 /*-
  * Copyright (c) 2018 Jared McNeill <jmcneill@invisible.ca>
@@ -28,6 +28,7 @@
 
 int efi_fdt_probe(void);
 void efi_fdt_memory_map(void);
+void efi_fdt_gop(void);
 int efi_fdt_set_data(void *);
 void *efi_fdt_data(void);
 int efi_fdt_size(void);
@@ -36,5 +37,9 @@ int efi_fdt_overlay_apply(void *, int *);
 void efi_fdt_show(void);
 void efi_fdt_bootargs(const char *);
 void efi_fdt_initrd(u_long, u_long);
+void efi_fdt_rndseed(u_long, u_long);
+void efi_fdt_efirng(u_long, u_long);
+void efi_fdt_module(const char *, u_long, u_long);
 void efi_fdt_init(u_long, u_long);
 void efi_fdt_fini(void);
+void efi_fdt_system_table(void);

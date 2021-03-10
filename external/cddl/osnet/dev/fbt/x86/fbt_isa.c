@@ -1,4 +1,4 @@
-/*	$NetBSD: fbt_isa.c,v 1.1 2018/05/28 23:47:39 chs Exp $	*/
+/*	$NetBSD: fbt_isa.c,v 1.3 2020/05/02 11:37:17 maxv Exp $	*/
 
 /*
  * CDDL HEADER START
@@ -172,11 +172,16 @@ fbt_patch_tracepoint(fbt_probe_t *fbt, fbt_patchval_t val)
 #endif
 
 #ifdef __NetBSD__
+/*
+ * XXX XXX XXX This is absolutely unsafe, the mere existence of this code is a
+ * problem, because this function is too easily ROP-able. But this gets
+ * compiled as a module and never in the kernel, so we are fine "by default".
+ * XXX Add a #warning if it gets compiled in the kernel?
+ */
 void
 fbt_patch_tracepoint(fbt_probe_t *fbt, fbt_patchval_t val)
 {
-	u_long psl;
-	u_long cr0;
+	u_long psl, cr0;
 
 	/* Disable interrupts. */
 	psl = x86_read_psl();
@@ -186,6 +191,8 @@ fbt_patch_tracepoint(fbt_probe_t *fbt, fbt_patchval_t val)
 	cr0 = rcr0();
 	lcr0(cr0 & ~CR0_WP);
 
+	/* XXX XXX XXX Shouldn't rely on caller-provided dst! */
+	/* XXX XXX XXX Shouldn't rely on caller-provided val! */
 	for (; fbt != NULL; fbt = fbt->fbtp_next) {
 		*fbt->fbtp_patchpoint = val;
 	}
@@ -193,10 +200,12 @@ fbt_patch_tracepoint(fbt_probe_t *fbt, fbt_patchval_t val)
 	/* Write back and invalidate cache, flush pipelines. */
 	wbinvd();
 	x86_flush();
-	x86_write_psl(psl);
 
 	/* Re-enable write protection. */
 	lcr0(cr0);
+
+	/* Restore the PSL, potentially re-enabling interrupts. */
+	x86_write_psl(psl);
 }
 #endif
 

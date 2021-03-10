@@ -1,4 +1,4 @@
-/*	$NetBSD: if_hvn.c,v 1.3 2019/05/29 10:07:29 msaitoh Exp $	*/
+/*	$NetBSD: if_hvn.c,v 1.20 2021/01/29 04:38:49 nonaka Exp $	*/
 /*	$OpenBSD: if_hvn.c,v 1.39 2018/03/11 14:31:34 mikeb Exp $	*/
 
 /*-
@@ -35,7 +35,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_hvn.c,v 1.3 2019/05/29 10:07:29 msaitoh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_hvn.c,v 1.20 2021/01/29 04:38:49 nonaka Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_inet.h"
@@ -66,6 +66,9 @@ __KERNEL_RCSID(0, "$NetBSD: if_hvn.c,v 1.3 2019/05/29 10:07:29 msaitoh Exp $");
 
 #ifndef EVL_PRIO_BITS
 #define EVL_PRIO_BITS	13
+#endif
+#ifndef EVL_CFI_BITS
+#define EVL_CFI_BITS	12
 #endif
 
 #define HVN_NVS_MSGSIZE			32
@@ -130,6 +133,7 @@ struct hvn_softc {
 
 	struct ethercom			sc_ec;
 	struct ifmedia			sc_media;
+	kmutex_t			sc_media_lock;	/* XXX */
 	struct if_percpuq		*sc_ipq;
 	int				sc_link_state;
 	int				sc_promisc;
@@ -249,8 +253,6 @@ hvn_attach(device_t parent, device_t self, void *aux)
 	aprint_naive("\n");
 	aprint_normal(": Hyper-V NetVSC\n");
 
-	strlcpy(ifp->if_xname, device_xname(sc->sc_dev), IFNAMSIZ);
-
 	if (hvn_nvs_attach(sc)) {
 		aprint_error_dev(self, "failed to init NVSP\n");
 		return;
@@ -263,9 +265,10 @@ hvn_attach(device_t parent, device_t self, void *aux)
 
 	if (hvn_tx_ring_create(sc)) {
 		aprint_error_dev(self, "failed to create Tx ring\n");
-		goto fail1;
+		goto fail2;
 	}
 
+	strlcpy(ifp->if_xname, device_xname(sc->sc_dev), IFNAMSIZ);
 	ifp->if_softc = sc;
 	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
 	ifp->if_ioctl = hvn_ioctl;
@@ -284,6 +287,7 @@ hvn_attach(device_t parent, device_t self, void *aux)
 	if (sc->sc_proto >= HVN_NVS_PROTO_VERSION_2) {
 		sc->sc_ec.ec_capabilities |= ETHERCAP_VLAN_HWTAGGING;
 		sc->sc_ec.ec_capabilities |= ETHERCAP_VLAN_MTU;
+		sc->sc_ec.ec_capenable |= ETHERCAP_VLAN_HWTAGGING;
 	}
 
 	IFQ_SET_MAXLEN(&ifp->if_snd, HVN_TX_DESC - 1);
@@ -291,22 +295,24 @@ hvn_attach(device_t parent, device_t self, void *aux)
 
 	/* Initialize ifmedia structures. */
 	sc->sc_ec.ec_ifmedia = &sc->sc_media;
-	ifmedia_init(&sc->sc_media, IFM_IMASK, hvn_media_change,
-	    hvn_media_status);
+	/* XXX media locking needs revisiting */
+	mutex_init(&sc->sc_media_lock, MUTEX_DEFAULT, IPL_SOFTNET);
+	ifmedia_init_with_lock(&sc->sc_media, IFM_IMASK,
+	    hvn_media_change, hvn_media_status, &sc->sc_media_lock);
 	ifmedia_add(&sc->sc_media, IFM_ETHER | IFM_MANUAL, 0, NULL);
 	ifmedia_set(&sc->sc_media, IFM_ETHER | IFM_MANUAL);
 
 	error = if_initialize(ifp);
 	if (error) {
 		aprint_error_dev(self, "if_initialize failed(%d)\n", error);
-		goto fail2;
+		goto fail3;
 	}
 	sc->sc_ipq = if_percpuq_create(ifp);
 	if_deferred_start_init(ifp, NULL);
 
 	if (hvn_rndis_attach(sc)) {
 		aprint_error_dev(self, "failed to init RNDIS\n");
-		goto fail1;
+		goto fail3;
 	}
 
 	aprint_normal_dev(self, "NVS %d.%d NDIS %d.%d\n",
@@ -315,13 +321,13 @@ hvn_attach(device_t parent, device_t self, void *aux)
 
 	if (hvn_set_capabilities(sc)) {
 		aprint_error_dev(self, "failed to setup offloading\n");
-		goto fail2;
+		goto fail4;
 	}
 
 	if (hvn_get_lladdr(sc, enaddr)) {
 		aprint_error_dev(self,
 		    "failed to obtain an ethernet address\n");
-		goto fail2;
+		goto fail4;
 	}
 	aprint_normal_dev(self, "Ethernet address %s\n", ether_sprintf(enaddr));
 
@@ -336,10 +342,13 @@ hvn_attach(device_t parent, device_t self, void *aux)
 	SET(sc->sc_flags, HVN_SCF_ATTACHED);
 	return;
 
-fail2:	hvn_rndis_detach(sc);
-fail1:	hvn_rx_ring_destroy(sc);
+fail4:	hvn_rndis_detach(sc);
+	if_percpuq_destroy(sc->sc_ipq);
+fail3:	ifmedia_fini(&sc->sc_media);
+	mutex_destroy(&sc->sc_media_lock);
 	hvn_tx_ring_destroy(sc);
-	hvn_nvs_detach(sc);
+fail2:	hvn_rx_ring_destroy(sc);
+fail1:	hvn_nvs_detach(sc);
 }
 
 static int
@@ -351,12 +360,15 @@ hvn_detach(device_t self, int flags)
 	if (!ISSET(sc->sc_flags, HVN_SCF_ATTACHED))
 		return 0;
 
-	hvn_stop(ifp, 1);
+	if (ifp->if_flags & IFF_RUNNING)
+		hvn_stop(ifp, 1);
 
 	pmf_device_deregister(self);
 
 	ether_ifdetach(ifp);
 	if_detach(ifp);
+	ifmedia_fini(&sc->sc_media);
+	mutex_destroy(&sc->sc_media_lock);
 	if_percpuq_destroy(sc->sc_ipq);
 
 	hvn_rndis_detach(sc);
@@ -375,26 +387,7 @@ hvn_ioctl(struct ifnet *ifp, u_long command, void * data)
 
 	s = splnet();
 
-	switch (command) {
-	case SIOCSIFFLAGS:
-		if (ifp->if_flags & IFF_UP) {
-			if (ifp->if_flags & IFF_RUNNING)
-				error = ENETRESET;
-			else {
-				error = hvn_init(ifp);
-				if (error)
-					ifp->if_flags &= ~IFF_UP;
-			}
-		} else {
-			if (ifp->if_flags & IFF_RUNNING)
-				hvn_stop(ifp, 1);
-		}
-		break;
-	default:
-		error = ether_ioctl(ifp, command, data);
-		break;
-	}
-
+	error = ether_ioctl(ifp, command, data);
 	if (error == ENETRESET) {
 		if (ifp->if_flags & IFF_RUNNING)
 			hvn_iff(sc);
@@ -493,7 +486,7 @@ hvn_start(struct ifnet *ifp)
 
 		if (hvn_encap(sc, m, &txd)) {
 			/* the chain is too large */
-			ifp->if_oerrors++;
+			if_statinc(ifp, if_oerrors);
 			m_freem(m);
 			continue;
 		}
@@ -502,7 +495,7 @@ hvn_start(struct ifnet *ifp)
 
 		if (hvn_rndis_output(sc, txd)) {
 			hvn_decap(sc, txd);
-			ifp->if_oerrors++;
+			if_statinc(ifp, if_oerrors);
 			m_freem(m);
 			continue;
 		}
@@ -564,7 +557,7 @@ hvn_encap(struct hvn_softc *sc, struct mbuf *m, struct hvn_tx_desc **txd0)
 	case 0:
 		break;
 	case EFBIG:
-		if (m_defrag(m, M_NOWAIT) == 0 &&
+		if (m_defrag(m, M_NOWAIT) != NULL &&
 		    bus_dmamap_load_mbuf(sc->sc_dmat, txd->txd_dmap, m,
 		      BUS_DMA_READ | BUS_DMA_NOWAIT) == 0)
 			break;
@@ -575,13 +568,14 @@ hvn_encap(struct hvn_softc *sc, struct mbuf *m, struct hvn_tx_desc **txd0)
 	}
 	txd->txd_buf = m;
 
-	if (m->m_flags & M_VLANTAG) {
+	if (vlan_has_tag(m)) {
 		uint32_t vlan;
 		char *cp;
+		uint16_t tag;
 
-		vlan = NDIS_VLAN_INFO_MAKE(
-		    EVL_VLANOFTAG(m->m_pkthdr.ether_vtag),
-		    EVL_PRIOFTAG(m->m_pkthdr.ether_vtag), 0);
+		tag = vlan_get_tag(m);
+		vlan = NDIS_VLAN_INFO_MAKE(EVL_VLANOFTAG(tag),
+		    EVL_PRIOFTAG(tag), EVL_CFIOFTAG(tag));
 		cp = hvn_rndis_pktinfo_append(pkt, HVN_RNDIS_PKT_LEN,
 		    NDIS_VLAN_INFO_SIZE, NDIS_PKTINFO_TYPE_VLAN);
 		memcpy(cp, &vlan, NDIS_VLAN_INFO_SIZE);
@@ -631,7 +625,8 @@ hvn_decap(struct hvn_softc *sc, struct hvn_tx_desc *txd)
 {
 	struct ifnet *ifp = SC2IFP(sc);
 
-	bus_dmamap_sync(sc->sc_dmat, txd->txd_dmap, 0, 0,
+	bus_dmamap_sync(sc->sc_dmat, txd->txd_dmap,
+	    0, txd->txd_dmap->dm_mapsize,
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 	bus_dmamap_unload(sc->sc_dmat, txd->txd_dmap);
 	txd->txd_buf = NULL;
@@ -666,11 +661,12 @@ hvn_txeof(struct hvn_softc *sc, uint64_t tid)
 	}
 	txd->txd_buf = NULL;
 
-	bus_dmamap_sync(sc->sc_dmat, txd->txd_dmap, 0, 0,
+	bus_dmamap_sync(sc->sc_dmat, txd->txd_dmap,
+	    0, txd->txd_dmap->dm_mapsize,
 	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 	bus_dmamap_unload(sc->sc_dmat, txd->txd_dmap);
 	m_freem(m);
-	ifp->if_opackets++;
+	if_statinc(ifp, if_opackets);
 
 	txd->txd_ready = 1;
 
@@ -690,7 +686,8 @@ hvn_rx_ring_create(struct hvn_softc *sc)
 	else
 		sc->sc_rx_size = 16 * 1024 * 1024; 	/* 16MB */
 	sc->sc_rx_ring = hyperv_dma_alloc(sc->sc_dmat, &sc->sc_rx_dma,
-	    sc->sc_rx_size, PAGE_SIZE, PAGE_SIZE, sc->sc_rx_size / PAGE_SIZE);
+	    sc->sc_rx_size, PAGE_SIZE, PAGE_SIZE, sc->sc_rx_size / PAGE_SIZE,
+	    HYPERV_DMA_SLEEPOK);
 	if (sc->sc_rx_ring == NULL) {
 		DPRINTF("%s: failed to allocate Rx ring buffer\n",
 		    device_xname(sc->sc_dev));
@@ -732,7 +729,7 @@ hvn_rx_ring_create(struct hvn_softc *sc)
 		sc->sc_rx_hndl = 0;
 	}
 	if (sc->sc_rx_ring) {
-		kmem_free(sc->sc_rx_ring, sc->sc_rx_size);
+		hyperv_dma_free(sc->sc_dmat, &sc->sc_rx_dma);
 		sc->sc_rx_ring = NULL;
 	}
 	return -1;
@@ -758,10 +755,9 @@ hvn_rx_ring_destroy(struct hvn_softc *sc)
 	delay(100);
 
 	vmbus_handle_free(sc->sc_chan, sc->sc_rx_hndl);
-
 	sc->sc_rx_hndl = 0;
 
-	kmem_free(sc->sc_rx_ring, sc->sc_rx_size);
+	hyperv_dma_free(sc->sc_dmat, &sc->sc_rx_dma);
 	sc->sc_rx_ring = NULL;
 
 	return 0;
@@ -843,31 +839,33 @@ hvn_tx_ring_destroy(struct hvn_softc *sc)
 		txd = &sc->sc_tx_desc[i];
 		if (txd->txd_dmap == NULL)
 			continue;
-		bus_dmamap_sync(sc->sc_dmat, txd->txd_dmap, 0, 0,
+		bus_dmamap_sync(sc->sc_dmat, txd->txd_dmap,
+		    0, txd->txd_dmap->dm_mapsize,
 		    BUS_DMASYNC_POSTWRITE);
 		bus_dmamap_unload(sc->sc_dmat, txd->txd_dmap);
 		bus_dmamap_destroy(sc->sc_dmat, txd->txd_dmap);
 		txd->txd_dmap = NULL;
 		if (txd->txd_buf == NULL)
 			continue;
-		m_free(txd->txd_buf);
+		m_freem(txd->txd_buf);
 		txd->txd_buf = NULL;
 	}
-	if (sc->sc_tx_rmap) {
-		bus_dmamap_sync(sc->sc_dmat, sc->sc_tx_rmap, 0, 0,
+	if (sc->sc_tx_rmap != NULL) {
+		bus_dmamap_sync(sc->sc_dmat, sc->sc_tx_rmap,
+		    0, sc->sc_tx_rmap->dm_mapsize,
 		    BUS_DMASYNC_POSTWRITE);
 		bus_dmamap_unload(sc->sc_dmat, sc->sc_tx_rmap);
 		bus_dmamap_destroy(sc->sc_dmat, sc->sc_tx_rmap);
+		sc->sc_tx_rmap = NULL;
 	}
-	if (sc->sc_tx_msgs) {
+	if (sc->sc_tx_msgs != NULL) {
 		size_t msgsize = roundup(HVN_RNDIS_PKT_LEN, 128);
 
 		bus_dmamem_unmap(sc->sc_dmat, sc->sc_tx_msgs,
 		    msgsize * HVN_TX_DESC);
 		bus_dmamem_free(sc->sc_dmat, &sc->sc_tx_mseg, 1);
+		sc->sc_tx_msgs = NULL;
 	}
-	sc->sc_tx_rmap = NULL;
-	sc->sc_tx_msgs = NULL;
 }
 
 static int
@@ -903,7 +901,6 @@ hvn_nvs_attach(struct hvn_softc *sc)
 		HVN_NVS_PROTO_VERSION_2,
 		HVN_NVS_PROTO_VERSION_1
 	};
-	const int kmemflags = cold ? KM_NOSLEEP : KM_SLEEP;
 	struct hvn_nvs_init cmd;
 	struct hvn_nvs_init_resp *rsp;
 	struct hvn_nvs_ndis_init ncmd;
@@ -912,12 +909,7 @@ hvn_nvs_attach(struct hvn_softc *sc)
 	uint64_t tid;
 	int i;
 
-	sc->sc_nvsbuf = kmem_zalloc(HVN_NVS_BUFSIZE, kmemflags);
-	if (sc->sc_nvsbuf == NULL) {
-		DPRINTF("%s: failed to allocate channel data buffer\n",
-		    device_xname(sc->sc_dev));
-		return -1;
-	}
+	sc->sc_nvsbuf = kmem_zalloc(HVN_NVS_BUFSIZE, KM_SLEEP);
 
 	/* We need to be able to fit all RNDIS control and data messages */
 	ringsize = HVN_RNDIS_CTLREQS *
@@ -926,12 +918,6 @@ hvn_nvs_attach(struct hvn_softc *sc)
 	    (HVN_TX_FRAGS + 1) * sizeof(struct vmbus_gpa));
 
 	sc->sc_chan->ch_flags &= ~CHF_BATCHED;
-
-	if (vmbus_channel_setdeferred(sc->sc_chan, device_xname(sc->sc_dev))) {
-		aprint_error_dev(sc->sc_dev,
-		    "failed to create the interrupt thread\n");
-		return -1;
-	}
 
 	/* Associate our interrupt handler with the channel */
 	if (vmbus_channel_open(sc->sc_chan, ringsize, NULL, 0,
@@ -1047,6 +1033,16 @@ hvn_nvs_intr(void *arg)
 				    "on receive\n", nvs->nvs_type);
 				break;
 			}
+		} else if (cph->cph_type == VMBUS_CHANPKT_TYPE_INBAND) {
+			switch (nvs->nvs_type) {
+			case HVN_NVS_TYPE_TXTBL_NOTE:
+				/* Useless; ignore */
+				break;
+			default:
+				device_printf(sc->sc_dev,
+				    "got notify, nvs type %u\n", nvs->nvs_type);
+				break;
+			}
 		} else
 			device_printf(sc->sc_dev,
 			    "unknown NVSP packet type %u\n", cph->cph_type);
@@ -1074,7 +1070,8 @@ hvn_nvs_cmd(struct hvn_softc *sc, void *cmd, size_t cmdsize, uint64_t tid,
 			if (cold)
 				delay(1000);
 			else
-				tsleep(cmd, PRIBIO, "nvsout", 1);
+				tsleep(cmd, PRIBIO, "nvsout",
+				    uimax(1, mstohz(1)));
 		} else if (rv) {
 			DPRINTF("%s: NVSP operation %u send error %d\n",
 			    device_xname(sc->sc_dev), hdr->nvs_type, rv);
@@ -1092,13 +1089,14 @@ hvn_nvs_cmd(struct hvn_softc *sc, void *cmd, size_t cmdsize, uint64_t tid,
 		return 0;
 
 	do {
-		if (cold)
+		if (cold) {
 			delay(1000);
-		else
-			tsleep(sc, PRIBIO | PCATCH, "nvscmd", 1);
-		s = splnet();
-		hvn_nvs_intr(sc);
-		splx(s);
+			s = splnet();
+			hvn_nvs_intr(sc);
+			splx(s);
+		} else
+			tsleep(sc->sc_nvsrsp, PRIBIO | PCATCH, "nvscmd",
+			    uimax(1, mstohz(1)));
 	} while (--timo > 0 && sc->sc_nvsdone != 1);
 
 	if (timo == 0 && sc->sc_nvsdone != 1) {
@@ -1396,7 +1394,8 @@ hvn_rndis_cmd(struct hvn_softc *sc, struct rndis_cmd *rc, int timo)
 			if (cold)
 				delay(1000);
 			else
-				tsleep(rc, PRIBIO, "rndisout", 1);
+				tsleep(rc, PRIBIO, "rndisout",
+				    uimax(1, mstohz(1)));
 		} else if (rv) {
 			DPRINTF("%s: RNDIS operation %u send error %d\n",
 			    device_xname(sc->sc_dev), hdr->rm_type, rv);
@@ -1410,18 +1409,23 @@ hvn_rndis_cmd(struct hvn_softc *sc, struct rndis_cmd *rc, int timo)
 		    "RNDIS operation %u send error %d\n", hdr->rm_type, rv);
 		return rv;
 	}
+	if (vmbus_channel_is_revoked(sc->sc_chan)) {
+		/* No response */
+		return 0;
+	}
 
 	bus_dmamap_sync(sc->sc_dmat, rc->rc_dmap, 0, PAGE_SIZE,
 	    BUS_DMASYNC_POSTWRITE);
 
 	do {
-		if (cold)
+		if (cold) {
 			delay(1000);
-		else
-			tsleep(rc, PRIBIO | PCATCH, "rndiscmd", 1);
-		s = splnet();
-		hvn_nvs_intr(sc);
-		splx(s);
+			s = splnet();
+			hvn_nvs_intr(sc);
+			splx(s);
+		} else
+			tsleep(rc, PRIBIO | PCATCH, "rndiscmd",
+			    uimax(1, mstohz(1)));
 	} while (--timo > 0 && rc->rc_done != 1);
 
 	bus_dmamap_sync(sc->sc_dmat, rc->rc_dmap, 0, PAGE_SIZE,
@@ -1547,7 +1551,7 @@ hvn_rxeof(struct hvn_softc *sc, uint8_t *buf, uint32_t len)
 
 	if ((m = hvn_devget(sc, buf + RNDIS_HEADER_OFFSET + pkt->rm_dataoffset,
 	    pkt->rm_datalen)) == NULL) {
-		ifp->if_ierrors++;
+		if_statinc(ifp, if_ierrors);
 		return;
 	}
 
@@ -1581,10 +1585,10 @@ hvn_rxeof(struct hvn_softc *sc, uint8_t *buf, uint32_t len)
 		case NDIS_PKTINFO_TYPE_VLAN:
 			memcpy(&vlan, pi->rm_data, sizeof(vlan));
 			if (vlan != 0xffffffff) {
-				m->m_pkthdr.ether_vtag =
-				    NDIS_VLAN_INFO_ID(vlan) |
-				    (NDIS_VLAN_INFO_PRI(vlan) << EVL_PRIO_BITS);
-				m->m_flags |= M_VLANTAG;
+				uint16_t t = NDIS_VLAN_INFO_ID(vlan);
+				t |= NDIS_VLAN_INFO_PRI(vlan) << EVL_PRIO_BITS;
+				t |= NDIS_VLAN_INFO_CFI(vlan) << EVL_CFI_BITS;
+				vlan_set_tag(m, t);
 			}
 			break;
 		default:
@@ -1839,4 +1843,8 @@ hvn_rndis_detach(struct hvn_softc *sc)
 		    device_xname(sc->sc_dev), rv);
 	}
 	hvn_free_cmd(sc, rc);
+
+	mutex_destroy(&sc->sc_cntl_sqlck);
+	mutex_destroy(&sc->sc_cntl_cqlck);
+	mutex_destroy(&sc->sc_cntl_fqlck);
 }

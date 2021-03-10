@@ -1,4 +1,4 @@
-/*	$NetBSD: atomic.h,v 1.20 2019/01/27 02:08:43 pgoyette Exp $	*/
+/*	$NetBSD: atomic.h,v 1.22 2020/02/14 14:34:59 maya Exp $	*/
 
 /*-
  * Copyright (c) 2013 The NetBSD Foundation, Inc.
@@ -35,6 +35,8 @@
 #include <sys/atomic.h>
 
 #include <machine/limits.h>
+
+#include <asm/barrier.h>
 
 #if defined(MULTIPROCESSOR) && !defined(__HAVE_ATOMIC_AS_MEMBAR)
 #  define	smp_mb__before_atomic()		membar_exit()
@@ -180,7 +182,7 @@ atomic_add_unless(atomic_t *atomic, int addend, int zero)
 		if (value == zero)
 			break;
 	} while (atomic_cas_uint(&atomic->a_u.au_uint, value, (value + addend))
-	    != value);
+	    != (unsigned)value);
 	smp_mb__after_atomic();
 
 	return value != zero;

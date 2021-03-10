@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2019, Intel Corp.
+ * Copyright (C) 2000 - 2020, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -88,7 +88,7 @@ DisplayUsage (
  *
  ******************************************************************************/
 
-int
+int ACPI_SYSTEM_XFACE
 main (
     int                     argc,
     char                    *argv[])

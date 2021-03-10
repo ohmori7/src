@@ -1,11 +1,11 @@
-/*	$NetBSD: md_3.c,v 1.3 2019/01/09 16:55:13 christos Exp $	*/
+/*	$NetBSD: md_3.c,v 1.6 2021/02/19 16:42:17 christos Exp $	*/
 
 /*
  * Copyright (C) Internet Systems Consortium, Inc. ("ISC")
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ * file, you can obtain one at https://mozilla.org/MPL/2.0/.
  *
  * See the COPYRIGHT file distributed with this work for additional
  * information regarding copyright ownership.
@@ -33,8 +33,9 @@ fromtext_md(ARGS_FROMTEXT) {
 
 	dns_name_init(&name, NULL);
 	buffer_fromregion(&buffer, &token.value.as_region);
-	if (origin == NULL)
+	if (origin == NULL) {
 		origin = dns_rootname;
+	}
 	RETTOK(dns_name_fromtext(&name, &buffer, origin, options, target));
 	return (ISC_R_SUCCESS);
 }
@@ -124,7 +125,7 @@ fromstruct_md(ARGS_FROMSTRUCT) {
 	isc_region_t region;
 
 	REQUIRE(type == dns_rdatatype_md);
-	REQUIRE(source != NULL);
+	REQUIRE(md != NULL);
 	REQUIRE(md->common.rdtype == type);
 	REQUIRE(md->common.rdclass == rdclass);
 
@@ -142,7 +143,7 @@ tostruct_md(ARGS_TOSTRUCT) {
 	dns_name_t name;
 
 	REQUIRE(rdata->type == dns_rdatatype_md);
-	REQUIRE(target != NULL);
+	REQUIRE(md != NULL);
 	REQUIRE(rdata->length != 0);
 
 	md->common.rdclass = rdata->rdclass;
@@ -162,11 +163,12 @@ static inline void
 freestruct_md(ARGS_FREESTRUCT) {
 	dns_rdata_md_t *md = source;
 
-	REQUIRE(source != NULL);
+	REQUIRE(md != NULL);
 	REQUIRE(md->common.rdtype == dns_rdatatype_md);
 
-	if (md->mctx == NULL)
+	if (md->mctx == NULL) {
 		return;
+	}
 
 	dns_name_free(&md->md, md->mctx);
 	md->mctx = NULL;
@@ -203,7 +205,6 @@ digest_md(ARGS_DIGEST) {
 
 static inline bool
 checkowner_md(ARGS_CHECKOWNER) {
-
 	REQUIRE(type == dns_rdatatype_md);
 
 	UNUSED(name);
@@ -216,7 +217,6 @@ checkowner_md(ARGS_CHECKOWNER) {
 
 static inline bool
 checknames_md(ARGS_CHECKNAMES) {
-
 	REQUIRE(rdata->type == dns_rdatatype_md);
 
 	UNUSED(rdata);
@@ -231,4 +231,4 @@ casecompare_md(ARGS_COMPARE) {
 	return (compare_md(rdata1, rdata2));
 }
 
-#endif	/* RDATA_GENERIC_MD_3_C */
+#endif /* RDATA_GENERIC_MD_3_C */

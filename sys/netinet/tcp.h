@@ -1,4 +1,4 @@
-/*	$NetBSD: tcp.h,v 1.33 2017/01/10 20:32:27 christos Exp $	*/
+/*	$NetBSD: tcp.h,v 1.37 2021/02/03 18:13:13 roy Exp $	*/
 
 /*
  * Copyright (c) 1982, 1986, 1993
@@ -61,18 +61,21 @@ struct tcphdr {
 		  th_x2:4;		/* (unused) */
 #endif
 	uint8_t  th_flags;
-#define	TH_FIN	  0x01
-#define	TH_SYN	  0x02
-#define	TH_RST	  0x04
-#define	TH_PUSH	  0x08
-#define	TH_ACK	  0x10
-#define	TH_URG	  0x20
-#define	TH_ECE	  0x40
-#define	TH_CWR	  0x80
+#define	TH_FIN	  0x01		/* Final: Set on the last segment */
+#define	TH_SYN	  0x02		/* Synchronization: New conn with dst port */
+#define	TH_RST	  0x04		/* Reset: Announce to peer conn terminated */
+#define	TH_PUSH	  0x08		/* Push: Immediately send, don't buffer seg */
+#define	TH_ACK	  0x10		/* Acknowledge: Part of connection establish */
+#define	TH_URG	  0x20		/* Urgent: send special marked segment now */
+#define	TH_ECE	  0x40		/* ECN Echo */
+#define	TH_CWR	  0x80		/* Congestion Window Reduced */
 	uint16_t th_win;			/* window */
 	uint16_t th_sum;			/* checksum */
 	uint16_t th_urp;			/* urgent pointer */
-} __packed;
+};
+#ifdef __CTASSERT
+__CTASSERT(sizeof(struct tcphdr) == 20);
+#endif
 
 #define	TCPOPT_EOL		0
 #define	   TCPOLEN_EOL			1

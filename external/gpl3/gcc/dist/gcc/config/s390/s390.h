@@ -1,8 +1,8 @@
 /* Definitions of target machine for GNU compiler, for IBM S/390
-   Copyright (C) 1999-2017 Free Software Foundation, Inc.
+   Copyright (C) 1999-2019 Free Software Foundation, Inc.
    Contributed by Hartmut Penner (hpenner@de.ibm.com) and
-                  Ulrich Weigand (uweigand@de.ibm.com).
-                  Andreas Krebbel (Andreas.Krebbel@de.ibm.com)
+		  Ulrich Weigand (uweigand@de.ibm.com).
+		  Andreas Krebbel (Andreas.Krebbel@de.ibm.com)
 
 This file is part of GCC.
 
@@ -38,13 +38,15 @@ enum processor_flags
   PF_TX = 256,
   PF_Z13 = 512,
   PF_VX = 1024,
-  PF_ARCH12 = 2048,
-  PF_VXE = 4096
+  PF_Z14 = 2048,
+  PF_VXE = 4096,
+  PF_VXE2 = 8192,
+  PF_Z15 = 16384
 };
 
 /* This is necessary to avoid a warning about comparing different enum
    types.  */
-#define s390_tune_attr ((enum attr_cpu)(s390_tune > PROCESSOR_2964_Z13 ? PROCESSOR_2964_Z13 : s390_tune ))
+#define s390_tune_attr ((enum attr_cpu)(s390_tune > PROCESSOR_8561_Z15 ? PROCESSOR_8561_Z15 : s390_tune ))
 
 /* These flags indicate that the generated code should run on a cpu
    providing the respective hardware facility regardless of the
@@ -54,10 +56,6 @@ enum processor_flags
 	(s390_arch_flags & PF_IEEE_FLOAT)
 #define TARGET_CPU_IEEE_FLOAT_P(opts) \
 	(opts->x_s390_arch_flags & PF_IEEE_FLOAT)
-#define TARGET_CPU_ZARCH \
-	(s390_arch_flags & PF_ZARCH)
-#define TARGET_CPU_ZARCH_P(opts) \
-	(opts->x_s390_arch_flags & PF_ZARCH)
 #define TARGET_CPU_LONG_DISPLACEMENT \
 	(s390_arch_flags & PF_LONG_DISPLACEMENT)
 #define TARGET_CPU_LONG_DISPLACEMENT_P(opts) \
@@ -94,14 +92,22 @@ enum processor_flags
 	(s390_arch_flags & PF_VX)
 #define TARGET_CPU_VX_P(opts) \
 	(opts->x_s390_arch_flags & PF_VX)
-#define TARGET_CPU_ARCH12 \
-	(s390_arch_flags & PF_ARCH12)
-#define TARGET_CPU_ARCH12_P(opts) \
-	(opts->x_s390_arch_flags & PF_ARCH12)
+#define TARGET_CPU_Z14 \
+	(s390_arch_flags & PF_Z14)
+#define TARGET_CPU_Z14_P(opts) \
+	(opts->x_s390_arch_flags & PF_Z14)
 #define TARGET_CPU_VXE \
 	(s390_arch_flags & PF_VXE)
 #define TARGET_CPU_VXE_P(opts) \
 	(opts->x_s390_arch_flags & PF_VXE)
+#define TARGET_CPU_Z15 \
+	(s390_arch_flags & PF_Z15)
+#define TARGET_CPU_Z15_P(opts) \
+	(opts->x_s390_arch_flags & PF_Z15)
+#define TARGET_CPU_VXE2 \
+	(s390_arch_flags & PF_VXE2)
+#define TARGET_CPU_VXE2_P(opts) \
+	(opts->x_s390_arch_flags & PF_VXE2)
 
 #define TARGET_HARD_FLOAT_P(opts) (!TARGET_SOFT_FLOAT_P(opts))
 
@@ -147,13 +153,20 @@ enum processor_flags
 	(TARGET_ZARCH_P (opts->x_target_flags) && TARGET_CPU_VX_P (opts) \
 	 && TARGET_OPT_VX_P (opts->x_target_flags) \
 	 && TARGET_HARD_FLOAT_P (opts->x_target_flags))
-#define TARGET_ARCH12 (TARGET_ZARCH && TARGET_CPU_ARCH12)
-#define TARGET_ARCH12_P(opts)						\
-	(TARGET_ZARCH_P (opts->x_target_flags) && TARGET_CPU_ARCH12_P (opts))
+#define TARGET_Z14 (TARGET_ZARCH && TARGET_CPU_Z14)
+#define TARGET_Z14_P(opts)						\
+	(TARGET_ZARCH_P (opts->x_target_flags) && TARGET_CPU_Z14_P (opts))
 #define TARGET_VXE				\
 	(TARGET_VX && TARGET_CPU_VXE)
 #define TARGET_VXE_P(opts)						\
 	(TARGET_VX_P (opts) && TARGET_CPU_VXE_P (opts))
+#define TARGET_Z15 (TARGET_ZARCH && TARGET_CPU_Z15)
+#define TARGET_Z15_P(opts)						\
+	(TARGET_ZARCH_P (opts->x_target_flags) && TARGET_CPU_Z15_P (opts))
+#define TARGET_VXE2					\
+	(TARGET_VX && TARGET_CPU_VXE2)
+#define TARGET_VXE2_P(opts)						\
+	(TARGET_VX_P (opts) && TARGET_CPU_VXE2_P (opts))
 
 #ifdef HAVE_AS_MACHINE_MACHINEMODE
 #define S390_USE_TARGET_ATTRIBUTE 1
@@ -181,6 +194,16 @@ enum processor_flags
 
 #define TARGET_AVOID_CMP_AND_BRANCH (s390_tune == PROCESSOR_2817_Z196)
 
+/* Issue a write prefetch for the +4 cache line.  */
+#define TARGET_SETMEM_PREFETCH_DISTANCE 1024
+
+/* Expand to a C expressions evaluating to true if a setmem to VAL of
+   length LEN should be emitted using prefetch instructions.  */
+#define TARGET_SETMEM_PFD(VAL,LEN)					\
+  (TARGET_Z10								\
+   && (s390_tune < PROCESSOR_2964_Z13 || (VAL) != const0_rtx)		\
+   && (!CONST_INT_P (LEN) || INTVAL ((LEN)) > TARGET_SETMEM_PREFETCH_DISTANCE))
+
 /* Run-time target specification.  */
 
 /* Defaults for option flags defined only on some subtargets.  */
@@ -194,15 +217,18 @@ enum processor_flags
 /* Target CPU builtins.  */
 #define TARGET_CPU_CPP_BUILTINS() s390_cpu_cpp_builtins (pfile)
 
+/* Target CPU versions for D.  */
+#define TARGET_D_CPU_VERSIONS s390_d_target_versions
+
 #ifdef DEFAULT_TARGET_64BIT
 #define TARGET_DEFAULT     (MASK_64BIT | MASK_ZARCH | MASK_HARD_DFP	\
-                            | MASK_OPT_HTM | MASK_OPT_VX)
+			    | MASK_OPT_HTM | MASK_OPT_VX)
 #else
 #define TARGET_DEFAULT             0
 #endif
 
 /* Support for configure-time defaults.  */
-#define OPTION_DEFAULT_SPECS 					\
+#define OPTION_DEFAULT_SPECS					\
   { "mode", "%{!mesa:%{!mzarch:-m%(VALUE)}}" },			\
   { "arch", "%{!march=*:-march=%(VALUE)}" },			\
   { "tune", "%{!mtune=*:%{!march=*:-mtune=%(VALUE)}}" }
@@ -255,10 +281,10 @@ extern const char *s390_host_detect_local_cpu (int argc, const char **argv);
 
 /* For signbit, the BFP-DFP-difference makes no difference. */
 #define S390_TDC_SIGNBIT_SET (S390_TDC_NEGATIVE_ZERO \
-                          | S390_TDC_NEGATIVE_NORMALIZED_BFP_NUMBER \
-                          | S390_TDC_NEGATIVE_DENORMALIZED_BFP_NUMBER\
-                          | S390_TDC_NEGATIVE_INFINITY \
-                          | S390_TDC_NEGATIVE_QUIET_NAN \
+			  | S390_TDC_NEGATIVE_NORMALIZED_BFP_NUMBER \
+			  | S390_TDC_NEGATIVE_DENORMALIZED_BFP_NUMBER\
+			  | S390_TDC_NEGATIVE_INFINITY \
+			  | S390_TDC_NEGATIVE_QUIET_NAN \
 			  | S390_TDC_NEGATIVE_SIGNALING_NAN )
 
 #define S390_TDC_INFINITY (S390_TDC_POSITIVE_INFINITY \
@@ -272,13 +298,6 @@ extern const char *s390_host_detect_local_cpu (int argc, const char **argv);
 #define WORDS_BIG_ENDIAN 1
 
 #define STACK_SIZE_MODE (Pmode)
-
-/* Vector arguments are left-justified when placed on the stack during
-   parameter passing.  */
-#define FUNCTION_ARG_PADDING(MODE, TYPE)			\
-  (s390_function_arg_vector ((MODE), (TYPE))			\
-   ? upward							\
-   : DEFAULT_FUNCTION_ARG_PADDING ((MODE), (TYPE)))
 
 #ifndef IN_LIBGCC2
 
@@ -322,7 +341,6 @@ extern const char *s390_host_detect_local_cpu (int argc, const char **argv);
 #define EMPTY_FIELD_BOUNDARY 32
 
 /* Alignment on even addresses for LARL instruction.  */
-#define CONSTANT_ALIGNMENT(EXP, ALIGN) (ALIGN) < 16 ? 16 : (ALIGN)
 #define DATA_ABI_ALIGNMENT(TYPE, ALIGN) (ALIGN) < 16 ? 16 : (ALIGN)
 
 /* Alignment is not required by the hardware.  */
@@ -420,51 +438,51 @@ extern const char *s390_host_detect_local_cpu (int argc, const char **argv);
    All non-FP vector registers are call-clobbered v16-v31.  */
 
 #define FIXED_REGISTERS				\
-{ 0, 0, 0, 0, 					\
-  0, 0, 0, 0, 					\
-  0, 0, 0, 0, 					\
+{ 0, 0, 0, 0,					\
+  0, 0, 0, 0,					\
+  0, 0, 0, 0,					\
   0, 1, 1, 1,					\
-  0, 0, 0, 0, 					\
-  0, 0, 0, 0, 					\
-  0, 0, 0, 0, 					\
-  0, 0, 0, 0, 					\
+  0, 0, 0, 0,					\
+  0, 0, 0, 0,					\
+  0, 0, 0, 0,					\
+  0, 0, 0, 0,					\
   1, 1, 1, 1,					\
   1, 1,						\
-  0, 0, 0, 0, 					\
-  0, 0, 0, 0, 					\
-  0, 0, 0, 0, 					\
+  0, 0, 0, 0,					\
+  0, 0, 0, 0,					\
+  0, 0, 0, 0,					\
   0, 0, 0, 0 }
 
 #define CALL_USED_REGISTERS			\
-{ 1, 1, 1, 1, 					\
-  1, 1, 0, 0, 					\
-  0, 0, 0, 0, 					\
+{ 1, 1, 1, 1,					\
+  1, 1, 0, 0,					\
+  0, 0, 0, 0,					\
   0, 1, 1, 1,					\
-  1, 1, 1, 1, 					\
-  1, 1, 1, 1, 					\
-  1, 1, 1, 1, 					\
-  1, 1, 1, 1, 					\
   1, 1, 1, 1,					\
-  1, 1,					        \
-  1, 1, 1, 1, 					\
   1, 1, 1, 1,					\
-  1, 1, 1, 1, 					\
+  1, 1, 1, 1,					\
+  1, 1, 1, 1,					\
+  1, 1, 1, 1,					\
+  1, 1,						\
+  1, 1, 1, 1,					\
+  1, 1, 1, 1,					\
+  1, 1, 1, 1,					\
   1, 1, 1, 1 }
 
 #define CALL_REALLY_USED_REGISTERS		\
-{ 1, 1, 1, 1, 	/* r0 - r15 */			\
-  1, 1, 0, 0, 					\
-  0, 0, 0, 0, 					\
+{ 1, 1, 1, 1,	/* r0 - r15 */			\
+  1, 1, 0, 0,					\
   0, 0, 0, 0,					\
-  1, 1, 1, 1, 	/* f0 (16) - f15 (31) */	\
-  1, 1, 1, 1, 					\
-  1, 1, 1, 1, 					\
-  1, 1, 1, 1, 					\
-  1, 1, 1, 1,	/* arg, cc, fp, ret addr */	\
-  0, 0,		/* a0 (36), a1 (37) */	        \
-  1, 1, 1, 1, 	/* v16 (38) - v23 (45) */	\
+  0, 0, 0, 0,					\
+  1, 1, 1, 1,	/* f0 (16) - f15 (31) */	\
   1, 1, 1, 1,					\
-  1, 1, 1, 1, 	/* v24 (46) - v31 (53) */	\
+  1, 1, 1, 1,					\
+  1, 1, 1, 1,					\
+  1, 1, 1, 1,	/* arg, cc, fp, ret addr */	\
+  0, 0,		/* a0 (36), a1 (37) */		\
+  1, 1, 1, 1,	/* v16 (38) - v23 (45) */	\
+  1, 1, 1, 1,					\
+  1, 1, 1, 1,	/* v24 (46) - v31 (53) */	\
   1, 1, 1, 1 }
 
 /* Preferred register allocation order.  */
@@ -472,63 +490,17 @@ extern const char *s390_host_detect_local_cpu (int argc, const char **argv);
   {  1, 2, 3, 4, 5, 0, 12, 11, 10, 9, 8, 7, 6, 14, 13,			\
      16, 17, 18, 19, 20, 21, 22, 23,					\
      24, 25, 26, 27, 28, 29, 30, 31,					\
-     38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 	\
+     38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53,	\
      15, 32, 33, 34, 35, 36, 37 }
 
-
-/* Fitting values into registers.  */
-
-/* Integer modes <= word size fit into any GPR.
-   Integer modes > word size fit into successive GPRs, starting with
-   an even-numbered register.
-   SImode and DImode fit into FPRs as well.
-
-   Floating point modes <= word size fit into any FPR or GPR.
-   Floating point modes > word size (i.e. DFmode on 32-bit) fit
-   into any FPR, or an even-odd GPR pair.
-   TFmode fits only into an even-odd FPR pair.
-
-   Complex floating point modes fit either into two FPRs, or into
-   successive GPRs (again starting with an even number).
-   TCmode fits only into two successive even-odd FPR pairs.
-
-   Condition code modes fit only into the CC register.  */
-
-/* Because all registers in a class have the same size HARD_REGNO_NREGS
-   is equivalent to CLASS_MAX_NREGS.  */
-#define HARD_REGNO_NREGS(REGNO, MODE)                           \
-  s390_class_max_nregs (REGNO_REG_CLASS (REGNO), (MODE))
-
-#define HARD_REGNO_MODE_OK(REGNO, MODE)         \
-  s390_hard_regno_mode_ok ((REGNO), (MODE))
 
 #define HARD_REGNO_RENAME_OK(FROM, TO)          \
   s390_hard_regno_rename_ok ((FROM), (TO))
 
-#define MODES_TIEABLE_P(MODE1, MODE2)		\
-   (((MODE1) == SFmode || (MODE1) == DFmode)	\
-   == ((MODE2) == SFmode || (MODE2) == DFmode))
-
-/* When generating code that runs in z/Architecture mode,
-   but conforms to the 31-bit ABI, GPRs can hold 8 bytes;
-   the ABI guarantees only that the lower 4 bytes are
-   saved across calls, however.  */
-#define HARD_REGNO_CALL_PART_CLOBBERED(REGNO, MODE)			\
-  ((!TARGET_64BIT && TARGET_ZARCH					\
-    && GET_MODE_SIZE (MODE) > 4						\
-    && (((REGNO) >= 6 && (REGNO) <= 15) || (REGNO) == 32))		\
-   || (TARGET_VX							\
-       && GET_MODE_SIZE (MODE) > 8					\
-       && (((TARGET_64BIT && (REGNO) >= 24 && (REGNO) <= 31))		\
-	   || (!TARGET_64BIT && ((REGNO) == 18 || (REGNO) == 19)))))
-
 /* Maximum number of registers to represent a value of mode MODE
    in a register of class CLASS.  */
-#define CLASS_MAX_NREGS(CLASS, MODE)   					\
+#define CLASS_MAX_NREGS(CLASS, MODE)					\
   s390_class_max_nregs ((CLASS), (MODE))
-
-#define CANNOT_CHANGE_MODE_CLASS(FROM, TO, CLASS)		        \
-  s390_cannot_change_mode_class ((FROM), (TO), (CLASS))
 
 /* We can reverse a CC mode safely if we know whether it comes from a
    floating point compare or not.  With the vector modes it is encoded
@@ -547,7 +519,7 @@ extern const char *s390_host_detect_local_cpu (int argc, const char **argv);
 /* We use the following register classes:
    GENERAL_REGS     All general purpose registers
    ADDR_REGS        All general purpose registers except %r0
-                    (These registers can be used in address generation)
+		    (These registers can be used in address generation)
    FP_REGS          All floating point registers
    CC_REGS          The condition code register
    ACCESS_REGS      The access registers
@@ -621,40 +593,10 @@ extern const enum reg_class regclass_map[FIRST_PSEUDO_REGISTER];
 /* Check whether REGNO is a hard register of the suitable class
    or a pseudo register currently allocated to one such.  */
 #define REGNO_OK_FOR_INDEX_P(REGNO)					\
-    (((REGNO) < FIRST_PSEUDO_REGISTER 					\
-      && REGNO_REG_CLASS ((REGNO)) == ADDR_REGS) 			\
+    (((REGNO) < FIRST_PSEUDO_REGISTER					\
+      && REGNO_REG_CLASS ((REGNO)) == ADDR_REGS)			\
      || ADDR_REGNO_P (reg_renumber[REGNO]))
 #define REGNO_OK_FOR_BASE_P(REGNO) REGNO_OK_FOR_INDEX_P (REGNO)
-
-
-/* We need secondary memory to move data between GPRs and FPRs.
-
-   - With DFP the ldgr lgdr instructions are available.  Due to the
-     different alignment we cannot use them for SFmode.  For 31 bit a
-     64 bit value in GPR would be a register pair so here we still
-     need to go via memory.
-
-   - With z13 we can do the SF/SImode moves with vlgvf.  Due to the
-     overlapping of FPRs and VRs we still disallow TF/TD modes to be
-     in full VRs so as before also on z13 we do these moves via
-     memory.
-
-     FIXME: Should we try splitting it into two vlgvg's/vlvg's instead?  */
-#define SECONDARY_MEMORY_NEEDED(CLASS1, CLASS2, MODE)			\
-  (((reg_classes_intersect_p ((CLASS1), VEC_REGS)			\
-     && reg_classes_intersect_p ((CLASS2), GENERAL_REGS))		\
-    || (reg_classes_intersect_p ((CLASS1), GENERAL_REGS)		\
-	&& reg_classes_intersect_p ((CLASS2), VEC_REGS)))		\
-   && (!TARGET_DFP || !TARGET_64BIT || GET_MODE_SIZE (MODE) != 8)	\
-   && (!TARGET_VX || (SCALAR_FLOAT_MODE_P (MODE)			\
-			  && GET_MODE_SIZE (MODE) > 8)))
-
-/* Get_secondary_mem widens its argument to BITS_PER_WORD which loses on 64bit
-   because the movsi and movsf patterns don't handle r/f moves.  */
-#define SECONDARY_MEMORY_NEEDED_MODE(MODE)		\
- (GET_MODE_BITSIZE (MODE) < 32				\
-  ? mode_for_size (32, GET_MODE_CLASS (MODE), 0)	\
-  : (MODE))
 
 
 /* Stack layout and calling conventions.  */
@@ -673,9 +615,6 @@ extern const enum reg_class regclass_map[FIRST_PSEUDO_REGISTER];
 
 /* Offset from stack-pointer to first location of outgoing args.  */
 #define STACK_POINTER_OFFSET (TARGET_64BIT ? 160 : 96)
-
-/* Offset within stack frame to start allocating local variables at.  */
-#define STARTING_FRAME_OFFSET 0
 
 /* Offset from the stack pointer register to an item dynamically
    allocated on the stack, e.g., by `alloca'.  */
@@ -826,7 +765,7 @@ CUMULATIVE_ARGS;
 
 /* Profiling.  */
 
-#define FUNCTION_PROFILER(FILE, LABELNO) 			\
+#define FUNCTION_PROFILER(FILE, LABELNO)			\
   s390_function_profiler ((FILE), ((LABELNO)))
 
 #define PROFILE_BEFORE_PROLOGUE 1
@@ -946,6 +885,10 @@ CUMULATIVE_ARGS;
 
 #define LEGITIMATE_PIC_OPERAND_P(X)  legitimate_pic_operand_p (X)
 
+#ifndef TARGET_DEFAULT_PIC_DATA_IS_TEXT_RELATIVE
+#define TARGET_DEFAULT_PIC_DATA_IS_TEXT_RELATIVE 1
+#endif
+
 
 /* Assembler file format.  */
 
@@ -1042,14 +985,10 @@ do {									\
    tablejump instruction.  */
 #define CASE_VECTOR_MODE (TARGET_64BIT ? DImode : SImode)
 
-/* Value is 1 if truncating an integer of INPREC bits to OUTPREC bits
-   is done just by pretending it is already truncated.  */
-#define TRULY_NOOP_TRUNCATION(OUTPREC, INPREC)  1
-
 /* Specify the machine mode that pointers have.
    After generation of rtl, the compiler makes no further distinction
    between pointers and any other objects of this machine mode.  */
-#define Pmode ((machine_mode) (TARGET_64BIT ? DImode : SImode))
+#define Pmode (TARGET_64BIT ? DImode : SImode)
 
 /* This is -1 for "pointer mode" extend.  See ptr_extend in s390.md.  */
 #define POINTERS_EXTEND_UNSIGNED -1
@@ -1106,13 +1045,26 @@ do {									\
 
 extern const int processor_flags_table[];
 
+struct s390_processor
+{
+  /* The preferred name to be used in user visible output.  */
+  const char *const name;
+  /* CPU name as it should be passed to Binutils via .machine  */
+  const char *const binutils_name;
+  const enum processor_type processor;
+  const struct processor_costs *cost;
+  int arch_level;
+};
+
+extern const struct s390_processor processor_table[];
+
 /* The truth element value for vector comparisons.  Our instructions
    always generate -1 in that case.  */
 #define VECTOR_STORE_FLAG_VALUE(MODE) CONSTM1_RTX (GET_MODE_INNER (MODE))
 
 /* Target pragma.  */
 
-/* resolve_overloaded_builtin can not be defined the normal way since
+/* resolve_overloaded_builtin cannot be defined the normal way since
    it is defined in code which technically belongs to the
    front-end.  */
 #define REGISTER_TARGET_PRAGMAS()		\
@@ -1182,9 +1134,6 @@ struct GTY(()) machine_function
 
   /* Literal pool base register.  */
   rtx base_reg;
-
-  /* True if we may need to perform branch splitting.  */
-  bool split_branches_pending_p;
 
   bool has_landing_pad_p;
 

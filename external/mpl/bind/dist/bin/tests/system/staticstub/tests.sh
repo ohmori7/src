@@ -4,7 +4,7 @@
 #
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# file, you can obtain one at https://mozilla.org/MPL/2.0/.
 #
 # See the COPYRIGHT file distributed with this work for additional
 # information regarding copyright ownership.
@@ -160,7 +160,7 @@ n=`expr $n + 1`
 # Note: for a short term workaround we use ::1, assuming it's configured and
 # usable for our tests.  We should eventually use the test ULA and available
 # checks introduced in change 2916.
-if $TESTSOCK6 ../testsock6.pl ::1 2> /dev/null
+if testsock6 ::1
 then
     echo_i "checking IPv6 static-stub address ($n)"
     ret=0
@@ -190,7 +190,7 @@ grep "3rd sub test data" dig.out.ns2.test$n > /dev/null || ret=1
 if [ $ret != 0 ]; then echo_i "failed"; fi
 status=`expr $status + $ret`
 
-# reload with a different name server: exisitng zone shouldn't be reused.
+# reload with a different name server: existing zone shouldn't be reused.
 n=`expr $n + 1`
 echo_i "checking server reload with a different static-stub config ($n)"
 ret=0

@@ -1,4 +1,4 @@
-/*	$NetBSD: central.c,v 1.3 2012/03/18 05:26:58 mrg Exp $	*/
+/*	$NetBSD: central.c,v 1.5 2021/01/04 14:48:51 thorpej Exp $	*/
 /*	$OpenBSD: central.c,v 1.7 2010/11/11 17:58:23 miod Exp $	*/
 
 /*
@@ -28,7 +28,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: central.c,v 1.3 2012/03/18 05:26:58 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: central.c,v 1.5 2021/01/04 14:48:51 thorpej Exp $");
 
 #include <sys/types.h>
 #include <sys/param.h>
@@ -37,6 +37,7 @@ __KERNEL_RCSID(0, "$NetBSD: central.c,v 1.3 2012/03/18 05:26:58 mrg Exp $");
 #include <sys/device.h>
 #include <sys/conf.h>
 #include <sys/malloc.h>
+#include <sys/kmem.h>
 #include <sys/bus.h>
 
 #include <machine/autoconf.h>
@@ -126,10 +127,7 @@ central_get_string(int node, const char *name, char **buf)
 	len = prom_getproplen(node, name);
 	if (len < 0)
 		return (len);
-	*buf = (char *)malloc(len + 1, M_DEVBUF, M_NOWAIT);
-	if (*buf == NULL)
-		return (-1);
-
+	*buf = malloc(len + 1, M_DEVBUF, M_WAITOK);
 	if (len != 0)
 		prom_getpropstringA(node, name, *buf, len + 1);
 	(*buf)[len] = '\0';
@@ -156,10 +154,7 @@ central_alloc_bus_tag(struct central_softc *sc)
 {
 	struct sparc_bus_space_tag *bt;
 
-	bt = malloc(sizeof(*bt), M_DEVBUF, M_NOWAIT | M_ZERO);
-	if (bt == NULL)
-		panic("central: couldn't alloc bus tag");
-
+	bt = kmem_zalloc(sizeof(*bt), KM_SLEEP);
 	bt->cookie = sc;
 	bt->parent = sc->sc_bt;
 #if 0

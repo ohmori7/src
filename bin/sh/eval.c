@@ -1,4 +1,4 @@
-/*	$NetBSD: eval.c,v 1.175 2019/05/04 02:52:55 kre Exp $	*/
+/*	$NetBSD: eval.c,v 1.181 2020/08/20 23:09:56 kre Exp $	*/
 
 /*-
  * Copyright (c) 1993
@@ -37,7 +37,7 @@
 #if 0
 static char sccsid[] = "@(#)eval.c	8.9 (Berkeley) 6/8/95";
 #else
-__RCSID("$NetBSD: eval.c,v 1.175 2019/05/04 02:52:55 kre Exp $");
+__RCSID("$NetBSD: eval.c,v 1.181 2020/08/20 23:09:56 kre Exp $");
 #endif
 #endif /* not lint */
 
@@ -280,8 +280,10 @@ evaltree(union node *n, int flags)
 		next = NULL;
 		CTRACE(DBG_EVAL, ("pid %d, evaltree(%p: %s(%d), %#x) called\n",
 		    getpid(), n, NODETYPENAME(n->type), n->type, flags));
+	/*
 		if (n->type != NCMD && traps_invalid)
 			free_traps();
+	*/
 		switch (n->type) {
 		case NSEMI:
 			evaltree(n->nbinary.ch1, sflags);
@@ -302,6 +304,8 @@ evaltree(union node *n, int flags)
 			next = n->nbinary.ch2;
 			break;
 		case NREDIR:
+			if (traps_invalid)
+				free_traps();
 			evalredir(n, flags);
 			break;
 		case NSUBSHELL:
@@ -309,9 +313,13 @@ evaltree(union node *n, int flags)
 			do_etest = !(flags & EV_TESTED);
 			break;
 		case NBACKGND:
+			if (traps_invalid)
+				free_traps();
 			evalsubshell(n, flags);
 			break;
 		case NIF: {
+			if (traps_invalid)
+				free_traps();
 			evaltree(n->nif.test, EV_TESTED);
 			if (nflag || evalskip)
 				goto out1;
@@ -325,15 +333,23 @@ evaltree(union node *n, int flags)
 		}
 		case NWHILE:
 		case NUNTIL:
+			if (traps_invalid)
+				free_traps();
 			evalloop(n, sflags);
 			break;
 		case NFOR:
+			if (traps_invalid)
+				free_traps();
 			evalfor(n, sflags);
 			break;
 		case NCASE:
+			if (traps_invalid)
+				free_traps();
 			evalcase(n, sflags);
 			break;
 		case NDEFUN:
+			if (traps_invalid)
+				free_traps();
 			CTRACE(DBG_EVAL, ("Defining fn %s @%d%s\n",
 			    n->narg.text, n->narg.lineno,
 			    fnline1 ? " LINENO=1" : ""));
@@ -350,6 +366,8 @@ evaltree(union node *n, int flags)
 				exitstatus = 1;
 			break;
 		case NPIPE:
+			if (traps_invalid)
+				free_traps();
 			evalpipe(n);
 			do_etest = !(flags & EV_TESTED);
 			break;
@@ -552,8 +570,8 @@ evalsubshell(union node *n, int flags)
 	    forkshell(jp = makejob(n, 1), n, backgnd?FORK_BG:FORK_FG) == 0) {
 		if (backgnd)
 			flags &=~ EV_TESTED;
-		redirect(n->nredir.redirect, REDIR_KEEP);
 		INTON;
+		redirect(n->nredir.redirect, REDIR_KEEP);
 		evaltree(n->nredir.n, flags | EV_EXIT);   /* never returns */
 	} else if (backgnd)
 		exitstatus = 0;
@@ -771,7 +789,6 @@ evalbackcmd(union node *n, struct backcmd *result)
 			FORCEINTON;
 			close(pip[0]);
 			movefd(pip[1], 1);
-			eflag = 0;
 			evaltree(n, EV_EXIT);
 			/* NOTREACHED */
 		}
@@ -1044,6 +1061,10 @@ evalcommand(union node *cmd, int flgs, struct backcmd *backcmd)
 	 *	command eval trap
 	 *	eval command trap
 	 * without zapping the traps completely, in all other cases we do.
+	 * Function calls also do not zap the traps (but commands they execute
+	 * probably will) - this allows a function like
+	 *	trapstate() { trap -p; }
+	 * called as save_traps=$(trapstate).
 	 *
 	 * The test here permits eval "anything" but when evalstring() comes
 	 * back here again, the "anything" will be validated.
@@ -1056,18 +1077,24 @@ evalcommand(union node *cmd, int flgs, struct backcmd *backcmd)
 	 * trapcmd() takes care of doing free_traps() if it is needed there.
 	 */
 	if (traps_invalid &&
+	    cmdentry.cmdtype != CMDFUNCTION &&
 	    ((cmdentry.cmdtype!=CMDSPLBLTIN && cmdentry.cmdtype!=CMDBUILTIN) ||
 	     (cmdentry.u.bltin != trapcmd && cmdentry.u.bltin != evalcmd)))
 		free_traps();
 
 	/* Fork off a child process if necessary. */
-	if (cmd->ncmd.backgnd || (have_traps() && (flags & EV_EXIT) != 0)
-	 || ((cmdentry.cmdtype == CMDNORMAL || cmdentry.cmdtype == CMDUNKNOWN)
-	     && (flags & EV_EXIT) == 0)
-	 || ((flags & EV_BACKCMD) != 0 &&
-	    ((cmdentry.cmdtype != CMDBUILTIN && cmdentry.cmdtype != CMDSPLBLTIN)
-		 || cmdentry.u.bltin == dotcmd
-		 || cmdentry.u.bltin == evalcmd))) {
+	if (cmd->ncmd.backgnd
+	  || ((cmdentry.cmdtype == CMDNORMAL || cmdentry.cmdtype == CMDUNKNOWN)
+	     && (have_traps() || (flags & EV_EXIT) == 0))
+#ifdef notyet			/* EV_BACKCMD is never set currently */
+			/* this will need more work if/when it gets used */
+	  || ((flags & EV_BACKCMD) != 0
+	     && (cmdentry.cmdtype != CMDBUILTIN
+	         && cmdentry.cmdtype != CMDSPLBLTIN)
+	       || cmdentry.u.bltin == dotcmd
+	       || cmdentry.u.bltin == evalcmd)
+#endif
+	 ) {
 		INTOFF;
 		jp = makejob(cmd, 1);
 		mode = cmd->ncmd.backgnd;
@@ -1081,7 +1108,8 @@ evalcommand(union node *cmd, int flgs, struct backcmd *backcmd)
 		 * child's address space is actually shared with the parent as
 		 * we rely on this.
 		 */
-		if (usefork == 0 && cmdentry.cmdtype == CMDNORMAL) {
+		if (usefork == 0 && cmdentry.cmdtype == CMDNORMAL &&
+		    (!cmd->ncmd.backgnd || cmd->ncmd.redirect == NULL)) {
 			pid_t	pid;
 			int serrno;
 
@@ -1203,7 +1231,7 @@ evalcommand(union node *cmd, int flgs, struct backcmd *backcmd)
 				shellparam = saveparam;
 			}
 			if (saved)
-				popredir();;
+				popredir();
 			unreffunc(cmdentry.u.func);
 			poplocalvars();
 			localvars = savelocalvars;
@@ -1487,7 +1515,9 @@ dotcmd(int argc, char **argv)
 {
 	exitstatus = 0;
 
-	if (argc >= 2) {		/* That's what SVR2 does */
+	(void) nextopt(NULL);		/* ignore a leading "--" */
+
+	if (*argptr != NULL) {		/* That's what SVR2 does */
 		char *fullname;
 		/*
 		 * dot_funcnest needs to be 0 when not in a dotcmd, so it
@@ -1497,7 +1527,7 @@ dotcmd(int argc, char **argv)
 		struct stackmark smark;
 
 		setstackmark(&smark);
-		fullname = find_dot_file(argv[1]);
+		fullname = find_dot_file(*argptr);
 		setinputfile(fullname, 1);
 		commandname = fullname;
 		dot_funcnest_old = dot_funcnest;
@@ -1643,7 +1673,9 @@ truecmd(int argc, char **argv)
 int
 execcmd(int argc, char **argv)
 {
-	if (argc > 1) {
+	(void) nextopt(NULL);		/* ignore a leading "--" */
+
+	if (*argptr) {
 		struct strlist *sp;
 
 		iflag = 0;		/* exit on error */
@@ -1651,7 +1683,7 @@ execcmd(int argc, char **argv)
 		optschanged();
 		for (sp = cmdenviron; sp; sp = sp->next)
 			setvareq(sp->text, VDOEXPORT|VEXPORT|VSTACK);
-		shellexec(argv + 1, environment(), pathval(), 0, 0);
+		shellexec(argptr, environment(), pathval(), 0, 0);
 	}
 	return 0;
 }

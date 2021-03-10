@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.28 2019/02/04 10:22:15 mrg Exp $
+#	$NetBSD: Makefile,v 1.31 2021/03/07 15:09:12 christos Exp $
 #	from: @(#)Makefile	8.1 (Berkeley) 6/6/93
 .include <bsd.own.mk>
 
@@ -25,14 +25,12 @@ CPPFLAGS+=-DLIBWRAP
 .if ${HAVE_OPENSSL} < 11
 CPPFLAGS+=-DOPENSSL_API_COMPAT=0x10100000L
 .endif
-LDADD+=	-lwrap
-DPADD+=	${LIBWRAP}
+LDADD+=	-lwrap -lblocklist 
+DPADD+=	${LIBWRAP} ${LIBBLOCKLIST} 
 
 LDADD+=	-lssl -lcrypto
 
 # Overflow that appears impossible
-.if defined(HAVE_GCC) && ${HAVE_GCC} == 7 && ${ACTIVE_CC} == "gcc"
-COPTS.syslogd.c+=        -Wno-error=format-truncation
-.endif
+COPTS.syslogd.c+=        ${GCC_NO_FORMAT_TRUNCATION} ${GCC_NO_STRINGOP_TRUNCATION}
 
 .include <bsd.prog.mk>

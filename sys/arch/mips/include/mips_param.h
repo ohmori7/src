@@ -1,4 +1,4 @@
-/*	$NetBSD: mips_param.h,v 1.39 2019/05/11 06:50:42 skrll Exp $	*/
+/*	$NetBSD: mips_param.h,v 1.47 2020/08/26 10:51:45 simonb Exp $	*/
 
 /*-
  * Copyright (c) 2013 The NetBSD Foundation, Inc.
@@ -58,11 +58,11 @@
  */
 #ifndef _KERNEL
 #undef MACHINE
-#define MACHINE "mips"
+#define	MACHINE "mips"
 #endif
 
-#define ALIGNBYTES32		(sizeof(double) - 1)
-#define ALIGN32(p)		(((uintptr_t)(p) + ALIGNBYTES32) &~ALIGNBYTES32)
+#define	ALIGNBYTES32		(sizeof(double) - 1)
+#define	ALIGN32(p)		(((uintptr_t)(p) + ALIGNBYTES32) &~ALIGNBYTES32)
 
 /*
  * On mips, UPAGES is fixed by sys/arch/mips/mips/locore code
@@ -77,12 +77,15 @@
 #endif
 
 #ifndef MSGBUFSIZE
-#define MSGBUFSIZE	NBPG		/* default message buffer size */
+#define	MSGBUFSIZE	NBPG		/* default message buffer size */
 #endif
 
-#ifndef COHERENCY_UNIT
-#define COHERENCY_UNIT	32	/* MIPS cachelines are usually 32 bytes */
-#endif
+/*
+ * Most MIPS have a cache line size of 32 bytes, but Cavium chips
+ * have a line size 128 bytes and we need to cover the larger size.
+ */
+#define	COHERENCY_UNIT	128
+#define	CACHE_LINE_SIZE	128
 
 #ifdef ENABLE_MIPS_16KB_PAGE
 #define	PGSHIFT		14		/* LOG2(NBPG) */
@@ -93,34 +96,41 @@
 #define	PGSHIFT		12		/* LOG2(NBPG) */
 #endif
 #define	NBPG		(1 << PGSHIFT)	/* bytes/page */
-#define	PGOFSET		(NBPG-1)	/* byte offset into page */
+#define	PGOFSET		(NBPG - 1)	/* byte offset into page */
 #define	PTPSHIFT	2
-#define	PTPLENGTH	(PGSHIFT-PTPSHIFT)
+#define	PTPLENGTH	(PGSHIFT - PTPSHIFT)
 #define	NPTEPG		(1 << PTPLENGTH)
 
-#define SEGSHIFT	(PGSHIFT+PTPLENGTH)	/* LOG2(NBSEG) */
-#define NBSEG		(1 << SEGSHIFT)	/* bytes/segment */
+#define	SEGSHIFT	(PGSHIFT + PTPLENGTH)	/* LOG2(NBSEG) */
+#define	NBSEG		(1 << SEGSHIFT)	/* bytes/segment */
 #define	SEGOFSET	(NBSEG-1)	/* byte offset into segment */
 
 #ifdef _LP64
-#define	SEGLENGTH	(PGSHIFT-3)
-#define	XSEGSHIFT	(SEGSHIFT+SEGLENGTH)	/* LOG2(NBXSEG) */
+#define	SEGLENGTH	(PGSHIFT - 3)
+#define	XSEGSHIFT	(SEGSHIFT + SEGLENGTH)	/* LOG2(NBXSEG) */
 #define	NBXSEG		(1UL << XSEGSHIFT)	/* bytes/xsegment */
-#define	XSEGOFSET	(NBXSEG-1)	/* byte offset into xsegment */
-#define	XSEGLENGTH	(PGSHIFT-3)
+#define	XSEGOFSET	(NBXSEG - 1)	/* byte offset into xsegment */
+#define	XSEGLENGTH	(PGSHIFT - 3)
 #define	NXSEGPG		(1 << XSEGLENGTH)
 #else
-#define	SEGLENGTH	(31-SEGSHIFT)
+#define	SEGLENGTH	(31 - SEGSHIFT)
 #endif
 #define	NSEGPG		(1 << SEGLENGTH)
 
-#if PGSHIFT >= 13
-#define	UPAGES		1		/* pages of u-area */
+#ifdef _LP64
+#define	__MIN_USPACE	16384		/* LP64 needs a 16kB stack */
 #else
-#define	UPAGES		2		/* pages of u-area */
+/*
+ * Note for the non-LP64 case, cpu_switch_resume has the assumption
+ * that UPAGES == 2.  For MIPS-I we wire USPACE in TLB #0 and #1.
+ * For MIPS3+ we wire USPACE in the the TLB #0 pair.
+ */
+#define	__MIN_USPACE	8192		/* otherwise use an 8kB stack */
 #endif
-#define	USPACE		(UPAGES*NBPG)	/* size of u-area in bytes */
+#define	USPACE		MAX(__MIN_USPACE, PAGE_SIZE)
+#define	UPAGES		(USPACE / PAGE_SIZE) /* number of pages for u-area */
 #define	USPACE_ALIGN	USPACE		/* make sure it starts on a even VA */
+#define	UPAGES_MAX	8		/* a (constant) max for userland use */
 
 /*
  * Minimum and maximum sizes of the kernel malloc arena in PAGE_SIZE-sized
@@ -132,10 +142,10 @@
 /*
  * Mach derived conversion macros
  */
-#define mips_round_page(x)	((((uintptr_t)(x)) + NBPG - 1) & ~(NBPG-1))
-#define mips_trunc_page(x)	((uintptr_t)(x) & ~(NBPG-1))
-#define mips_btop(x)		((paddr_t)(x) >> PGSHIFT)
-#define mips_ptob(x)		((paddr_t)(x) << PGSHIFT)
+#define	mips_round_page(x)	((((uintptr_t)(x)) + NBPG - 1) & ~(NBPG-1))
+#define	mips_trunc_page(x)	((uintptr_t)(x) & ~(NBPG-1))
+#define	mips_btop(x)		((paddr_t)(x) >> PGSHIFT)
+#define	mips_ptob(x)		((paddr_t)(x) << PGSHIFT)
 
 #ifdef __MIPSEL__
 #define	MID_MACHINE	MID_PMAX	/* MID_PMAX (little-endian) */

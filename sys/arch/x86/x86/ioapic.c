@@ -1,4 +1,4 @@
-/* 	$NetBSD: ioapic.c,v 1.62 2019/06/17 06:38:30 msaitoh Exp $	*/
+/* 	$NetBSD: ioapic.c,v 1.64 2020/04/25 15:26:18 bouyer Exp $	*/
 
 /*-
  * Copyright (c) 2000, 2009 The NetBSD Foundation, Inc.
@@ -64,7 +64,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ioapic.c,v 1.62 2019/06/17 06:38:30 msaitoh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ioapic.c,v 1.64 2020/04/25 15:26:18 bouyer Exp $");
 
 #include "opt_ddb.h"
 
@@ -301,6 +301,9 @@ ioapic_attach(device_t parent, device_t self, void *aux)
 	sc->sc_pic.pic_trymask = ioapic_trymask;
 	sc->sc_pic.pic_edge_stubs = ioapic_edge_stubs;
 	sc->sc_pic.pic_level_stubs = ioapic_level_stubs;
+	sc->sc_pic.pic_intr_get_devname = x86_intr_get_devname;
+	sc->sc_pic.pic_intr_get_assigned = x86_intr_get_assigned;
+	sc->sc_pic.pic_intr_get_count = x86_intr_get_count;
 
 	apic_id = (ioapic_read(sc, IOAPIC_ID) & IOAPIC_ID_MASK)
 	    >> IOAPIC_ID_SHIFT;
@@ -611,7 +614,7 @@ ioapic_dump_raw(void)
 			printf(" %08x", (u_int)reg);
 			if (++i % 0x08 == 0)
 				printf("\n");
-		} while (i < 0x40);
+		} while (i < IOAPIC_REDTBL + (sc->sc_apic_sz * 2));
 	}
 }
 #endif

@@ -1,4 +1,4 @@
-/*	$NetBSD: subr_ipi.c,v 1.4 2019/04/06 02:59:05 thorpej Exp $	*/
+/*	$NetBSD: subr_ipi.c,v 1.9 2020/11/27 20:11:33 riastradh Exp $	*/
 
 /*-
  * Copyright (c) 2014 The NetBSD Foundation, Inc.
@@ -36,7 +36,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: subr_ipi.c,v 1.4 2019/04/06 02:59:05 thorpej Exp $");
+__KERNEL_RCSID(0, "$NetBSD: subr_ipi.c,v 1.9 2020/11/27 20:11:33 riastradh Exp $");
 
 #include <sys/param.h>
 #include <sys/types.h>
@@ -93,19 +93,9 @@ static void		ipi_msg_cpu_handler(void *);
 void
 ipi_sysinit(void)
 {
-	const size_t len = ncpu * sizeof(ipi_mbox_t);
 
-	/* Initialise the per-CPU bit fields. */
-	for (u_int i = 0; i < ncpu; i++) {
-		struct cpu_info *ci = cpu_lookup(i);
-		memset(&ci->ci_ipipend, 0, sizeof(ci->ci_ipipend));
-	}
 	mutex_init(&ipi_mngmt_lock, MUTEX_DEFAULT, IPL_NONE);
 	memset(ipi_intrs, 0, sizeof(ipi_intrs));
-
-	/* Allocate per-CPU IPI mailboxes. */
-	ipi_mboxes = kmem_zalloc(len, KM_SLEEP);
-	KASSERT(ipi_mboxes != NULL);
 
 	/*
 	 * Register the handler for synchronous IPIs.  This mechanism
@@ -117,6 +107,22 @@ ipi_sysinit(void)
 
 	evcnt_attach_dynamic(&ipi_mboxfull_ev, EVCNT_TYPE_MISC, NULL,
 	   "ipi", "full");
+}
+
+void
+ipi_percpu_init(void)
+{
+	const size_t len = ncpu * sizeof(ipi_mbox_t);
+
+	/* Initialise the per-CPU bit fields. */
+	for (u_int i = 0; i < ncpu; i++) {
+		struct cpu_info *ci = cpu_lookup(i);
+		memset(&ci->ci_ipipend, 0, sizeof(ci->ci_ipipend));
+	}
+
+	/* Allocate per-CPU IPI mailboxes. */
+	ipi_mboxes = kmem_zalloc(len, KM_SLEEP);
+	KASSERT(ipi_mboxes != NULL);
 }
 
 /*
@@ -150,7 +156,7 @@ ipi_register(ipi_func_t func, void *arg)
 void
 ipi_unregister(u_int ipi_id)
 {
-	ipi_msg_t ipimsg = { .func = (ipi_func_t)nullop };
+	ipi_msg_t ipimsg = { .func = __FPTRCAST(ipi_func_t, nullop) };
 
 	KASSERT(ipi_id != IPI_SYNCH_ID);
 	KASSERT(ipi_id < IPI_MAXREG);
@@ -181,8 +187,11 @@ ipi_mark_pending(u_int ipi_id, struct cpu_info *ci)
 	KASSERT(ipi_id < IPI_MAXREG);
 	KASSERT(kpreempt_disabled());
 
-	/* Mark as pending and send an IPI. */
-	if (membar_consumer(), (ci->ci_ipipend[i] & bitm) == 0) {
+	/* Mark as pending and return true if not previously marked. */
+	if ((atomic_load_acquire(&ci->ci_ipipend[i]) & bitm) == 0) {
+#ifndef __HAVE_ATOMIC_AS_MEMBAR
+		membar_exit();
+#endif
 		atomic_or_32(&ci->ci_ipipend[i], bitm);
 		return true;
 	}
@@ -255,6 +264,8 @@ ipi_trigger_broadcast(u_int ipi_id, bool skip_self)
 
 /*
  * put_msg: insert message into the mailbox.
+ *
+ * Caller is responsible for issuing membar_exit first.
  */
 static inline void
 put_msg(ipi_mbox_t *mbox, ipi_msg_t *msg)
@@ -262,8 +273,7 @@ put_msg(ipi_mbox_t *mbox, ipi_msg_t *msg)
 	int count = SPINLOCK_BACKOFF_MIN;
 again:
 	for (u_int i = 0; i < IPI_MSG_MAX; i++) {
-		if (__predict_true(mbox->msg[i] == NULL) &&
-		    atomic_cas_ptr(&mbox->msg[i], NULL, msg) == NULL) {
+		if (atomic_cas_ptr(&mbox->msg[i], NULL, msg) == NULL) {
 			return;
 		}
 	}
@@ -289,12 +299,12 @@ ipi_cpu_handler(void)
 	for (u_int i = 0; i < IPI_BITWORDS; i++) {
 		uint32_t pending, bit;
 
-		if (ci->ci_ipipend[i] == 0) {
+		if (atomic_load_relaxed(&ci->ci_ipipend[i]) == 0) {
 			continue;
 		}
 		pending = atomic_swap_32(&ci->ci_ipipend[i], 0);
 #ifndef __HAVE_ATOMIC_AS_MEMBAR
-		membar_producer();
+		membar_enter();
 #endif
 		while ((bit = ffs(pending)) != 0) {
 			const u_int ipi_id = (i << IPI_BITW_SHIFT) | --bit;
@@ -321,16 +331,19 @@ ipi_msg_cpu_handler(void *arg __unused)
 		ipi_msg_t *msg;
 
 		/* Get the message. */
-		if ((msg = mbox->msg[i]) == NULL) {
+		if ((msg = atomic_load_acquire(&mbox->msg[i])) == NULL) {
 			continue;
 		}
-		mbox->msg[i] = NULL;
+		atomic_store_relaxed(&mbox->msg[i], NULL);
 
 		/* Execute the handler. */
 		KASSERT(msg->func);
 		msg->func(msg->arg);
 
 		/* Ack the request. */
+#ifndef __HAVE_ATOMIC_AS_MEMBAR
+		membar_exit();
+#endif
 		atomic_dec_uint(&msg->_pending);
 	}
 }
@@ -351,7 +364,9 @@ ipi_unicast(ipi_msg_t *msg, struct cpu_info *ci)
 	KASSERT(curcpu() != ci);
 
 	msg->_pending = 1;
-	membar_producer();
+#ifndef __HAVE_ATOMIC_AS_MEMBAR
+	membar_exit();
+#endif
 
 	put_msg(&ipi_mboxes[id], msg);
 	ipi_trigger(IPI_SYNCH_ID, ci);
@@ -375,7 +390,9 @@ ipi_multicast(ipi_msg_t *msg, const kcpuset_t *target)
 
 	local = !!kcpuset_isset(target, cpu_index(self));
 	msg->_pending = kcpuset_countset(target) - local;
-	membar_producer();
+#ifndef __HAVE_ATOMIC_AS_MEMBAR
+	membar_exit();
+#endif
 
 	for (CPU_INFO_FOREACH(cii, ci)) {
 		cpuid_t id;
@@ -411,7 +428,9 @@ ipi_broadcast(ipi_msg_t *msg, bool skip_self)
 	KASSERT(kpreempt_disabled());
 
 	msg->_pending = ncpu - 1;
-	membar_producer();
+#ifndef __HAVE_ATOMIC_AS_MEMBAR
+	membar_exit();
+#endif
 
 	/* Broadcast IPIs for remote CPUs. */
 	for (CPU_INFO_FOREACH(cii, ci)) {
@@ -439,8 +458,8 @@ ipi_wait(ipi_msg_t *msg)
 {
 	int count = SPINLOCK_BACKOFF_MIN;
 
-	while (msg->_pending) {
-		KASSERT(msg->_pending < ncpu);
+	while (atomic_load_acquire(&msg->_pending)) {
+		KASSERT(atomic_load_relaxed(&msg->_pending) < ncpu);
 		SPINLOCK_BACKOFF(count);
 	}
 }

@@ -4,7 +4,7 @@
 #
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# file, you can obtain one at https://mozilla.org/MPL/2.0/.
 #
 # See the COPYRIGHT file distributed with this work for additional
 # information regarding copyright ownership.
@@ -107,7 +107,7 @@ if [ ! "$CYGWIN" ]; then
     ret=0
     echo_i "verifying active sockets output in named.stats ($n)"
     nsock1nstat=`grep "UDP/IPv4 sockets active" ns3/named.stats | awk '{print $1}'`
-    [ `expr $nsock1nstat - $nsock0nstat` -eq 1 ] || ret=1
+    [ `expr ${nsock1nstat:-0} - ${nsock0nstat:-0}` -eq 1 ] || ret=1
     if [ $ret != 0 ]; then echo_i "failed"; fi
     status=`expr $status + $ret`
     n=`expr $n + 1`
@@ -149,6 +149,84 @@ if $FEATURETEST --have-libxml2 && [ -x ${CURL} ] ; then
     grep '<zone name="32/1.0.0.127-in-addr.example" rdataclass="IN"><type>master</type>' curl.out.${n} > /dev/null || ret=1
 else
     echo_i "skipping test as libxml2 and/or curl was not found"
+fi
+if [ $ret != 0 ]; then echo_i "failed"; fi
+status=`expr $status + $ret`
+n=`expr $n + 1`
+
+ret=0
+echo_i "checking bind9.xsl vs xml ($n)"
+if $FEATURETEST --have-libxml2 && [ -x "${CURL}" ] && [ -x "${XSLTPROC}" ]  ; then
+    $DIGCMD +notcp +recurse @10.53.0.3 soa . > /dev/null 2>&1
+    $DIGCMD +notcp +recurse @10.53.0.3 soa example > /dev/null 2>&1
+    ${CURL} http://10.53.0.3:${EXTRAPORT1}/xml/v3 > curl.out.${n}.xml 2>/dev/null || ret=1
+    ${CURL} http://10.53.0.3:${EXTRAPORT1}/bind9.xsl > curl.out.${n}.xsl 2>/dev/null || ret=1
+    ${XSLTPROC} curl.out.${n}.xsl - < curl.out.${n}.xml > xsltproc.out.${n} 2>/dev/null || ret=1
+    cp curl.out.${n}.xml stats.xml.out || ret=1
+
+    #
+    # grep for expected sections.
+    #
+    grep "<h1>ISC Bind 9 Configuration and Statistics</h1>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h2>Server Status</h2>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h2>Incoming Requests by DNS Opcode</h2>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h3>Incoming Queries by Query Type</h3>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h2>Outgoing Queries per view</h2>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h3>View " xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h2>Server Statistics</h2>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h2>Zone Maintenance Statistics</h2>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h2>Resolver Statistics (Common)</h2>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h3>Resolver Statistics for View " xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h3>ADB Statistics for View " xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h3>Cache Statistics for View " xsltproc.out.${n} >/dev/null || ret=1
+    # grep "<h3>Cache DB RRsets for View " xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h2>Traffic Size Statistics</h2>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h4>UDP Requests Received</h4>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h4>UDP Responses Sent</h4>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h4>TCP Requests Received</h4>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h4>TCP Responses Sent</h4>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h2>Socket I/O Statistics</h2>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h3>Zones for View " xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h2>Received QTYPES per view/zone</h2>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h3>View _default" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h4>Zone example" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h2>Response Codes per view/zone</h2>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h3>View _default" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h4>Zone example" xsltproc.out.${n} >/dev/null || ret=1
+    # grep "<h2>Glue cache statistics</h2>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h3>View _default" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h4>Zone example" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h2>Network Status</h2>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h2>Task Manager Configuration</h2>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h2>Tasks</h2>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h2>Memory Usage Summary</h2>" xsltproc.out.${n} >/dev/null || ret=1
+    grep "<h2>Memory Contexts</h2>" xsltproc.out.${n} >/dev/null || ret=1
+else
+    echo_i "skipping test as libxml2 and/or curl and/or xsltproc was not found"
+fi
+if [ $ret != 0 ]; then echo_i "failed"; fi
+status=`expr $status + $ret`
+n=`expr $n + 1`
+
+ret=0
+echo_i "checking bind9.xml socket statistics ($n)"
+if $FEATURETEST --have-libxml2 && [ -x "${CURL}" ] && [ -x "${XSLTPROC}" ]  ; then
+    # Socket statistics (expect no errors)
+    grep "<counter name=\"TCP4AcceptFail\">0</counter>" stats.xml.out >/dev/null || ret=1
+    grep "<counter name=\"TCP4BindFail\">0</counter>" stats.xml.out >/dev/null || ret=1
+    grep "<counter name=\"TCP4ConnFail\">0</counter>" stats.xml.out >/dev/null || ret=1
+    grep "<counter name=\"TCP4OpenFail\">0</counter>" stats.xml.out >/dev/null || ret=1
+    grep "<counter name=\"TCP4RecvErr\">0</counter>" stats.xml.out >/dev/null || ret=1
+    grep "<counter name=\"TCP4SendErr\">0</counter>" stats.xml.out >/dev/null || ret=1
+
+    grep "<counter name=\"TCP6AcceptFail\">0</counter>" stats.xml.out >/dev/null || ret=1
+    grep "<counter name=\"TCP6BindFail\">0</counter>" stats.xml.out >/dev/null || ret=1
+    grep "<counter name=\"TCP6ConnFail\">0</counter>" stats.xml.out >/dev/null || ret=1
+    grep "<counter name=\"TCP6OpenFail\">0</counter>" stats.xml.out >/dev/null || ret=1
+    grep "<counter name=\"TCP6RecvErr\">0</counter>" stats.xml.out >/dev/null || ret=1
+    grep "<counter name=\"TCP6SendErr\">0</counter>" stats.xml.out >/dev/null || ret=1
+else
+    echo_i "skipping test as libxml2 and/or curl and/or xsltproc was not found"
 fi
 if [ $ret != 0 ]; then echo_i "failed"; fi
 status=`expr $status + $ret`

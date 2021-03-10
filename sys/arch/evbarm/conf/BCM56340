@@ -1,5 +1,5 @@
 #
-#	$NetBSD: BCM56340,v 1.18 2018/10/23 19:58:52 jdolecek Exp $
+#	$NetBSD: BCM56340,v 1.21 2020/09/29 19:58:50 jmcneill Exp $
 #
 #	BCM5301X -- Broadcom BCM5301X Eval Board Kernel
 #
@@ -23,7 +23,7 @@ options 	UVMHIST
 options 	BCM53XX_CONSOLE_EARLY
 options 	BCMETH_COUNTERS
 #options 	MULTIPROCESSOR
-options 	CPU_CORTEXA9
+options 	CPU_CORTEX
 #options 	MEMSIZE=256
 options 	BCM563XX
 options 	PMAPCOUNTERS
@@ -128,7 +128,7 @@ options 	RNDVERBOSE	# Verbose rnd messages
 options 	DIAGNOSTIC	# internal consistency checks
 options 	DEBUG
 #options 	LOCKDEBUG	# Enable lock debugging
-#options 	PMAP_DEBUG	# Enable pmap_debug_level code
+#options 	UVMHIST		# kernhist for uvm/pmap subsystems
 options 	VERBOSE_INIT_ARM # verbose bootstraping messages
 options 	DDB		# in-kernel debugger
 options 	DDB_ONPANIC=1
@@ -150,7 +150,6 @@ options UHUB_DEBUG
 #  single		Boot to single user only
 #  kdb			Give control to kernel debugger
 #  ask			Ask for file name to reboot from
-#  pmapdebug=<n>	If PMAP_DEBUG, set pmap_debug_level to <n>
 #  memorydisk=<n>	Set memorydisk size to <n> KB
 #  quiet		Show aprint_naive output
 #  verbose		Show aprint_normal and aprint_verbose output
@@ -170,7 +169,7 @@ armperiph0	at mainbus?		# A9 On-Chip Peripherals
 armgic0		at armperiph?		# ARM Generic Interrupt Controller
 arml2cc0	at armperiph? flags 0	# ARM PL310 L2CC
 arma9tmr0	at armperiph?		# A9 Global Timer
-a9wdt0		at armperiph? flags 1	# A9 Watchdog Timer
+arma9wdt0	at armperiph? flags 1	# A9 Watchdog Timer
 
 # ChipCommonA Peripherals
 bcmcca0		at mainbus?		# ChipCommonA

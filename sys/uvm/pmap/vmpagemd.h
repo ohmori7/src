@@ -1,4 +1,4 @@
-/*	$NetBSD: vmpagemd.h,v 1.8 2018/04/19 21:50:10 christos Exp $	*/
+/*	$NetBSD: vmpagemd.h,v 1.17 2020/12/20 16:38:26 skrll Exp $	*/
 
 /*-
  * Copyright (c) 2011 The NetBSD Foundation, Inc.
@@ -63,24 +63,28 @@ typedef struct pv_entry {
 #define	PV_KENTER		__BIT(0)
 } *pv_entry_t;
 
+#define	PV_ISKENTER_P(pv)	(((pv->pv_va) & PV_KENTER) != 0)
+
 #ifndef _MODULE
 
-#define	VM_PAGEMD_REFERENCED	__BIT(0)	/* page has been referenced */
-#define	VM_PAGEMD_MODIFIED	__BIT(1)	/* page has been modified */
-#define	VM_PAGEMD_POOLPAGE	__BIT(2)	/* page is used as a poolpage */
-#define	VM_PAGEMD_EXECPAGE	__BIT(3)	/* page is exec mapped */
+#define	VM_PAGEMD_VMPAGE	__BIT(0)	/* page is vm managed */
+#define	VM_PAGEMD_REFERENCED	__BIT(1)	/* page has been referenced */
+#define	VM_PAGEMD_MODIFIED	__BIT(2)	/* page has been modified */
+#define	VM_PAGEMD_POOLPAGE	__BIT(3)	/* page is used as a poolpage */
+#define	VM_PAGEMD_EXECPAGE	__BIT(4)	/* page is exec mapped */
 #ifdef PMAP_VIRTUAL_CACHE_ALIASES
-#define	VM_PAGEMD_UNCACHED	__BIT(4)	/* page is mapped uncached */
+#define	VM_PAGEMD_UNCACHED	__BIT(5)	/* page is mapped uncached */
 #endif
 
+#define	VM_PAGEMD_VMPAGE_P(mdpg)	(((mdpg)->mdpg_attrs & VM_PAGEMD_VMPAGE) != 0)
+#define	VM_PAGEMD_REFERENCED_P(mdpg)	(((mdpg)->mdpg_attrs & VM_PAGEMD_REFERENCED) != 0)
+#define	VM_PAGEMD_MODIFIED_P(mdpg)	(((mdpg)->mdpg_attrs & VM_PAGEMD_MODIFIED) != 0)
+#define	VM_PAGEMD_POOLPAGE_P(mdpg)	(((mdpg)->mdpg_attrs & VM_PAGEMD_POOLPAGE) != 0)
+#define	VM_PAGEMD_EXECPAGE_P(mdpg)	(((mdpg)->mdpg_attrs & VM_PAGEMD_EXECPAGE) != 0)
 #ifdef PMAP_VIRTUAL_CACHE_ALIASES
 #define	VM_PAGEMD_CACHED_P(mdpg)	(((mdpg)->mdpg_attrs & VM_PAGEMD_UNCACHED) == 0)
 #define	VM_PAGEMD_UNCACHED_P(mdpg)	(((mdpg)->mdpg_attrs & VM_PAGEMD_UNCACHED) != 0)
 #endif
-#define	VM_PAGEMD_MODIFIED_P(mdpg)	(((mdpg)->mdpg_attrs & VM_PAGEMD_MODIFIED) != 0)
-#define	VM_PAGEMD_REFERENCED_P(mdpg)	(((mdpg)->mdpg_attrs & VM_PAGEMD_REFERENCED) != 0)
-#define	VM_PAGEMD_POOLPAGE_P(mdpg)	(((mdpg)->mdpg_attrs & VM_PAGEMD_POOLPAGE) != 0)
-#define	VM_PAGEMD_EXECPAGE_P(mdpg)	(((mdpg)->mdpg_attrs & VM_PAGEMD_EXECPAGE) != 0)
 
 #endif /* !_MODULE */
 
@@ -94,22 +98,18 @@ struct vm_page_md {
 
 #ifndef _MODULE
 #if defined(MULTIPROCESSOR) || defined(MODULAR)
-#define	VM_PAGEMD_PVLIST_LOCK_INIT(mdpg) 	\
-	(mdpg)->mdpg_lock = NULL
+#define	VM_PAGEMD_PVLIST_LOCK_INIT(mdpg) 	(mdpg)->mdpg_lock = NULL
 #else
-#define	VM_PAGEMD_PVLIST_LOCK_INIT(mdpg)	do { } while (/*CONSTCOND*/ 0)
+#define	VM_PAGEMD_PVLIST_LOCK_INIT(mdpg)	__nothing
 #endif /* MULTIPROCESSOR || MODULAR */
 
-#define	VM_PAGEMD_PVLIST_LOCK(mdpg)		\
-	pmap_pvlist_lock(mdpg, 1)
-#define	VM_PAGEMD_PVLIST_READLOCK(mdpg)		\
-	pmap_pvlist_lock(mdpg, 0)
-#define	VM_PAGEMD_PVLIST_UNLOCK(mdpg)		\
-	pmap_pvlist_unlock(mdpg)
-#define	VM_PAGEMD_PVLIST_LOCKED_P(mdpg)		\
-	pmap_pvlist_locked_p(mdpg)
-#define	VM_PAGEMD_PVLIST_GEN(mdpg)		\
-	((mdpg)->mdpg_attrs >> 16)
+#define	VM_PAGEMD_PVLIST_LOCK(mdpg)	pmap_pvlist_lock(mdpg, 1)
+#define	VM_PAGEMD_PVLIST_READLOCK(mdpg)	pmap_pvlist_lock(mdpg, 0)
+#define	VM_PAGEMD_PVLIST_UNLOCK(mdpg)	pmap_pvlist_unlock(mdpg)
+#define	VM_PAGEMD_PVLIST_LOCKED_P(mdpg)	pmap_pvlist_locked_p(mdpg)
+#define	VM_PAGEMD_PVLIST_GEN(mdpg)	((mdpg)->mdpg_attrs >> 16)
+
+#define	VM_PAGEMD_PVLIST_EMPTY_P(mdpg)	((mdpg)->mdpg_first.pv_pmap == NULL)
 
 #ifdef _KERNEL
 #if defined(MULTIPROCESSOR) || defined(MODULAR)
@@ -143,6 +143,7 @@ pmap_pvlist_unlock(struct vm_page_md *mdpg)
 static __inline bool
 pmap_pvlist_locked_p(struct vm_page_md *mdpg)
 {
+
 	return mutex_owned(pmap_pvlist_lock_addr(mdpg));
 }
 #endif /* _KERNEL */
@@ -151,8 +152,8 @@ pmap_pvlist_locked_p(struct vm_page_md *mdpg)
 do {									\
 	(pg)->mdpage.mdpg_first.pv_next = NULL;				\
 	(pg)->mdpage.mdpg_first.pv_pmap = NULL;				\
-	(pg)->mdpage.mdpg_first.pv_va = (pg)->phys_addr;		\
-	(pg)->mdpage.mdpg_attrs = 0;					\
+	(pg)->mdpage.mdpg_first.pv_va = VM_PAGE_TO_PHYS(pg);		\
+	(pg)->mdpage.mdpg_attrs = VM_PAGEMD_VMPAGE;			\
 	VM_PAGEMD_PVLIST_LOCK_INIT(&(pg)->mdpage);			\
 } while (/* CONSTCOND */ 0)
 

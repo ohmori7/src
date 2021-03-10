@@ -1,4 +1,4 @@
-/*	$NetBSD: md.c,v 1.3 2019/06/12 06:20:23 martin Exp $	*/
+/*	$NetBSD: md.c,v 1.6 2020/10/12 16:14:36 martin Exp $	*/
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -107,7 +107,7 @@ md_get_info(struct install_partition_desc *install)
 /*
  * md back-end code for menu-driven BSD disklabel editor.
  */
-bool
+int
 md_make_bsd_partitions(struct install_partition_desc *install)
 {
 	return make_bsd_partitions(install);
@@ -132,7 +132,7 @@ md_pre_disklabel(struct install_partition_desc *install,
 	char diskpath[MAXPATHLEN];
 
 	if (clear_mbr(pm->diskdev, diskpath, sizeof(diskpath)) == -1) {
-		msg_display(MSG_badclearmbr, diskpath);
+		msg_fmt_display(MSG_badclearmbr, "%s", diskpath);
 		process_menu(MENU_ok, NULL);
 	}
 
@@ -224,7 +224,7 @@ clear_mbr(const char *disk, char *diskpath, size_t diskpathlen)
 }
 
 int
-md_pre_mount(struct install_partition_desc *install)
+md_pre_mount(struct install_partition_desc *install, size_t ndx)
 {
 	return 0;
 }

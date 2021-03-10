@@ -1,4 +1,4 @@
-# $NetBSD: Makefile.boot,v 1.72 2018/07/25 23:45:32 kamil Exp $
+# $NetBSD: Makefile.boot,v 1.75 2020/09/06 07:20:28 mrg Exp $
 
 S=	${.CURDIR}/../../../../..
 
@@ -11,7 +11,8 @@ NEWVERSWHAT?= "BIOS Boot"
 
 AFLAGS.biosboot.S= ${${ACTIVE_CC} == "clang":?-no-integrated-as:}
 
-SOURCES?= biosboot.S boot2.c conf.c devopen.c exec.c
+SOURCES?= biosboot.S boot2.c conf.c devopen.c exec.c \
+	  exec_multiboot1.c exec_multiboot2.c
 SRCS= ${SOURCES}
 
 .include <bsd.init.mk>
@@ -51,6 +52,10 @@ COPTS+=    -ffreestanding
 CFLAGS+= -Wall -Wmissing-prototypes -Wstrict-prototypes
 CPPFLAGS+= -nostdinc -D_STANDALONE
 CPPFLAGS+= -I$S
+
+.if ${KERNEL_DIR:Uno} == "yes"
+CPPFLAGS+= -DKERNEL_DIR
+.endif
 
 CPPFLAGS+= -DSUPPORT_PS2
 CPPFLAGS+= -DDIRECT_SERIAL
@@ -148,6 +153,8 @@ ${PROG}: ${OBJS} ${LIBLIST} ${LDSCRIPT} ${.CURDIR}/../Makefile.boot
 	${CC} -o ${PROG}.sym ${LDFLAGS} -Wl,-Ttext,0 -T ${LDSCRIPT} \
 		-Wl,-Map,${PROG}.map -Wl,-cref ${OBJS} $$bb ${LIBLIST}
 	${OBJCOPY} -O binary ${PROG}.sym ${PROG}
+
+CWARNFLAGS.gcc+=	${GCC_NO_ADDR_OF_PACKED_MEMBER}
 
 .include <bsd.prog.mk>
 KLINK_MACHINE=	i386

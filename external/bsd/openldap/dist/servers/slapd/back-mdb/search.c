@@ -1,10 +1,10 @@
-/*	$NetBSD: search.c,v 1.1.1.3 2018/02/06 01:53:17 christos Exp $	*/
+/*	$NetBSD: search.c,v 1.2 2020/08/11 13:15:40 christos Exp $	*/
 
 /* search.c - search operation */
 /* $OpenLDAP$ */
 /* This work is part of OpenLDAP Software <http://www.openldap.org/>.
  *
- * Copyright 2000-2017 The OpenLDAP Foundation.
+ * Copyright 2000-2020 The OpenLDAP Foundation.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -17,7 +17,7 @@
  */
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: search.c,v 1.1.1.3 2018/02/06 01:53:17 christos Exp $");
+__RCSID("$NetBSD: search.c,v 1.2 2020/08/11 13:15:40 christos Exp $");
 
 #include "portable.h"
 
@@ -166,6 +166,12 @@ static int search_aliases(
 	if (rs->sr_err != LDAP_SUCCESS || MDB_IDL_IS_ZERO( aliases )) {
 		return rs->sr_err;
 	}
+	if ( op->ors_limit	/* isroot == FALSE */ &&
+		op->ors_limit->lms_s_unchecked != -1 &&
+		MDB_IDL_N( aliases ) > (unsigned) op->ors_limit->lms_s_unchecked )
+	{
+		return LDAP_ADMINLIMIT_EXCEEDED;
+	}
 	oldsubs[0] = 1;
 	oldsubs[1] = e_id;
 
@@ -297,7 +303,6 @@ static void scope_chunk_free( void *key, void *data )
 
 static ID2 *scope_chunk_get( Operation *op )
 {
-	struct mdb_info *mdb = (struct mdb_info *) op->o_bd->be_private;
 	ID2 *ret = NULL;
 
 	ldap_pvt_thread_pool_getkey( op->o_threadctx, (void *)scope_chunk_get,
@@ -314,7 +319,6 @@ static ID2 *scope_chunk_get( Operation *op )
 
 static void scope_chunk_ret( Operation *op, ID2 *scopes )
 {
-	struct mdb_info *mdb = (struct mdb_info *) op->o_bd->be_private;
 	void *ret = NULL;
 
 	ldap_pvt_thread_pool_getkey( op->o_threadctx, (void *)scope_chunk_get,
@@ -332,7 +336,7 @@ typedef struct ww_ctx {
 	ID key;
 	MDB_val data;
 	int flag;
-	int nentries;
+	unsigned nentries;
 } ww_ctx;
 
 /* ITS#7904 if we get blocked while writing results to client,
@@ -672,6 +676,10 @@ dn2entry_retry:
 		scopes[1].mval.mv_data = NULL;
 		rs->sr_err = search_candidates( op, rs, base,
 			&isc, mci, candidates, stack );
+
+		if ( rs->sr_err == LDAP_ADMINLIMIT_EXCEEDED )
+			goto adminlimit;
+
 		ncand = MDB_IDL_N( candidates );
 		if ( !base->e_id || ncand == NOID ) {
 			/* grab entry count from id2entry stat
@@ -703,6 +711,7 @@ dn2entry_retry:
 		ncand > (unsigned) op->ors_limit->lms_s_unchecked )
 	{
 		rs->sr_err = LDAP_ADMINLIMIT_EXCEEDED;
+adminlimit:
 		send_ldap_result( op, rs );
 		rs->sr_err = LDAP_SUCCESS;
 		goto done;
@@ -1129,8 +1138,11 @@ loop_continue:
 		if ( moi == &opinfo && !wwctx.flag && mdb->mi_rtxn_size ) {
 			wwctx.nentries++;
 			if ( wwctx.nentries >= mdb->mi_rtxn_size ) {
+				MDB_envinfo ei;
 				wwctx.nentries = 0;
-				mdb_rtxn_snap( op, &wwctx );
+				mdb_env_info(mdb->mi_dbenv, &ei);
+				if ( ei.me_last_txnid > mdb_txn_id( ltid ))
+					mdb_rtxn_snap( op, &wwctx );
 			}
 		}
 		if ( wwctx.flag ) {

@@ -1,4 +1,4 @@
-/*	$NetBSD: main.c,v 1.75 2019/03/25 02:13:01 manu Exp $	*/
+/*	$NetBSD: main.c,v 1.78 2020/12/03 08:25:57 kre Exp $	*/
 
 /*-
  * Copyright (c) 1980, 1991, 1993, 1994
@@ -39,7 +39,7 @@ __COPYRIGHT("@(#) Copyright (c) 1980, 1991, 1993, 1994\
 #if 0
 static char sccsid[] = "@(#)main.c	8.6 (Berkeley) 5/1/95";
 #else
-__RCSID("$NetBSD: main.c,v 1.75 2019/03/25 02:13:01 manu Exp $");
+__RCSID("$NetBSD: main.c,v 1.78 2020/12/03 08:25:57 kre Exp $");
 #endif
 #endif /* not lint */
 
@@ -69,9 +69,46 @@ __RCSID("$NetBSD: main.c,v 1.75 2019/03/25 02:13:01 manu Exp $");
 #include "pathnames.h"
 #include "snapshot.h"
 
+union u_spcl u_spcl;
+struct ufsi *ufsib;
+int	mapsize;
+char	*usedinomap;
+char	*dumpdirmap;
+char	*dumpinomap;
+char	*disk;
+char	*disk_dev;
+const char *tape;
+const char *dumpdates;
+const char *temp;
+char	lastlevel;
+char	level;
+int	uflag;
+const char *dumpdev;
+int	eflag;
+int	lflag;
+int	diskfd;
+int	tapefd;
+int	pipeout;
+int	trueinc;
+ino_t	curino;
+int	newtape;
+u_int64_t	tapesize;
+long	tsize;
+long	asize;
+int	etapes;
+int	nonodump;
+int	unlimited;
+time_t	tstart_writing;
+time_t	tstart_volume;
+int	xferrate;
+char	sblock_buf[MAXBSIZE];
+int	dev_bshift;
+int	tp_bshift;
+int needswap;
+
 int	timestamp;		/* print message timestamps */
 int	notify;			/* notify operator flag */
-int	blockswritten;		/* number of blocks written on current tape */
+u_int64_t	blockswritten;	/* number of blocks written on current tape */
 int	tapeno;			/* current tape number */
 int	density;		/* density in bytes/0.1" */
 int	ntrec = NTREC;		/* # tape blocks in each tape record */
@@ -133,7 +170,7 @@ main(int argc, char *argv[])
 
 	obsolete(&argc, &argv);
 	while ((ch = getopt(argc, argv,
-	    "0123456789aB:b:cd:eFf:h:ik:l:L:nr:s:StT:uU:Wwx:X")) != -1)
+	    "0123456789aB:b:cd:D:eFf:h:ik:l:L:nr:s:StT:uU:Wwx:X")) != -1)
 		switch (ch) {
 		/* dump level */
 		case '0': case '1': case '2': case '3': case '4':
@@ -162,6 +199,10 @@ main(int argc, char *argv[])
 			density = numarg("density", 10L, 327670L) / 10;
 			if (density >= 625 && !bflag)
 				ntrec = HIGHDENSITYTREC;
+			break;
+
+		case 'D':		/* specify alt. dumpdates file */
+			dumpdates = optarg;
 			break;
 
 		case 'e':		/* eject full tapes */

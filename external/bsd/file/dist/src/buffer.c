@@ -1,4 +1,4 @@
-/*	$NetBSD: buffer.c,v 1.1.1.2 2019/05/22 17:19:56 christos Exp $	*/
+/*	$NetBSD: buffer.c,v 1.1.1.4 2020/06/15 00:18:47 christos Exp $	*/
 
 /*
  * Copyright (c) Christos Zoulas 2017.
@@ -30,9 +30,9 @@
 
 #ifndef	lint
 #if 0
-FILE_RCSID("@(#)$File: buffer.c,v 1.6 2019/05/07 02:27:11 christos Exp $")
+FILE_RCSID("@(#)$File: buffer.c,v 1.8 2020/02/16 15:52:49 christos Exp $")
 #else
-__RCSID("$NetBSD: buffer.c,v 1.1.1.2 2019/05/22 17:19:56 christos Exp $");
+__RCSID("$NetBSD: buffer.c,v 1.1.1.4 2020/06/15 00:18:47 christos Exp $");
 #endif
 #endif	/* lint */
 
@@ -70,7 +70,7 @@ buffer_fill(const struct buffer *bb)
 	struct buffer *b = CCAST(struct buffer *, bb);
 
 	if (b->elen != 0)
-		return b->elen == CAST(size_t, ~0) ? -1 : 0;
+		return b->elen == FILE_BADSIZE ? -1 : 0;
 
 	if (!S_ISREG(b->st.st_mode))
 		goto out;
@@ -83,11 +83,12 @@ buffer_fill(const struct buffer *bb)
 	b->eoff = b->st.st_size - b->elen;
 	if (pread(b->fd, b->ebuf, b->elen, b->eoff) == -1) {
 		free(b->ebuf);
+		b->ebuf = NULL;
 		goto out;
 	}
 
 	return 0;
 out:
-	b->elen = CAST(size_t, ~0);
+	b->elen = FILE_BADSIZE;
 	return -1;
 }

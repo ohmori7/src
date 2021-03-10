@@ -1,4 +1,4 @@
-/*	$NetBSD: pxa2x0_hpc_machdep.c,v 1.25 2018/10/28 14:30:32 skrll Exp $	*/
+/*	$NetBSD: pxa2x0_hpc_machdep.c,v 1.29 2020/04/18 11:00:41 skrll Exp $	*/
 
 /*
  * Copyright (c) 1994-1998 Mark Brinicombe.
@@ -40,12 +40,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pxa2x0_hpc_machdep.c,v 1.25 2018/10/28 14:30:32 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pxa2x0_hpc_machdep.c,v 1.29 2020/04/18 11:00:41 skrll Exp $");
 
 #include "opt_ddb.h"
 #include "opt_dram_pages.h"
 #include "opt_modular.h"
-#include "opt_pmap_debug.h"
 #include "ksyms.h"
 
 #include <sys/param.h>
@@ -113,10 +112,6 @@ extern paddr_t msgbufphys;
 
 extern int end;
 
-#ifdef PMAP_DEBUG
-extern int pmap_debug_level;
-#endif /* PMAP_DEBUG */
-
 #define	KERNEL_PT_SYS		0	/* Page table for mapping proc0 zero page */
 #define	KERNEL_PT_KERNEL	1	/* Page table for mapping kernel */
 #define	KERNEL_PT_KERNEL_NUM	4
@@ -135,7 +130,7 @@ void prefetch_abort_handler(trapframe_t *);
 void undefinedinstruction_bounce(trapframe_t *);
 u_int cpu_get_control(void);
 
-u_int init_pxa2x0(int, char **, struct bootinfo *);
+vaddr_t init_pxa2x0(int, char **, struct bootinfo *);
 
 /* Machine dependent initialize function */
 extern void pxa2x0_machdep_init(void);
@@ -238,7 +233,7 @@ read_ttb(void)
  *   Initializing the physical console so characters can be printed.
  *   Setting up page tables for the kernel.
  */
-u_int
+vaddr_t
 init_pxa2x0(int argc, char **argv, struct bootinfo *bi)
 {
 #ifdef DIAGNOSTIC
@@ -312,10 +307,10 @@ init_pxa2x0(int argc, char **argv, struct bootinfo *bi)
 	physical_end = bootconfig.dram[bootconfig.dramblocks - 1].address
 	    + bootconfig.dram[bootconfig.dramblocks - 1].pages * PAGE_SIZE;
 	physical_freeend = physical_end;
-    
+
 	for (loop = 0; loop < bootconfig.dramblocks; ++loop)
 		physmem += bootconfig.dram[loop].pages;
-    
+
 	/* XXX handle UMA framebuffer memory */
 
 	freemempos = 0xa0009000UL;
@@ -395,13 +390,13 @@ init_pxa2x0(int argc, char **argv, struct bootinfo *bi)
 
 #ifdef VERBOSE_INIT_ARM
 	printf("IRQ stack: p0x%08lx v0x%08lx\n", irqstack.pv_pa,
-	    irqstack.pv_va); 
+	    irqstack.pv_va);
 	printf("ABT stack: p0x%08lx v0x%08lx\n", abtstack.pv_pa,
-	    abtstack.pv_va); 
+	    abtstack.pv_va);
 	printf("UND stack: p0x%08lx v0x%08lx\n", undstack.pv_pa,
-	    undstack.pv_va); 
+	    undstack.pv_va);
 	printf("SVC stack: p0x%08lx v0x%08lx\n", kernelstack.pv_pa,
-	    kernelstack.pv_va); 
+	    kernelstack.pv_va);
 #endif
 
 	alloc_pages(msgbufphys, round_page(MSGBUFSIZE) / PAGE_SIZE);
@@ -544,11 +539,10 @@ init_pxa2x0(int argc, char **argv, struct bootinfo *bi)
 	    abtstack.pv_va + ABT_STACK_SIZE * PAGE_SIZE);
 	set_stackptr(PSR_UND32_MODE,
 	    undstack.pv_va + UND_STACK_SIZE * PAGE_SIZE);
-#ifdef PMAP_DEBUG
-	if (pmap_debug_level >= 0)
-		printf("kstack V%08lx P%08lx\n", kernelstack.pv_va,
-		    kernelstack.pv_pa);
-#endif /* PMAP_DEBUG */
+#ifdef VERBOSE_INIT_ARM
+	printf("kstack V%08lx P%08lx\n", kernelstack.pv_va,
+	    kernelstack.pv_pa);
+#endif /* VERBOSE_INIT_ARM */
 
 	/*
 	 * Well we should set a data abort handler.
@@ -566,7 +560,7 @@ init_pxa2x0(int argc, char **argv, struct bootinfo *bi)
 	undefined_handler_address = (u_int)undefinedinstruction_bounce;
 #ifdef DEBUG
 	printf("%08x %08x %08x\n", data_abort_handler_address,
-	    prefetch_abort_handler_address, undefined_handler_address); 
+	    prefetch_abort_handler_address, undefined_handler_address);
 #endif
 
 	/* Initialize the undefined instruction handlers */
@@ -638,7 +632,7 @@ init_pxa2x0(int argc, char **argv, struct bootinfo *bi)
 #endif /* DDB */
 
 	/* We return the new stack pointer address */
-	return (kernelstack.pv_va + USPACE_SVC_STACK_TOP);
+	return kernelstack.pv_va + USPACE_SVC_STACK_TOP;
 }
 
 #ifdef DEBUG_BEFOREMMU

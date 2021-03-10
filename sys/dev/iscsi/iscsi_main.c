@@ -1,4 +1,4 @@
-/*	$NetBSD: iscsi_main.c,v 1.29 2019/04/21 11:26:46 mlelstv Exp $	*/
+/*	$NetBSD: iscsi_main.c,v 1.34 2021/03/07 12:30:03 mlelstv Exp $	*/
 
 /*-
  * Copyright (c) 2004,2005,2006,2011 The NetBSD Foundation, Inc.
@@ -217,12 +217,7 @@ iscsiattach(int n)
 		aprint_error("%s: only one device supported\n",
 		    iscsi_cd.cd_name);
 
-	cf = kmem_alloc(sizeof(struct cfdata), KM_NOSLEEP);
-	if (cf == NULL) {
-		aprint_error("%s: couldn't allocate cfdata\n",
-		    iscsi_cd.cd_name);
-		return;
-	}
+	cf = kmem_alloc(sizeof(struct cfdata), KM_SLEEP);
 	cf->cf_name = iscsi_cd.cd_name;
 	cf->cf_atname = iscsi_cd.cd_name;
 	cf->cf_unit = 0;
@@ -252,7 +247,10 @@ iscsi_attach(device_t parent, device_t self, void *aux)
 	iscsi_detaching = false;
 	iscsi_init_cleanup();
 
-	aprint_normal("%s: attached.  major = %d\n", iscsi_cd.cd_name,
+	if (!pmf_device_register(self, NULL, NULL))
+		aprint_error_dev(self, "couldn't establish power handler\n");
+
+	aprint_verbose("%s: attached.  major = %d\n", iscsi_cd.cd_name,
 	    cdevsw_lookup_major(&iscsi_cdevsw));
 }
 
@@ -284,6 +282,8 @@ iscsi_detach(device_t self, int flags)
 	error = iscsi_destroy_cleanup();
 	if (error)
 		return error;
+
+	pmf_device_deregister(sc->dev);
 
 	mutex_destroy(&sc->lock);
 
@@ -422,11 +422,12 @@ unmap_session(session_t *sess)
  * grow_resources
  *    Try to grow openings up to current window size
  */
-static void
+static int
 grow_resources(session_t *sess)
 {
 	struct scsipi_adapter *adapt = &sess->s_sc_adapter;
 	int win;
+	int rc = -1;
 
 	mutex_enter(&sess->s_lock);
 	if (sess->s_refcount < CCBS_FOR_SCSIPI &&
@@ -435,10 +436,13 @@ grow_resources(session_t *sess)
 		if (win > sess->s_send_window) {
 			sess->s_send_window++;
 			adapt->adapt_openings++;
+			rc = 0;
 			DEB(5, ("Grow send window to %d\n", sess->s_send_window));
 		}
 	}
 	mutex_exit(&sess->s_lock);
+
+	return rc;
 }
 
 /******************************************************************************/
@@ -508,7 +512,10 @@ iscsi_scsipi_request(struct scsipi_channel *chan, scsipi_adapter_req_t req,
 
 	case ADAPTER_REQ_GROW_RESOURCES:
 		DEB(5, ("ISCSI: scsipi_request GROW_RESOURCES\n"));
-		grow_resources(sess);
+		if (grow_resources(sess)) {
+			/* reached maximum */
+			chan->chan_flags &= ~SCSIPI_CHAN_CANGROW;
+		}
 		break;
 
 	case ADAPTER_REQ_SET_XFER_MODE:
@@ -672,7 +679,6 @@ iscsi_modcmd(modcmd_t cmd, void *arg)
 #ifdef _MODULE
 	devmajor_t cmajor = NODEVMAJOR, bmajor = NODEVMAJOR;
 	int error;
-	static struct sysctllog *clog;
 #endif
 
 	switch (cmd) {
@@ -718,8 +724,6 @@ iscsi_modcmd(modcmd_t cmd, void *arg)
 			config_cfdriver_detach(&iscsi_cd);
 			return ENXIO;
 		}
-
-		sysctl_iscsi_setup(&clog);
 #endif
 		return 0;
 		break;
@@ -729,8 +733,6 @@ iscsi_modcmd(modcmd_t cmd, void *arg)
 		error = config_cfdata_detach(iscsi_cfdata);
 		if (error)
 			return error;
-
-		sysctl_teardown(&clog);
 
 		config_cfattach_detach(iscsi_cd.cd_name, &iscsi_ca);
 		config_cfdriver_detach(&iscsi_cd);

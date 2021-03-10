@@ -1,4 +1,4 @@
-/*	$NetBSD: sctp_output.c,v 1.18 2018/12/22 14:28:57 maxv Exp $ */
+/*	$NetBSD: sctp_output.c,v 1.22 2020/06/13 01:41:59 roy Exp $ */
 /*	$KAME: sctp_output.c,v 1.48 2005/06/16 18:29:24 jinmei Exp $	*/
 
 /*
@@ -30,7 +30,7 @@
  * SUCH DAMAGE.
  */
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: sctp_output.c,v 1.18 2018/12/22 14:28:57 maxv Exp $");
+__KERNEL_RCSID(0, "$NetBSD: sctp_output.c,v 1.22 2020/06/13 01:41:59 roy Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_ipsec.h"
@@ -1761,7 +1761,7 @@ sctp_choose_v6_boundall(struct sctp_inpcb *inp,
 			/* by definition the scope (from to->sin6_scopeid)
 			 * must match that of the interface. If not then
 			 * we could pick a wrong scope for the address.
-			 * Ususally we don't hit plan-b since the route
+			 * Usually we don't hit plan-b since the route
 			 * handles this. However we can hit plan-b when
 			 * we send to local-host so the route is the
 			 * loopback interface, but the destination is a
@@ -2476,11 +2476,11 @@ sctp_lowlevel_chunk_output(struct sctp_inpcb *inp,
 				}
 				rtcache_unref(rt, ro);
 			} else if (ifp) {
-				if (ND_IFINFO(ifp)->linkmtu &&
-				    (stcb->asoc.smallest_mtu > ND_IFINFO(ifp)->linkmtu)) {
+				if (ifp->if_mtu &&
+				    (stcb->asoc.smallest_mtu > ifp->if_mtu)) {
 					sctp_mtu_size_reset(inp,
 							    &stcb->asoc,
-							    ND_IFINFO(ifp)->linkmtu);
+							    ifp->if_mtu);
 				}
 			}
 		}
@@ -2507,9 +2507,7 @@ int sctp_is_address_in_scope(struct ifaddr *ifa,
 			     int local_scope,
 			     int site_scope)
 {
-	if ((loopback_scope == 0) &&
-	    (ifa->ifa_ifp) &&
-	    (ifa->ifa_ifp->if_type == IFT_LOOP)) {
+	if ((loopback_scope == 0) && (ifa->ifa_ifp->if_type == IFT_LOOP)) {
 		/* skip loopback if not in scope *
 		 */
 		return (0);
@@ -5782,7 +5780,7 @@ sctp_med_chunk_output(struct sctp_inpcb *inp,
 						}
 						return (ENOMEM);
 					}
-					/* upate our MTU size */
+					/* update our MTU size */
 					/* Do clear IP_DF ? */
 					if (chk->flags & CHUNK_FLAGS_FRAGMENT_OK) {
 						no_fragmentflg = 0;
@@ -6681,7 +6679,7 @@ sctp_chunk_retransmission(struct sctp_inpcb *inp,
 			if (m == NULL) {
 				return (ENOMEM);
 			}
-			/* upate our MTU size */
+			/* update our MTU size */
 			/* Do clear IP_DF ? */
 			if (chk->flags & CHUNK_FLAGS_FRAGMENT_OK) {
 				no_fragmentflg = 0;
@@ -6712,7 +6710,7 @@ sctp_chunk_retransmission(struct sctp_inpcb *inp,
 					if (m == NULL) {
 						return (ENOMEM);
 					}
-					/* upate our MTU size */
+					/* update our MTU size */
 					/* Do clear IP_DF ? */
 					if (fwd->flags & CHUNK_FLAGS_FRAGMENT_OK) {
 						no_fragmentflg = 0;

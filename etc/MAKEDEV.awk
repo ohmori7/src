@@ -1,6 +1,6 @@
 #!/usr/bin/awk -
 #
-#	$NetBSD: MAKEDEV.awk,v 1.26 2019/06/13 20:54:04 christos Exp $
+#	$NetBSD: MAKEDEV.awk,v 1.29 2020/06/13 19:46:23 thorpej Exp $
 #
 # Copyright (c) 2003 The NetBSD Foundation, Inc.
 # All rights reserved.
@@ -104,10 +104,33 @@ BEGIN {
 	getline < cfgfile		# blank line
 	MDDEV = 0		# MD device targets
 	while (getline < cfgfile) {
+		#
+		# Perform the same blk / chr subsitution that happens below.
+		#
+		md_deventry = $0
+		if (match(md_deventry, /%[a-z0-9]*_(blk|chr)%/)) {
+			nam = substr(md_deventry, RSTART + 1, RLENGTH - 6);
+			typ = substr(md_deventry, RSTART + RLENGTH - 4, 3);
+			dev = ""
+			if (typ == "blk") {
+				if (nam in blk) {
+					dev = blk[nam];
+				}
+			} else {
+				if (nam in chr) {
+					dev = chr[nam];
+				}
+			}
+			if (dev != "") {
+				parsed = substr(md_deventry, 1, RSTART - 1) dev
+				md_deventry = substr(md_deventry, RSTART + RLENGTH)
+			}
+			md_deventry = parsed md_deventry
+		}
 		if (MDDEV)
-			MDDEV = MDDEV "\n" $0
+			MDDEV = MDDEV "\n" md_deventry
 		else
-			MDDEV = $0
+			MDDEV = md_deventry
 	}
 	close(cfgfile)
 
@@ -135,7 +158,18 @@ BEGIN {
 				diskpartitions = $3
 			else if ($1 == "#define" && $2 == "OLDMAXPARTITIONS")
 				diskbackcompat = $3
-			else if ($1 == "#define" && $2 == "RAW_PART")
+			else if ($1 == "#ifndef" && $2 == "RAW_PART" &&
+			    RAWDISK_OFF) {
+				# special case to ignore #ifndef RAW_PART
+				# sections (e.g. in arm/include/disklabel.h,
+				# when it is already set in
+				# zaurus/include/disklabel.h)
+				while (getline < inc) {
+					# skip all lines upto the next #endif
+					if ($1 == "#endif")
+						break;
+				}
+			} else if ($1 == "#define" && $2 == "RAW_PART")
 				RAWDISK_OFF = $3
 			else if ($1 == "#include" && 
 				 $2 ~ "<.*/disklabel.h>" &&
@@ -214,7 +248,7 @@ BEGIN {
 	print "# Generated from:"
 
 	# MAKEDEV.awk (this script) RCS Id
-	ARCSID = "$NetBSD: MAKEDEV.awk,v 1.26 2019/06/13 20:54:04 christos Exp $"
+	ARCSID = "$NetBSD: MAKEDEV.awk,v 1.29 2020/06/13 19:46:23 thorpej Exp $"
 	gsub(/\$/, "", ARCSID)
 	print "#	" ARCSID
 	
@@ -305,7 +339,7 @@ BEGIN {
 		# or block device definition remains within the entry,
 		# print it to output, otherwise scrap it.
 		parsed = ""
-		while (match(deventry, /%[a-z]*_(blk|chr)%/)) {
+		while (match(deventry, /%[a-z0-9]*_(blk|chr)%/)) {
 			nam = substr(deventry, RSTART + 1, RLENGTH - 6);
 			typ = substr(deventry, RSTART + RLENGTH - 4, 3);
 			if (typ == "blk") {

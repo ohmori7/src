@@ -1,4 +1,4 @@
-/*	$NetBSD: md.c,v 1.5 2019/06/12 06:20:19 martin Exp $	*/
+/*	$NetBSD: md.c,v 1.9 2020/10/12 16:14:33 martin Exp $	*/
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -109,7 +109,7 @@ md_get_info(struct install_partition_desc *install)
 /*
  * md back-end code for menu-driven BSD disklabel editor.
  */
-bool
+int
 md_make_bsd_partitions(struct install_partition_desc *install)
 {
 	return make_bsd_partitions(install);
@@ -168,13 +168,18 @@ md_post_extract(struct install_partition_desc *install)
 
 	strlcpy(ldr_path, target_expand("/boot.emips"), sizeof ldr_path);
 
-	msg_display(MSG_dobootblks, "");
+	msg_display(MSG_dobootblks);
 
 	if (ask_noyes(NULL)) {
 		if (run_program(RUN_DISPLAY | RUN_NO_CLEAR,
 		    "/bin/dd if=%s of=/dev/reflash0c bs=512", ldr_path))
 			process_menu(MENU_ok, __UNCONST("Warning: the system "
 			    "is probably not bootable"));
+
+		wclear(stdscr);
+		touchwin(stdscr);
+		clearok(stdscr, 1);
+		refresh();
 	}
 
 	return 0;
@@ -203,7 +208,7 @@ md_update(struct install_partition_desc *install)
 }
 
 int
-md_pre_mount(struct install_partition_desc *install)
+md_pre_mount(struct install_partition_desc *install, size_t ndx)
 {
 	return 0;
 }

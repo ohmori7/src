@@ -1,6 +1,6 @@
 /* Native-dependent code for NetBSD/i386.
 
-   Copyright (C) 2004-2019 Free Software Foundation, Inc.
+   Copyright (C) 2004-2020 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -35,16 +35,6 @@
 
 #include "nbsd-nat.h"
 #include "bsd-kvm.h"
-
-#ifndef HAVE_GREGSET_T
-typedef struct reg gregset_t;
-#endif
-
-#ifndef HAVE_FPREGSET_T
-typedef struct fpreg fpregset_t;
-#endif
-
-#include "gregset.h" 
 
 static int
 i386nbsd_supply_pcb (struct regcache *regcache, struct pcb *pcb)
@@ -89,8 +79,9 @@ i386nbsd_supply_pcb (struct regcache *regcache, struct pcb *pcb)
 
 static i386_bsd_nat_target<nbsd_nat_target> the_i386_nbsd_nat_target;
 
+void _initialize_i386nbsd_nat ();
 void
-_initialize_i386nbsd_nat (void)
+_initialize_i386nbsd_nat ()
 {
   add_inf_child_target (&the_i386_nbsd_nat_target);
 

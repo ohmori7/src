@@ -1,11 +1,11 @@
-/*	$NetBSD: ustir.c,v 1.40 2019/05/05 03:17:54 mrg Exp $	*/
+/*	$NetBSD: ustir.c,v 1.47 2020/12/18 01:40:20 thorpej Exp $	*/
 
 /*
  * Copyright (c) 2001 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
- * by David Sainty <David.Sainty@dtsp.co.nz>
+ * by David Sainty <dsainty@NetBSD.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ustir.c,v 1.40 2019/05/05 03:17:54 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ustir.c,v 1.47 2020/12/18 01:40:20 thorpej Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_usb.h"
@@ -96,6 +96,10 @@ struct ustir_softc {
 	device_t		sc_dev;
 	struct usbd_device	*sc_udev;
 	struct usbd_interface	*sc_iface;
+	enum {
+		USTIR_INIT_NONE,
+		USTIR_INIT_INITED
+	} sc_init_state;
 
 	uint8_t			*sc_ur_buf; /* Unencapsulated frame */
 	u_int			sc_ur_framelen;
@@ -142,7 +146,6 @@ struct ustir_softc {
 
 #define USTIR_WR_TIMEOUT 200
 
-Static int ustir_activate(device_t, enum devact);
 Static int ustir_open(void *, int, int, struct lwp *);
 Static int ustir_close(void *, int, int, struct lwp *);
 Static int ustir_read(void *, struct uio *, int);
@@ -211,16 +214,16 @@ ustir_dumpdata(uint8_t const *data, size_t dlen, char const *desc)
 }
 #endif
 
-int ustir_match(device_t, cfdata_t, void *);
-void ustir_attach(device_t, device_t, void *);
-void ustir_childdet(device_t, device_t);
-int ustir_detach(device_t, int);
-int ustir_activate(device_t, enum devact);
+static int ustir_match(device_t, cfdata_t, void *);
+static void ustir_attach(device_t, device_t, void *);
+static void ustir_childdet(device_t, device_t);
+static int ustir_detach(device_t, int);
+static int ustir_activate(device_t, enum devact);
 
 CFATTACH_DECL2_NEW(ustir, sizeof(struct ustir_softc), ustir_match,
     ustir_attach, ustir_detach, ustir_activate, NULL, ustir_childdet);
 
-int
+static int
 ustir_match(device_t parent, cfdata_t match, void *aux)
 {
 	struct usb_attach_arg *uaa = aux;
@@ -234,7 +237,7 @@ ustir_match(device_t parent, cfdata_t match, void *aux)
 	return UMATCH_NONE;
 }
 
-void
+static void
 ustir_attach(device_t parent, device_t self, void *aux)
 {
 	struct ustir_softc *sc = device_private(self);
@@ -250,6 +253,7 @@ ustir_attach(device_t parent, device_t self, void *aux)
 	DPRINTFN(10,("ustir_attach: sc=%p\n", sc));
 
 	sc->sc_dev = self;
+	sc->sc_init_state = USTIR_INIT_NONE;
 
 	aprint_naive("\n");
 	aprint_normal("\n");
@@ -302,11 +306,12 @@ ustir_attach(device_t parent, device_t self, void *aux)
 	sc->sc_child = config_found(self, &ia, ir_print);
 	selinit(&sc->sc_rd_sel);
 	selinit(&sc->sc_wr_sel);
+	sc->sc_init_state = USTIR_INIT_INITED;
 
 	return;
 }
 
-void
+static void
 ustir_childdet(device_t self, device_t child)
 {
 	struct ustir_softc *sc = device_private(self);
@@ -315,7 +320,7 @@ ustir_childdet(device_t self, device_t child)
 	sc->sc_child = NULL;
 }
 
-int
+static int
 ustir_detach(device_t self, int flags)
 {
 	struct ustir_softc *sc = device_private(self);
@@ -369,10 +374,12 @@ ustir_detach(device_t self, int flags)
 	if (sc->sc_child != NULL)
 		rv = config_detach(sc->sc_child, flags);
 
-	usbd_add_drv_event(USB_EVENT_DRIVER_DETACH, sc->sc_udev, sc->sc_dev);
-
-	seldestroy(&sc->sc_rd_sel);
-	seldestroy(&sc->sc_wr_sel);
+	if (sc->sc_init_state >= USTIR_INIT_INITED) {
+		usbd_add_drv_event(USB_EVENT_DRIVER_DETACH, sc->sc_udev,
+		    sc->sc_dev);
+		seldestroy(&sc->sc_rd_sel);
+		seldestroy(&sc->sc_wr_sel);
+	}
 
 	return rv;
 }
@@ -456,7 +463,7 @@ ustir_periodic(struct ustir_softc *sc)
 			    "status register read failed: %s\n",
 			     usbd_errstr(err));
 		} else {
-			DPRINTFN(10, ("%s: status register = 0x%x\n",
+			DPRINTFN(10, ("%s: status register = %#x\n",
 				      __func__,
 				      (unsigned int)regval));
 			if (sc->sc_direction == udir_output &&
@@ -1052,7 +1059,7 @@ filt_ustirrdetach(struct knote *kn)
 	int s;
 
 	s = splusb();
-	SLIST_REMOVE(&sc->sc_rd_sel.sel_klist, kn, knote, kn_selnext);
+	selremove_knote(&sc->sc_rd_sel, kn);
 	splx(s);
 }
 
@@ -1073,7 +1080,7 @@ filt_ustirwdetach(struct knote *kn)
 	int s;
 
 	s = splusb();
-	SLIST_REMOVE(&sc->sc_wr_sel.sel_klist, kn, knote, kn_selnext);
+	selremove_knote(&sc->sc_wr_sel, kn);
 	splx(s);
 }
 
@@ -1105,16 +1112,16 @@ Static int
 ustir_kqfilter(void *h, struct knote *kn)
 {
 	struct ustir_softc *sc = h;
-	struct klist *klist;
+	struct selinfo *sip;
 	int s;
 
 	switch (kn->kn_filter) {
 	case EVFILT_READ:
-		klist = &sc->sc_rd_sel.sel_klist;
+		sip = &sc->sc_rd_sel;
 		kn->kn_fop = &ustirread_filtops;
 		break;
 	case EVFILT_WRITE:
-		klist = &sc->sc_wr_sel.sel_klist;
+		sip = &sc->sc_wr_sel;
 		kn->kn_fop = &ustirwrite_filtops;
 		break;
 	default:
@@ -1124,7 +1131,7 @@ ustir_kqfilter(void *h, struct knote *kn)
 	kn->kn_hook = sc;
 
 	s = splusb();
-	SLIST_INSERT_HEAD(klist, kn, kn_selnext);
+	selrecord_knote(sip, kn);
 	splx(s);
 
 	return 0;
@@ -1156,7 +1163,7 @@ Static int ustir_ioctl(void *h, u_long cmd, void *addr, int flag, struct lwp *l)
 
 		err = ustir_read_reg(sc, regnum, &regdata);
 
-		DPRINTFN(10, ("%s: regget(%u) = 0x%x\n", __func__,
+		DPRINTFN(10, ("%s: regget(%u) = %#x\n", __func__,
 			      regnum, (unsigned int)regdata));
 
 		*(unsigned int *)addr = regdata;
@@ -1178,7 +1185,7 @@ Static int ustir_ioctl(void *h, u_long cmd, void *addr, int flag, struct lwp *l)
 			break;
 		}
 
-		DPRINTFN(10, ("%s: regset(%u, 0x%x)\n", __func__,
+		DPRINTFN(10, ("%s: regset(%u, %#x)\n", __func__,
 			      regnum, (unsigned int)regdata));
 
 		err = ustir_write_reg(sc, regnum, regdata);

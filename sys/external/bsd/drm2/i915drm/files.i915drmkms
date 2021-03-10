@@ -1,4 +1,4 @@
-#	$NetBSD: files.i915drmkms,v 1.37 2019/02/04 08:18:07 mrg Exp $
+#	$NetBSD: files.i915drmkms,v 1.39 2020/02/14 04:30:05 riastradh Exp $
 
 version	20180827
 
@@ -18,15 +18,16 @@ makeoptions	i915drmkms	CPPFLAGS+="-DCONFIG_DRM_I915_PRELIMINARY_HW_SUPPORT=0"
 makeoptions	i915drmkms	CPPFLAGS+="-DCONFIG_DRM_FBDEV_EMULATION=1"
 
 makeoptions	i915drmkms	"CWARNFLAGS.i915drmkms"+="-Wno-shadow"
+makeoptions	i915drmkms	"CWARNFLAGS.i915drmkms"+="-Wno-pointer-arith"
 
 makeoptions 	i915drmkms 	"CWARNFLAGS.i915_drv.c"+="${${ACTIVE_CC} == gcc:? -Wno-override-init :}"
 makeoptions 	i915drmkms 	"CWARNFLAGS.i915_drv.c"+="${${ACTIVE_CC} == clang:? -Wno-initializer-overrides :}"
 
 makeoptions 	i915drmkms 	"CWARNFLAGS.intel_sprite.c"+="${${ACTIVE_CC} == gcc:? -Wno-maybe-uninitialized :}"
 
-makeoptions 	i915drmkms 	"CWARNFLAGS.intel_ddi.c"+="${${ACTIVE_CC} == gcc && ${HAVE_GCC:U0} == 7:? -Wno-error=implicit-fallthrough :}"
-makeoptions 	i915drmkms 	"CWARNFLAGS.intel_display.c"+="${${ACTIVE_CC} == gcc && ${HAVE_GCC:U0} == 7:? -Wno-error=implicit-fallthrough :}"
-makeoptions 	i915drmkms 	"CWARNFLAGS.intel_sdvo.c"+="${${ACTIVE_CC} == gcc && ${HAVE_GCC:U0} == 7:? -Wno-error=implicit-fallthrough :}"
+makeoptions 	i915drmkms 	"CWARNFLAGS.intel_ddi.c"+="${${ACTIVE_CC} == gcc && ${HAVE_GCC:U0} >= 7:? -Wno-error=implicit-fallthrough :}"
+makeoptions 	i915drmkms 	"CWARNFLAGS.intel_display.c"+="${${ACTIVE_CC} == gcc && ${HAVE_GCC:U0} >= 7:? -Wno-error=implicit-fallthrough :}"
+makeoptions 	i915drmkms 	"CWARNFLAGS.intel_sdvo.c"+="${${ACTIVE_CC} == gcc && ${HAVE_GCC:U0} >= 7:? -Wno-error=implicit-fallthrough :}"
 
 file	external/bsd/drm2/i915drm/i915_module.c		i915drmkms
 file	external/bsd/drm2/i915drm/i915_pci.c		i915drmkms

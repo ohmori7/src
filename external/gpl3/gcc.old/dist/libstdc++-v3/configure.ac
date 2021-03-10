@@ -87,6 +87,8 @@ AC_PROG_CC
 AC_PROG_CXX
 CXXFLAGS="$save_CXXFLAGS"
 
+AC_SYS_LARGEFILE
+
 # Runs configure.host, and assorted other critical bits.  Sets
 # up critical shell variables.
 GLIBCXX_CONFIGURE
@@ -240,7 +242,13 @@ AC_CHECK_HEADERS([endian.h execinfo.h float.h fp.h ieeefp.h inttypes.h \
 locale.h machine/endian.h machine/param.h nan.h stdint.h stdlib.h string.h \
 strings.h sys/ipc.h sys/isa_defs.h sys/machine.h sys/param.h \
 sys/resource.h sys/sem.h sys/stat.h sys/time.h sys/types.h unistd.h \
-wchar.h wctype.h])
+wchar.h wctype.h linux/types.h])
+
+AC_CHECK_HEADERS([linux/random.h], [], [],
+[[#ifdef HAVE_LINUX_TYPES_H
+# include <linux/types.h>
+#endif
+]])
 
 # Only do link tests if native. Else, hardcode.
 if $GLIBCXX_IS_NATIVE; then
@@ -258,7 +266,8 @@ if $GLIBCXX_IS_NATIVE; then
   # For TLS support.
   GCC_CHECK_TLS
 
-  AC_CHECK_FUNCS(__cxa_thread_atexit_impl)
+  AC_CHECK_FUNCS(__cxa_thread_atexit_impl __cxa_thread_atexit)
+  AC_CHECK_FUNCS(aligned_alloc posix_memalign memalign _aligned_malloc)
 
   # For iconv support.
   AM_ICONV
@@ -326,6 +335,7 @@ else
     AC_DEFINE(HAVE_TANHF)
 
     AC_DEFINE(HAVE_ICONV)
+    AC_DEFINE(HAVE_MEMALIGN)
   else
     GLIBCXX_CROSSCONFIG
   fi
@@ -376,6 +386,7 @@ GLIBCXX_ENABLE_LIBSTDCXX_DUAL_ABI([yes])
 GLIBCXX_DEFAULT_ABI
 
 ac_ldbl_compat=no
+LONG_DOUBLE_COMPAT_FLAGS="-mlong-double-64"
 case "$target" in
   powerpc*-*-linux* | \
   sparc*-*-linux* | \
@@ -390,12 +401,17 @@ case "$target" in
     AC_DEFINE([_GLIBCXX_LONG_DOUBLE_COMPAT],1,
 	      [Define if compatibility should be provided for -mlong-double-64.])
     port_specific_symbol_files="\$(top_srcdir)/config/os/gnu-linux/ldbl-extra.ver"
+    case "$target" in
+      powerpc*-*-linux*)
+	LONG_DOUBLE_COMPAT_FLAGS="$LONG_DOUBLE_COMPAT_FLAGS -mno-gnu-attribute" ;;
+    esac
   fi
 esac
+AC_SUBST(LONG_DOUBLE_COMPAT_FLAGS)
 GLIBCXX_CONDITIONAL(GLIBCXX_LDBL_COMPAT, test $ac_ldbl_compat = yes)
 
 # Check if assembler supports disabling hardware capability support.
-GLIBCXX_CHECK_ASSEMBLER_HWCAP
+GCC_CHECK_ASSEMBLER_HWCAP
 
 # Check if assembler supports rdrand opcode.
 GLIBCXX_CHECK_X86_RDRAND
@@ -414,6 +430,9 @@ GLIBCXX_CHECK_FILESYSTEM_DEPS
 # For Transactional Memory TS
 GLIBCXX_CHECK_SIZE_T_MANGLING
 
+# Check which release added std::exception_ptr for the target
+GLIBCXX_CHECK_EXCEPTION_PTR_SYMVER
+
 # Define documentation rules conditionally.
 
 # See if makeinfo has been installed and is modern enough
@@ -428,6 +447,7 @@ AC_CHECK_PROG([DOXYGEN], doxygen, yes, no)
 AC_CHECK_PROG([DOT], dot, yes, no)
 
 # Check for docbook
+AC_CHECK_PROG([XMLCATALOG], xmlcatalog, yes, no)
 AC_CHECK_PROG([XSLTPROC], xsltproc, yes, no)
 AC_CHECK_PROG([XMLLINT], xmllint, yes, no)
 GLIBCXX_CONFIGURE_DOCBOOK
@@ -487,6 +507,13 @@ AC_SUBST(CPU_OPT_EXT_RANDOM)
 AC_SUBST(CPU_OPT_BITS_RANDOM)
 
 
+# Add CET specific flags if Intel CET is enabled.
+GCC_CET_FLAGS(CET_FLAGS)
+EXTRA_CXX_FLAGS="$EXTRA_CXX_FLAGS $CET_FLAGS"
+EXTRA_CFLAGS="$EXTRA_CFLAGS $CET_FLAGS"
+AC_SUBST(EXTRA_CFLAGS)
+AC_SUBST(EXTRA_CXX_FLAGS)
+
 # Determine cross-compile flags and AM_CONDITIONALs.
 #AC_SUBST(GLIBCXX_IS_NATIVE)
 #AM_CONDITIONAL(CANADIAN, test $CANADIAN = yes)
@@ -506,6 +533,9 @@ GLIBCXX_EXPORT_INSTALL_INFO
 # Export all the include and flag information to Makefiles.
 GLIBCXX_EXPORT_INCLUDES
 GLIBCXX_EXPORT_FLAGS
+
+# Determine what GCC version number to use in filesystem paths.
+GCC_BASE_VER
 
 dnl In autoconf 2.5x, AC_OUTPUT is replaced by four AC_CONFIG_* macros,
 dnl which can all be called multiple times as needed, plus one (different)

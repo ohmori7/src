@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.97 2019/01/10 23:10:23 uwe Exp $
+#	$NetBSD: Makefile,v 1.101 2021/03/07 10:42:27 rin Exp $
 
 .include <bsd.own.mk>
 
@@ -180,7 +180,11 @@ SUBDIR+= \
 
 .if ${MACHINE} == "evbarm"
 SUBDIR+= \
+	xf86-video-ati \
 	${MODE_SETTING} \
+	xf86-video-nouveau \
+	xf86-video-radeon \
+	xf86-video-radeon-kms \
 	xf86-video-wsfb
 .endif # ${MACHINE} == "evbarm"
 
@@ -190,6 +194,11 @@ SUBDIR+= \
 	xf86-video-sis \
 	xf86-video-wsfb
 .endif	# ${MACHINE} == "evbmips"
+
+.if ${MACHINE} == "evbppc"
+SUBDIR+= \
+	xf86-video-wsfb
+.endif	# ${MACHINE} == "evbppc"
 
 .if ${MACHINE} == "ews4800mips"
 SUBDIR+= \
@@ -207,6 +216,13 @@ SUBDIR+= \
 SUBDIR+= \
 	xf86-video-wsfb
 .endif # ${MACHINE} == "hpcarm" || ${MACHINE} == "hpcmips" || ${MACHINE} == "hpcsh"
+
+.if ${MACHINE} == "hppa"
+SUBDIR+= \
+	xf86-video-mga \
+	xf86-video-r128 \
+	xf86-video-wsfb
+.endif	# ${MACHINE} == "hppa"
 
 .if ${MACHINE} == "ibmnws"
 SUBDIR+= \

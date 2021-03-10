@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.4 2018/11/11 22:50:12 mrg Exp $
+#	$NetBSD: Makefile,v 1.6 2019/09/26 08:04:07 mrg Exp $
 
 .include "../../../Makefile.gcc_path"
 
@@ -13,7 +13,7 @@ INCS+=	allocator_interface.h
 INCS+=	asan_interface.h
 INCS+=	common_interface_defs.h
 #INCS+=	dfsan_interface.h # not supported
-#INCS+=	lsan_interface.h # not supported
+INCS+=	lsan_interface.h
 #INCS+=	msan_interface.h # not ready in GCC
 INCS+=	tsan_interface_atomic.h
 

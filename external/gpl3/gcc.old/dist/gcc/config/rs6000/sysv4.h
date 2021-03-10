@@ -1,5 +1,5 @@
 /* Target definitions for GNU compiler for PowerPC running System V.4
-   Copyright (C) 1995-2016 Free Software Foundation, Inc.
+   Copyright (C) 1995-2018 Free Software Foundation, Inc.
    Contributed by Cygnus Support.
 
    This file is part of GCC.
@@ -40,10 +40,8 @@
 #undef	ASM_DEFAULT_SPEC
 #define	ASM_DEFAULT_SPEC "-mppc"
 
-#define	TARGET_TOC		((rs6000_isa_flags & OPTION_MASK_64BIT)	\
-				 || ((rs6000_isa_flags			\
-				      & (OPTION_MASK_RELOCATABLE	\
-					 | OPTION_MASK_MINIMAL_TOC))	\
+#define	TARGET_TOC		(TARGET_64BIT				\
+				 || (TARGET_MINIMAL_TOC			\
 				     && flag_pic > 1)			\
 				 || DEFAULT_ABI != ABI_V4)
 
@@ -89,19 +87,13 @@ do {									\
   else if (!strcmp (rs6000_abi_name, "aixdesc"))			\
     rs6000_current_abi = ABI_AIX;					\
   else if (!strcmp (rs6000_abi_name, "freebsd")				\
+	   || !strcmp (rs6000_abi_name, "netbsd")			\
 	   || !strcmp (rs6000_abi_name, "linux"))			\
     {									\
       if (TARGET_64BIT)							\
 	rs6000_current_abi = ABI_AIX;					\
       else								\
 	rs6000_current_abi = ABI_V4;					\
-    }									\
-  else if (!strcmp (rs6000_abi_name, "netbsd"))				\
-    {									\
-      if (TARGET_64BIT)							\
-	rs6000_current_abi = ABI_AIX;					\
-      else								\
-  	rs6000_current_abi = ABI_V4;					\
     }									\
   else if (!strcmp (rs6000_abi_name, "openbsd"))			\
     rs6000_current_abi = ABI_V4;					\
@@ -115,7 +107,7 @@ do {									\
   else									\
     {									\
       rs6000_current_abi = ABI_V4;					\
-      error ("bad value for -mcall-%s", rs6000_abi_name);		\
+      error ("bad value for %<%s-%s%>", "-mcall", rs6000_abi_name);	\
     }									\
 									\
   if (rs6000_sdata_name)						\
@@ -131,7 +123,7 @@ do {									\
       else if (!strcmp (rs6000_sdata_name, "eabi"))			\
 	rs6000_sdata = SDATA_EABI;					\
       else								\
-	error ("bad value for -msdata=%s", rs6000_sdata_name);		\
+	error ("bad value for %<%s=%s%>", "-msdata", rs6000_sdata_name);\
     }									\
   else if (DEFAULT_ABI == ABI_V4)					\
     {									\
@@ -148,8 +140,8 @@ do {									\
       (rs6000_sdata == SDATA_EABI || rs6000_sdata == SDATA_SYSV))	\
     {									\
       rs6000_sdata = SDATA_DATA;					\
-      error ("-mrelocatable and -msdata=%s are incompatible",		\
-	     rs6000_sdata_name);					\
+      error ("%qs and %<%s=%s%> are incompatible", rs6000_sdata_name,	\
+	     "-mrelocatable", "-msdata");				\
     }									\
 									\
   else if (flag_pic && DEFAULT_ABI == ABI_V4				\
@@ -157,17 +149,17 @@ do {									\
 	       || rs6000_sdata == SDATA_SYSV))				\
     {									\
       rs6000_sdata = SDATA_DATA;					\
-      error ("-f%s and -msdata=%s are incompatible",			\
+      error ("%<-f%s%> and %<%s=%s%> are incompatible",			\
 	     (flag_pic > 1) ? "PIC" : "pic",				\
-	     rs6000_sdata_name);					\
+	     "-msdata", rs6000_sdata_name);				\
     }									\
 									\
   if ((rs6000_sdata != SDATA_NONE && DEFAULT_ABI != ABI_V4)		\
       || (rs6000_sdata == SDATA_EABI && !TARGET_EABI))			\
     {									\
       rs6000_sdata = SDATA_NONE;					\
-      error ("-msdata=%s and -mcall-%s are incompatible",		\
-	     rs6000_sdata_name, rs6000_abi_name);			\
+      error ("%<%s=%s%> and %<%s-%s%> are incompatible",		\
+	     "-msdata", rs6000_sdata_name, "-mcall", rs6000_abi_name);	\
     }									\
 									\
   targetm.have_srodata_section = rs6000_sdata == SDATA_EABI;		\
@@ -175,45 +167,55 @@ do {									\
   if (TARGET_RELOCATABLE && !TARGET_MINIMAL_TOC)			\
     {									\
       rs6000_isa_flags |= OPTION_MASK_MINIMAL_TOC;			\
-      error ("-mrelocatable and -mno-minimal-toc are incompatible");	\
+      error ("%qs and %qs are incompatible", "-mrelocatable",		\
+	     "-mno-minimal-toc");					\
     }									\
 									\
   if (TARGET_RELOCATABLE && rs6000_current_abi != ABI_V4)		\
     {									\
       rs6000_isa_flags &= ~OPTION_MASK_RELOCATABLE;			\
-      error ("-mrelocatable and -mcall-%s are incompatible",		\
-	     rs6000_abi_name);						\
+      error ("%qs and %<%s-%s%> are incompatible",			\
+	     "-mrelocatable", "-mcall", rs6000_abi_name);		\
     }									\
 									\
   if (!TARGET_64BIT && flag_pic > 1 && rs6000_current_abi != ABI_V4)	\
     {									\
       flag_pic = 0;							\
-      error ("-fPIC and -mcall-%s are incompatible",			\
-	     rs6000_abi_name);						\
+      error ("%qs and %<%s-%s%> are incompatible",			\
+	     "-fPIC", "-mcall", rs6000_abi_name);			\
     }									\
 									\
   if (TARGET_SECURE_PLT != secure_plt)					\
     {									\
-      error ("-msecure-plt not supported by your assembler");		\
+      error ("%qs not supported by your assembler", "-msecure-plt");	\
     }									\
 									\
-  /* Treat -fPIC the same as -mrelocatable.  */				\
   if (flag_pic > 1 && DEFAULT_ABI == ABI_V4)				\
     {									\
-      rs6000_isa_flags |= OPTION_MASK_RELOCATABLE | OPTION_MASK_MINIMAL_TOC; \
+      /* Note: flag_pic should not change any option flags that would	\
+	 be invalid with or pessimise -fno-PIC code.  LTO turns off	\
+	 flag_pic when linking/recompiling a fixed position executable. \
+	 However, if the objects were originally compiled with -fPIC,	\
+	 then other target options forced on here by -fPIC are restored \
+	 when recompiling those objects without -fPIC.  In particular	\
+	 TARGET_RELOCATABLE must not be enabled here by flag_pic.  */	\
+      rs6000_isa_flags |= OPTION_MASK_MINIMAL_TOC;			\
       TARGET_NO_FP_IN_TOC = 1;						\
     }									\
 									\
-  else if (TARGET_RELOCATABLE)						\
-    if (!flag_pic)							\
-      flag_pic = 2;							\
+  if (TARGET_RELOCATABLE)						\
+    {									\
+      if (!flag_pic)							\
+	flag_pic = 2;							\
+      TARGET_NO_FP_IN_TOC = 1;						\
+    }									\
 } while (0)
 
 #ifndef RS6000_BI_ARCH
 # define SUBSUBTARGET_OVERRIDE_OPTIONS					\
 do {									\
   if ((TARGET_DEFAULT ^ rs6000_isa_flags) & OPTION_MASK_64BIT)		\
-    error ("-m%s not supported in this configuration",			\
+    error ("%<-m%s%> not supported in this configuration",		\
 	   (rs6000_isa_flags & OPTION_MASK_64BIT) ? "64" : "32");	\
 } while (0)
 #endif
@@ -296,8 +298,8 @@ do {									\
 
 /* An expression for the alignment of a structure field FIELD if the
    alignment computed in the usual way is COMPUTED.  */
-#define ADJUST_FIELD_ALIGN(FIELD, COMPUTED)				      \
-	(rs6000_special_adjust_field_align_p ((FIELD), (COMPUTED))	      \
+#define ADJUST_FIELD_ALIGN(FIELD, TYPE, COMPUTED)			      \
+	(rs6000_special_adjust_field_align_p ((TYPE), (COMPUTED))	      \
 	 ? 128 : COMPUTED)
 
 #undef  BIGGEST_FIELD_ALIGNMENT
@@ -322,8 +324,7 @@ do {									\
 
 /* Put PC relative got entries in .got2.  */
 #define	MINIMAL_TOC_SECTION_ASM_OP \
-  (TARGET_RELOCATABLE || (flag_pic && DEFAULT_ABI == ABI_V4)		\
-   ? "\t.section\t\".got2\",\"aw\"" : "\t.section\t\".got1\",\"aw\"")
+  (flag_pic ? "\t.section\t\".got2\",\"aw\"" : "\t.section\t\".got1\",\"aw\"")
 
 #define	SDATA_SECTION_ASM_OP "\t.section\t\".sdata\",\"aw\""
 #define	SDATA2_SECTION_ASM_OP "\t.section\t\".sdata2\",\"a\""
@@ -357,7 +358,6 @@ do {									\
        || (GET_CODE (X) == CONST_INT 					\
 	   && GET_MODE_BITSIZE (MODE) <= GET_MODE_BITSIZE (Pmode))	\
        || (!TARGET_NO_FP_IN_TOC						\
-	   && !TARGET_RELOCATABLE					\
 	   && GET_CODE (X) == CONST_DOUBLE				\
 	   && SCALAR_FLOAT_MODE_P (GET_MODE (X))			\
 	   && BITS_PER_WORD == HOST_BITS_PER_INT)))
@@ -764,11 +764,11 @@ ENDIAN_SELECT(" -mbig", " -mlittle", DEFAULT_ASM_ENDIAN)
   "%{shared:; \
      pg|p|profile:gcrt1.o%s; \
      static:crt1.o%s; \
-     " PIE_SPEC ":Scrt1.o%s; \
+     static-pie|" PIE_SPEC ":Scrt1.o%s; \
      :crt1.o%s} \
    %{mnewlib:ecrti.o%s;:crti.o%s} \
    %{static:crtbeginT.o%s; \
-     shared|" PIE_SPEC ":crtbeginS.o%s; \
+     shared|static-pie|" PIE_SPEC ":crtbeginS.o%s; \
      :crtbegin.o%s} \
    %{fvtable-verify=none:%s; \
      fvtable-verify=preinit:vtv_start_preinit.o%s; \
@@ -782,7 +782,7 @@ ENDIAN_SELECT(" -mbig", " -mlittle", DEFAULT_ASM_ENDIAN)
      fvtable-verify=preinit:vtv_end_preinit.o%s; \
      fvtable-verify=std:vtv_end.o%s} \
    %{static:crtend.o%s; \
-     shared|" PIE_SPEC ":crtendS.o%s; \
+     shared|static-pie|" PIE_SPEC ":crtendS.o%s; \
      :crtend.o%s} \
    %{mnewlib:ecrtn.o%s;:crtn.o%s} \
    " CRTOFFLOADEND
@@ -816,7 +816,7 @@ ENDIAN_SELECT(" -mbig", " -mlittle", DEFAULT_ASM_ENDIAN)
   -dynamic-linker " GNU_USER_DYNAMIC_LINKER "}}"
 
 #if defined(HAVE_LD_EH_FRAME_HDR) && !defined(LINK_EH_SPEC)
-# define LINK_EH_SPEC "%{!static:--eh-frame-hdr} "
+# define LINK_EH_SPEC "%{!static|static-pie:--eh-frame-hdr} "
 #endif
 
 #define CPP_OS_LINUX_SPEC "-D__unix__ -D__gnu_linux__ -D__linux__ \
@@ -964,9 +964,10 @@ ENDIAN_SELECT(" -mbig", " -mlittle", DEFAULT_ASM_ENDIAN)
 /* Select a format to encode pointers in exception handling data.  CODE
    is 0 for data, 1 for code labels, 2 for function pointers.  GLOBAL is
    true if the symbol may be affected by dynamic relocations.  */
-#define ASM_PREFERRED_EH_DATA_FORMAT(CODE,GLOBAL)			     \
-  ((flag_pic || TARGET_RELOCATABLE)					     \
-   ? (((GLOBAL) ? DW_EH_PE_indirect : 0) | DW_EH_PE_pcrel | DW_EH_PE_sdata4) \
+#define ASM_PREFERRED_EH_DATA_FORMAT(CODE, GLOBAL)			\
+  (flag_pic								\
+   ? (((GLOBAL) ? DW_EH_PE_indirect : 0) | DW_EH_PE_pcrel		\
+      | DW_EH_PE_sdata4)						\
    : DW_EH_PE_absptr)
 
 #define DOUBLE_INT_ASM_OP "\t.quad\t"

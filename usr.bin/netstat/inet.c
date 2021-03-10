@@ -1,4 +1,4 @@
-/*	$NetBSD: inet.c,v 1.109 2019/05/13 07:48:42 ozaki-r Exp $	*/
+/*	$NetBSD: inet.c,v 1.113 2020/08/28 07:23:48 ozaki-r Exp $	*/
 
 /*
  * Copyright (c) 1983, 1988, 1993
@@ -34,7 +34,7 @@
 #if 0
 static char sccsid[] = "from: @(#)inet.c	8.4 (Berkeley) 4/20/94";
 #else
-__RCSID("$NetBSD: inet.c,v 1.109 2019/05/13 07:48:42 ozaki-r Exp $");
+__RCSID("$NetBSD: inet.c,v 1.113 2020/08/28 07:23:48 ozaki-r Exp $");
 #endif
 #endif /* not lint */
 
@@ -241,7 +241,7 @@ getpcblist_sysctl(const char *name, size_t *len) {
 		err(1, "asprintf");
 
 	/* get dynamic pcblist node */
-	if (sysctlnametomib(mibname, mib, &namelen) == -1) {
+	if (prog_sysctlnametomib(mibname, mib, &namelen) == -1) {
 		if (errno == ENOENT) {
 			*len = 0;
 			return NULL;
@@ -403,8 +403,8 @@ tcp_stats(u_long off, const char *name)
 	if (use_sysctl) {
 		size_t size = sizeof(tcpstat);
 
-		if (sysctlbyname("net.inet.tcp.stats", tcpstat, &size,
-				 NULL, 0) == -1)
+		if (prog_sysctlbyname("net.inet.tcp.stats", tcpstat, &size,
+				 NULL, 0) == -1 && errno != ENOMEM)
 			return;
 	} else {
 		warnx("%s stats not available via KVM.", name);
@@ -530,8 +530,8 @@ udp_stats(u_long off, const char *name)
 	if (use_sysctl) {
 		size_t size = sizeof(udpstat);
 
-		if (sysctlbyname("net.inet.udp.stats", udpstat, &size,
-				 NULL, 0) == -1)
+		if (prog_sysctlbyname("net.inet.udp.stats", udpstat, &size,
+				 NULL, 0) == -1 && errno != ENOMEM)
 			return;
 	} else {
 		warnx("%s stats not available via KVM.", name);
@@ -583,8 +583,8 @@ ip_stats(u_long off, const char *name)
 	if (use_sysctl) {
 		size_t size = sizeof(ipstat);
 
-		if (sysctlbyname("net.inet.ip.stats", ipstat, &size,
-				 NULL, 0) == -1)
+		if (prog_sysctlbyname("net.inet.ip.stats", ipstat, &size,
+				 NULL, 0) == -1 && errno != ENOMEM)
 			return;
 	} else {
 		warnx("%s stats not available via KVM.", name);
@@ -622,6 +622,7 @@ ip_stats(u_long off, const char *name)
 	p(IP_STAT_CANTFORWARD, "\t%" PRIu64 " packet%s not forwardable\n");
 	p(IP_STAT_REDIRECTSENT, "\t%" PRIu64 " redirect%s sent\n");
 	p(IP_STAT_NOGIF, "\t%" PRIu64 " packet%s no matching gif found\n");
+	p(IP_STAT_NOIPSEC, "\t%" PRIu64 " packet%s no matching ipsecif found\n");
 	p(IP_STAT_LOCALOUT, "\t%" PRIu64 " packet%s sent from this host\n");
 	p(IP_STAT_RAWOUT, "\t%" PRIu64 " packet%s sent with fabricated ip header\n");
 	p(IP_STAT_ODROPPED, "\t%" PRIu64 " output packet%s dropped due to no bufs, etc.\n");
@@ -632,6 +633,13 @@ ip_stats(u_long off, const char *name)
 	p(IP_STAT_BADADDR, "\t%" PRIu64 " datagram%s with bad address in header\n");
 	p(IP_STAT_PFILDROP_IN, "\t%" PRIu64 " input packet%s dropped by pfil\n");
 	p(IP_STAT_PFILDROP_OUT, "\t%" PRIu64 " output packet%s dropped by pfil\n");
+	p(IP_STAT_IPSECDROP_IN, "\t%" PRIu64 " input packet%s dropped by IPsec\n");
+	p(IP_STAT_IPSECDROP_OUT, "\t%" PRIu64 " output packet%s dropped by IPsec\n");
+	p(IP_STAT_IFDROP, "\t%" PRIu64 " input packet%s dropped due to interface state\n");
+	p(IP_STAT_TIMXCEED, "\t%" PRIu64 " packet%s dropped due to TTL exceeded\n");
+	p(IP_STAT_IFNOADDR, "\t%" PRIu64 " output packet%s dropped (no IP address)\n");
+	p(IP_STAT_RTREJECT, "\t%" PRIu64 " output packet%s discarded due to reject route\n");
+	p(IP_STAT_BCASTDENIED, "\t%" PRIu64 " output packet%s dropped (broadcast prohibited)\n");
 #undef ps
 #undef p
 }
@@ -648,8 +656,8 @@ icmp_stats(u_long off, const char *name)
 	if (use_sysctl) {
 		size_t size = sizeof(icmpstat);
 
-		if (sysctlbyname("net.inet.icmp.stats", icmpstat, &size,
-				 NULL, 0) == -1)
+		if (prog_sysctlbyname("net.inet.icmp.stats", icmpstat, &size,
+				 NULL, 0) == -1 && errno != ENOMEM)
 			return;
 	} else {
 		warnx("%s stats not available via KVM.", name);
@@ -704,8 +712,8 @@ igmp_stats(u_long off, const char *name)
 	if (use_sysctl) {
 		size_t size = sizeof(igmpstat);
 
-		if (sysctlbyname("net.inet.igmp.stats", igmpstat, &size,
-				 NULL, 0) == -1)
+		if (prog_sysctlbyname("net.inet.igmp.stats", igmpstat, &size,
+				 NULL, 0) == -1 && errno != ENOMEM)
 			return;
 	} else {
 		warnx("%s stats not available via KVM.", name);
@@ -742,8 +750,8 @@ carp_stats(u_long off, const char *name)
 	if (use_sysctl) {
 		size_t size = sizeof(carpstat);
 
-		if (sysctlbyname("net.inet.carp.stats", carpstat, &size,
-				 NULL, 0) == -1)
+		if (prog_sysctlbyname("net.inet.carp.stats", carpstat, &size,
+				 NULL, 0) == -1 && errno != ENOMEM)
 			return;
 	} else {
 		warnx("%s stats not available via KVM.", name);
@@ -828,8 +836,8 @@ arp_stats(u_long off, const char *name)
 	if (use_sysctl) {
 		size_t size = sizeof(arpstat);
 
-		if (sysctlbyname("net.inet.arp.stats", arpstat, &size,
-				 NULL, 0) == -1)
+		if (prog_sysctlbyname("net.inet.arp.stats", arpstat, &size,
+				 NULL, 0) == -1 && errno != ENOMEM)
 			return;
 	} else {
 		warnx("%s stats not available via KVM.", name);

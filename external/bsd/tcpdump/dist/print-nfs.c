@@ -21,7 +21,7 @@
 
 #include <sys/cdefs.h>
 #ifndef lint
-__RCSID("$NetBSD: print-nfs.c,v 1.8 2017/09/08 14:01:13 christos Exp $");
+__RCSID("$NetBSD: print-nfs.c,v 1.10 2020/02/24 18:39:47 kamil Exp $");
 #endif
 
 /* \summary: Network File System (NFS) printer */
@@ -354,6 +354,7 @@ trunc:
 		ND_PRINT((ndo, "%s", tstr));
 }
 
+UNALIGNED_OK
 void
 nfsreply_print_noaddr(netdissect_options *ndo,
                       register const u_char *bp, u_int length,
@@ -419,6 +420,7 @@ trunc:
  * Return a pointer to the first file handle in the packet.
  * If the packet was truncated, return 0.
  */
+UNALIGNED_OK
 static const uint32_t *
 parsereq(netdissect_options *ndo,
          register const struct sunrpc_msg *rp, register u_int length)
@@ -522,6 +524,7 @@ parsefhn(netdissect_options *ndo,
 	return (parsefn(ndo, dp));
 }
 
+UNALIGNED_OK
 void
 nfsreq_print_noaddr(netdissect_options *ndo,
                     register const u_char *bp, u_int length,
@@ -867,6 +870,7 @@ static struct xid_map_entry xid_map[XIDMAPSIZE];
 static int xid_map_next = 0;
 static int xid_map_hint = 0;
 
+UNALIGNED_OK
 static int
 xid_map_enter(netdissect_options *ndo,
               const struct sunrpc_msg *rp, const u_char *bp)
@@ -913,6 +917,7 @@ xid_map_enter(netdissect_options *ndo,
  * Returns 0 and puts NFSPROC_xxx in proc return and
  * version in vers return, or returns -1 on failure
  */
+UNALIGNED_OK
 static int
 xid_map_find(const struct sunrpc_msg *rp, const u_char *bp, uint32_t *proc,
 	     uint32_t *vers)
@@ -977,6 +982,7 @@ xid_map_find(const struct sunrpc_msg *rp, const u_char *bp, uint32_t *proc,
  * Return a pointer to the beginning of the actual results.
  * If the packet was truncated, return 0.
  */
+UNALIGNED_OK
 static const uint32_t *
 parserep(netdissect_options *ndo,
          register const struct sunrpc_msg *rp, register u_int length)
@@ -1573,8 +1579,8 @@ interp_reply(netdissect_options *ndo,
 						tok2str(nfsv3_writemodes,
 							NULL, EXTRACT_32BITS(&dp[1]))));
 				}
-				return;
 			}
+			return;
 		} else {
 			if (parseattrstat(ndo, dp, ndo->ndo_vflag, v3) != 0)
 				return;
@@ -1660,8 +1666,8 @@ interp_reply(netdissect_options *ndo,
 				ND_PRINT((ndo, " dir:"));
 				if (!(dp = parse_wcc_data(ndo, dp, ndo->ndo_vflag)))
 					break;
-				return;
 			}
+			return;
 		} else {
 			if (parsestatus(ndo, dp, &er) != NULL)
 				return;

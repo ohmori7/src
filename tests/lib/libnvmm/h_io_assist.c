@@ -1,11 +1,10 @@
-/*	$NetBSD: h_io_assist.c,v 1.8 2019/06/08 07:27:44 maxv Exp $	*/
+/*	$NetBSD: h_io_assist.c,v 1.12 2020/09/05 07:22:26 maxv Exp $	*/
 
 /*
- * Copyright (c) 2018 The NetBSD Foundation, Inc.
+ * Copyright (c) 2018-2020 Maxime Villard, m00nbsd.net
  * All rights reserved.
  *
- * This code is derived from software contributed to The NetBSD Foundation
- * by Maxime Villard.
+ * This code is part of the NVMM hypervisor.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -16,17 +15,17 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
- * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
- * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
  */
 
 #include <stdio.h>
@@ -242,25 +241,25 @@ handle_io(struct nvmm_machine *mach, struct nvmm_vcpu *vcpu)
 static void
 run_machine(struct nvmm_machine *mach, struct nvmm_vcpu *vcpu)
 {
-	struct nvmm_exit *exit = vcpu->exit;
+	struct nvmm_vcpu_exit *exit = vcpu->exit;
 
 	while (1) {
 		if (nvmm_vcpu_run(mach, vcpu) == -1)
 			err(errno, "nvmm_vcpu_run");
 
 		switch (exit->reason) {
-		case NVMM_EXIT_NONE:
+		case NVMM_VCPU_EXIT_NONE:
 			break;
 
-		case NVMM_EXIT_MSR:
+		case NVMM_VCPU_EXIT_RDMSR:
 			/* Stop here. */
 			return;
 
-		case NVMM_EXIT_IO:
+		case NVMM_VCPU_EXIT_IO:
 			handle_io(mach, vcpu);
 			break;
 
-		case NVMM_EXIT_SHUTDOWN:
+		case NVMM_VCPU_EXIT_SHUTDOWN:
 			printf("Shutting down!\n");
 			return;
 
@@ -354,7 +353,7 @@ static const struct test tests[] = {
 	{ NULL, NULL, NULL, NULL, false }
 };
 
-static struct nvmm_callbacks callbacks = {
+static struct nvmm_assist_callbacks callbacks = {
 	.io = io_callback,
 	.mem = NULL
 };
@@ -373,11 +372,13 @@ int main(int argc, char *argv[])
 	struct nvmm_vcpu vcpu;
 	size_t i;
 
+	if (nvmm_init() == -1)
+		err(errno, "nvmm_init");
 	if (nvmm_machine_create(&mach) == -1)
 		err(errno, "nvmm_machine_create");
 	if (nvmm_vcpu_create(&mach, 0, &vcpu) == -1)
 		err(errno, "nvmm_vcpu_create");
-	nvmm_machine_configure(&mach, NVMM_MACH_CONF_CALLBACKS, &callbacks);
+	nvmm_vcpu_configure(&mach, &vcpu, NVMM_VCPU_CONF_CALLBACKS, &callbacks);
 	map_pages(&mach);
 
 	for (i = 0; tests[i].name != NULL; i++) {

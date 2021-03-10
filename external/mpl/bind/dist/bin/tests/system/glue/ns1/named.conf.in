@@ -19,25 +19,18 @@ options {
 	listen-on-v6 { none; };
 	recursion yes;
 	notify no;
-	cache-file "cache";
-	check-integrity no;
 };
 
 zone "." {
-	type master;
+	type primary;
 	file "root.db";
 };
 
 zone "root-servers.nil" {
-	type master;
+	type primary;
 	file "root-servers.nil.db";
 };
 zone "net" {
-	type master;
+	type primary;
 	file "net.db";
-};
-
-zone "mil" {
-	type master;
-	file "mil.db";
 };

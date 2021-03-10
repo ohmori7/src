@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2019, Intel Corp.
+ * Copyright (C) 2000 - 2020, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -69,20 +69,27 @@ ApIsExistingFile (
 {
 #if !defined(_GNU_EFI) && !defined(_EDK2_EFI)
     struct stat             StatInfo;
+    int                     InChar;
 
 
     if (!stat (Pathname, &StatInfo))
     {
         fprintf (stderr, "Target path already exists, overwrite? [y|n] ");
 
-        if (getchar () != 'y')
+        InChar = fgetc (stdin);
+        if (InChar == '\n')
+        {
+            InChar = fgetc (stdin);
+        }
+
+        if (InChar != 'y' && InChar != 'Y')
         {
             return (-1);
         }
     }
 #endif
 
-    return 0;
+    return (0);
 }
 
 

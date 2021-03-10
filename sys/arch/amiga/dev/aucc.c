@@ -1,4 +1,4 @@
-/*	$NetBSD: aucc.c,v 1.46 2019/06/08 08:02:36 isaki Exp $ */
+/*	$NetBSD: aucc.c,v 1.48 2020/02/29 06:03:55 isaki Exp $ */
 
 /*
  * Copyright (c) 1999 Bernardo Innocenti
@@ -46,7 +46,7 @@
 #if NAUCC > 0
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: aucc.c,v 1.46 2019/06/08 08:02:36 isaki Exp $");
+__KERNEL_RCSID(0, "$NetBSD: aucc.c,v 1.48 2020/02/29 06:03:55 isaki Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -404,8 +404,11 @@ aucc_round_blocksize(void *addr, int blk,
 		     int mode, const audio_params_t *param)
 {
 
-	/* round up to even size */
-	return blk > AUDIO_BUF_SIZE ? AUDIO_BUF_SIZE : blk;
+	if (blk > AUDIO_BUF_SIZE)
+		blk = AUDIO_BUF_SIZE;
+
+	blk = rounddown(blk, param->channels * param->precision / NBBY);
+	return blk;
 }
 
 int
@@ -694,7 +697,7 @@ int
 aucc_get_props(void *addr)
 {
 
-	return AUDIO_PROP_PLAYBACK | AUDIO_PROP_CAPTURE;
+	return AUDIO_PROP_PLAYBACK;
 }
 
 

@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2019, Intel Corp.
+ * Copyright (C) 2000 - 2020, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -148,6 +148,10 @@
 #endif
 #endif
 
+/* warn C4001: use of slash-slash comments */
+/* NOTE: MSVC 2015 headers use these extensively */
+#pragma warning(disable:4001)
+
 /* warn C4100: unreferenced formal parameter */
 #pragma warning(disable:4100)
 
@@ -160,9 +164,22 @@
 /* warn C4131: uses old-style declarator (iASL compiler only) */
 #pragma warning(disable:4131)
 
+/* warn C4131: uses old-style declarator (iASL compiler only) */
+#pragma warning(disable:4459)
+
+/* warn c4200: allow flexible arrays (of zero length) */
+#pragma warning(disable:4200)
+
 #if _MSC_VER > 1200 /* Versions above VC++ 6 */
 #pragma warning( disable : 4295 ) /* needed for acpredef.h array */
 #endif
+
+/*
+ * MSVC 2015+
+ */
+
+ /* warn C4459: xxxx (identifier) hides global declaration */
+#pragma warning(disable:4459)
 
 
 /* Debug support. */

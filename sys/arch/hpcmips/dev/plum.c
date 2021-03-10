@@ -1,4 +1,4 @@
-/*	$NetBSD: plum.c,v 1.16 2015/10/02 09:05:33 msaitoh Exp $ */
+/*	$NetBSD: plum.c,v 1.18 2020/11/21 21:23:48 thorpej Exp $ */
 
 /*-
  * Copyright (c) 1999 The NetBSD Foundation, Inc.
@@ -30,12 +30,12 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: plum.c,v 1.16 2015/10/02 09:05:33 msaitoh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: plum.c,v 1.18 2020/11/21 21:23:48 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/device.h>
-#include <sys/malloc.h>
+#include <sys/kmem.h>
 
 #include <machine/bus.h>
 #include <machine/intr.h>
@@ -103,11 +103,7 @@ plum_attach(device_t parent, device_t self, void *aux)
 		printf(": Plum2 #2\n");
 		break;
 	}
-	if (!(sc->sc_pc = malloc(sizeof(struct plum_chipset_tag),
-	    M_DEVBUF, M_NOWAIT))) {
-		panic("no memory");
-	}
-	memset(sc->sc_pc, 0, sizeof(struct plum_chipset_tag));
+	sc->sc_pc = kmem_zalloc(sizeof(struct plum_chipset_tag), KM_SLEEP);
 	sc->sc_pc->pc_tc = ca->ca_tc;
 	
 	/* Attach Plum devices */

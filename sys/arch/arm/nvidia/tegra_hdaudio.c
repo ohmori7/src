@@ -1,4 +1,4 @@
-/* $NetBSD: tegra_hdaudio.c,v 1.10 2018/07/16 23:11:47 christos Exp $ */
+/* $NetBSD: tegra_hdaudio.c,v 1.15 2021/01/27 03:10:19 thorpej Exp $ */
 
 /*-
  * Copyright (c) 2015 Jared D. McNeill <jmcneill@invisible.ca>
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: tegra_hdaudio.c,v 1.10 2018/07/16 23:11:47 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: tegra_hdaudio.c,v 1.15 2021/01/27 03:10:19 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -82,17 +82,18 @@ CFATTACH_DECL2_NEW(tegra_hdaudio, sizeof(struct tegra_hdaudio_softc),
 	tegra_hdaudio_match, tegra_hdaudio_attach, tegra_hdaudio_detach, NULL,
 	tegra_hdaudio_rescan, tegra_hdaudio_childdet);
 
+static const struct device_compatible_entry compat_data[] = {
+	{ .compat = "nvidia,tegra210-hda" },
+	{ .compat = "nvidia,tegra124-hda" },
+	DEVICE_COMPAT_EOL
+};
+
 static int
 tegra_hdaudio_match(device_t parent, cfdata_t cf, void *aux)
 {
-	const char * const compatible[] = {
-		"nvidia,tegra210-hda",
-		"nvidia,tegra124-hda",
-		NULL
-	};
 	struct fdt_attach_args * const faa = aux;
 
-	return of_match_compatible(faa->faa_phandle, compatible);
+	return of_compatible_match(faa->faa_phandle, compat_data);
 }
 
 static void
@@ -145,8 +146,7 @@ tegra_hdaudio_attach(device_t parent, device_t self, void *aux)
 	sc->sc_bst = faa->faa_bst;
 	error = bus_space_map(sc->sc_bst, addr, size, 0, &sc->sc_bsh);
 	if (error) {
-		aprint_error(": couldn't map %#" PRIx64 ": %d",
-		    (uint64_t)addr, error);
+		aprint_error(": couldn't map %#" PRIxBUSADDR ": %d", addr, error);
 		return;
 	}
 
@@ -156,6 +156,7 @@ tegra_hdaudio_attach(device_t parent, device_t self, void *aux)
 	    size - TEGRA_HDAUDIO_OFFSET, &sc->sc.sc_memh);
 	sc->sc.sc_memvalid = true;
 	sc->sc.sc_dmat = faa->faa_dmat;
+	sc->sc.sc_flags = HDAUDIO_FLAG_32BIT;
 
 	aprint_naive("\n");
 	aprint_normal(": HDA\n");
@@ -165,8 +166,8 @@ tegra_hdaudio_attach(device_t parent, device_t self, void *aux)
 		return;
 	}
 
-	sc->sc_ih = fdtbus_intr_establish(phandle, 0, IPL_AUDIO, 0,
-	    tegra_hdaudio_intr, sc);
+	sc->sc_ih = fdtbus_intr_establish_xname(phandle, 0, IPL_AUDIO, 0,
+	    tegra_hdaudio_intr, sc, device_xname(self));
 	if (sc->sc_ih == NULL) {
 		aprint_error_dev(self, "couldn't establish interrupt on %s\n",
 		    intrstr);

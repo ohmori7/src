@@ -1,5 +1,5 @@
 /* SSA operands management for trees.
-   Copyright (C) 2003-2016 Free Software Foundation, Inc.
+   Copyright (C) 2003-2018 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -833,6 +833,7 @@ get_expr_operands (struct function *fn, gimple *stmt, tree *expr_p, int flags)
       get_expr_operands (fn, stmt, &TREE_OPERAND (expr, 0), flags);
       return;
 
+    case BIT_INSERT_EXPR:
     case COMPOUND_EXPR:
     case OBJ_TYPE_REF:
     case ASSERT_EXPR:
@@ -1138,7 +1139,7 @@ DEBUG_FUNCTION bool
 verify_imm_links (FILE *f, tree var)
 {
   use_operand_p ptr, prev, list;
-  int count;
+  unsigned int count;
 
   gcc_assert (TREE_CODE (var) == SSA_NAME);
 
@@ -1156,20 +1157,31 @@ verify_imm_links (FILE *f, tree var)
   for (ptr = list->next; ptr != list; )
     {
       if (prev != ptr->prev)
-	goto error;
+	{
+	  fprintf (f, "prev != ptr->prev\n");
+	  goto error;
+	}
 
       if (ptr->use == NULL)
-	goto error; /* 2 roots, or SAFE guard node.  */
+	{
+	  fprintf (f, "ptr->use == NULL\n");
+	  goto error; /* 2 roots, or SAFE guard node.  */
+	}
       else if (*(ptr->use) != var)
-	goto error;
+	{
+	  fprintf (f, "*(ptr->use) != var\n");
+	  goto error;
+	}
 
       prev = ptr;
       ptr = ptr->next;
 
-      /* Avoid infinite loops.  50,000,000 uses probably indicates a
-	 problem.  */
-      if (count++ > 50000000)
-	goto error;
+      count++;
+      if (count == 0)
+	{
+	  fprintf (f, "number of immediate uses doesn't fit unsigned int\n");
+	  goto error;
+	}
     }
 
   /* Verify list in the other direction.  */
@@ -1177,15 +1189,25 @@ verify_imm_links (FILE *f, tree var)
   for (ptr = list->prev; ptr != list; )
     {
       if (prev != ptr->next)
-	goto error;
+	{
+	  fprintf (f, "prev != ptr->next\n");
+	  goto error;
+	}
       prev = ptr;
       ptr = ptr->prev;
-      if (count-- < 0)
-	goto error;
+      if (count == 0)
+	{
+	  fprintf (f, "count-- < 0\n");
+	  goto error;
+	}
+      count--;
     }
 
   if (count != 0)
-    goto error;
+    {
+      fprintf (f, "count != 0\n");
+      goto error;
+    }
 
   return false;
 
@@ -1246,11 +1268,8 @@ dump_immediate_uses (FILE *file)
   unsigned int x;
 
   fprintf (file, "Immediate_uses: \n\n");
-  for (x = 1; x < num_ssa_names; x++)
+  FOR_EACH_SSA_NAME (x, var, cfun)
     {
-      var = ssa_name (x);
-      if (!var)
-        continue;
       dump_immediate_uses_for (file, var);
     }
 }

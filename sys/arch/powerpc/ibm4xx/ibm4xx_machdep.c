@@ -1,4 +1,4 @@
-/*	$NetBSD: ibm4xx_machdep.c,v 1.26 2018/07/15 05:16:43 maxv Exp $	*/
+/*	$NetBSD: ibm4xx_machdep.c,v 1.35 2021/03/06 08:08:19 rin Exp $	*/
 /*	Original: ibm40x_machdep.c,v 1.3 2005/01/17 17:19:36 shige Exp $ */
 
 /*
@@ -68,19 +68,21 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ibm4xx_machdep.c,v 1.26 2018/07/15 05:16:43 maxv Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ibm4xx_machdep.c,v 1.35 2021/03/06 08:08:19 rin Exp $");
 
-#include "opt_compat_netbsd.h"
+#include "ksyms.h"
+
+#ifdef _KERNEL_OPT
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
 #include "opt_modular.h"
-#include "ksyms.h" /* for NKSYMS */
+#endif
 
 #include <sys/param.h>
-#include <sys/msgbuf.h>
-#include <sys/proc.h>
 #include <sys/cpu.h>
 #include <sys/ksyms.h>
+#include <sys/msgbuf.h>
+#include <sys/proc.h>
 
 #include <uvm/uvm_extern.h>
 
@@ -94,13 +96,13 @@ __KERNEL_RCSID(0, "$NetBSD: ibm4xx_machdep.c,v 1.26 2018/07/15 05:16:43 maxv Exp
 #endif
 
 #include <machine/powerpc.h>
-#include <powerpc/pcb.h>
 #include <machine/trap.h>
 
+#include <powerpc/pcb.h>
 #include <powerpc/spr.h>
-#include <powerpc/ibm4xx/spr.h>
 
 #include <powerpc/ibm4xx/cpu.h>
+#include <powerpc/ibm4xx/spr.h>
 
 /*
  * Global variables used here and there
@@ -111,6 +113,12 @@ char msgbuf[MSGBUFSIZE];
 
 #if NKSYMS || defined(DDB) || defined(MODULAR)
 void *startsym, *endsym;
+#endif
+
+#ifdef MODULAR
+register_t cpu_psluserset = PSL_USERSET;
+register_t cpu_pslusermod = PSL_USERMOD;
+register_t cpu_pslusermask = PSL_USERMASK;
 #endif
 
 /*
@@ -140,6 +148,8 @@ static const struct exc_info trap_table[] = {
 			errata51handler, (uintptr_t)&errata51size },
 #if defined(DDB)
 	{ EXC_PGM,	ddblow,		(uintptr_t)&ddbsize },
+#else
+	{ EXC_PGM,	accesstrap,	(uintptr_t)&accesssize },
 #endif
 };
 
@@ -200,7 +210,7 @@ ibm4xx_init(vaddr_t startkernel, vaddr_t endkernel, void (*handler)(void))
 	 * external interrupt handler install
 	 */
 	if (handler)
-	    ibm4xx_install_extint(handler);
+		ibm4xx_install_extint(handler);
 
 	/*
 	 * Now enable translation (and machine checks/recoverable interrupts).
@@ -307,7 +317,7 @@ ibm4xx_cpu_startup(const char *model)
 	 * pool pages.
 	 */
 
-	format_bytes(pbuf, sizeof(pbuf), ptoa(uvmexp.free));
+	format_bytes(pbuf, sizeof(pbuf), ptoa(uvm_availmem(false)));
 	printf("avail memory = %s\n", pbuf);
 }
 

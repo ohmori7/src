@@ -1,4 +1,4 @@
-/*	$NetBSD: plcom.c,v 1.56 2018/10/23 09:15:36 jmcneill Exp $	*/
+/*	$NetBSD: plcom.c,v 1.62 2020/10/19 17:00:02 tnn Exp $	*/
 
 /*-
  * Copyright (c) 2001 ARM Ltd
@@ -94,7 +94,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: plcom.c,v 1.56 2018/10/23 09:15:36 jmcneill Exp $");
+__KERNEL_RCSID(0, "$NetBSD: plcom.c,v 1.62 2020/10/19 17:00:02 tnn Exp $");
 
 #include "opt_plcom.h"
 #include "opt_ddb.h"
@@ -178,6 +178,7 @@ dev_type_poll(plcompoll);
 int	plcomcngetc	(dev_t);
 void	plcomcnputc	(dev_t, int);
 void	plcomcnpollc	(dev_t, int);
+void	plcomcnhalt	(dev_t);
 
 #define	integrate	static inline
 void 	plcomsoft	(void *);
@@ -296,12 +297,12 @@ pwritem1(struct plcom_instance *pi, bus_size_t o, const uint8_t *datap,
 
 #define	PREAD1(pi, reg)		pread1(pi, reg)
 #define	PREAD4(pi, reg)		\
-	(bus_space_read_4((pi)->pi_iot, (pi)->pi_ioh, (reg)))
+	bus_space_read_4((pi)->pi_iot, (pi)->pi_ioh, (reg))
 
 #define	PWRITE1(pi, reg, val)	pwrite1(pi, reg, val)
 #define	PWRITEM1(pi, reg, d, c)	pwritem1(pi, reg, d, c)
 #define	PWRITE4(pi, reg, val)	\
-	(bus_space_write_4((pi)->pi_iot, (pi)->pi_ioh, (reg), (val)))
+	bus_space_write_4((pi)->pi_iot, (pi)->pi_ioh, (reg), (val))
 
 int
 pl010comspeed(long speed, long frequency)
@@ -513,14 +514,9 @@ plcom_attach_subr(struct plcom_softc *sc)
 	tp->t_hwiflow = plcomhwiflow;
 
 	sc->sc_tty = tp;
-	sc->sc_rbuf = malloc(plcom_rbuf_size << 1, M_DEVBUF, M_NOWAIT);
+	sc->sc_rbuf = malloc(plcom_rbuf_size << 1, M_DEVBUF, M_WAITOK);
 	sc->sc_rbput = sc->sc_rbget = sc->sc_rbuf;
 	sc->sc_rbavail = plcom_rbuf_size;
-	if (sc->sc_rbuf == NULL) {
-		aprint_error_dev(sc->sc_dev,
-		    "unable to allocate ring buffer\n");
-		return;
-	}
 	sc->sc_ebuf = sc->sc_rbuf + (plcom_rbuf_size << 1);
 
 	tty_attach(tp);
@@ -2275,7 +2271,7 @@ int
 plcom_common_getc(dev_t dev, struct plcom_instance *pi)
 {
 	int s = splserial();
-	u_char stat, c;
+	u_char c;
 
 	/* got a character from reading things earlier */
 	if (plcom_readaheadcount > 0) {
@@ -2290,9 +2286,10 @@ plcom_common_getc(dev_t dev, struct plcom_instance *pi)
 		return c;
 	}
 
-	/* block until a character becomes available */
-	while (ISSET(stat = PREAD1(pi, PL01XCOM_FR), PL01X_FR_RXFE))
-		;
+	if (ISSET(PREAD1(pi, PL01XCOM_FR), PL01X_FR_RXFE)) {
+		splx(s);
+		return -1;
+	}
 
 	c = PREAD1(pi, PL01XCOM_DR);
 	{
@@ -2329,11 +2326,6 @@ plcom_common_putc(dev_t dev, struct plcom_instance *pi, int c)
 
 	PWRITE1(pi, PL01XCOM_DR, c);
 	PLCOM_BARRIER(pi, BR | BW);
-
-	/* wait for this transmission to complete */
-	timo = 1500000;
-	while (!ISSET(PREAD1(pi, PL01XCOM_FR), PL01X_FR_TXFE) && --timo)
-		continue;
 
 	splx(s);
 }
@@ -2406,7 +2398,7 @@ plcominit(struct plcom_instance *pi, int rate, int frequency, tcflag_t cflag)
  */
 struct consdev plcomcons = {
 	NULL, NULL, plcomcngetc, plcomcnputc, plcomcnpollc, NULL,
-	NULL, NULL, NODEV, CN_NORMAL
+	plcomcnhalt, NULL, NODEV, CN_NORMAL
 };
 
 int
@@ -2465,6 +2457,23 @@ plcomcnpollc(dev_t dev, int on)
 	plcom_readaheadcount = 0;
 }
 
+void
+plcomcnhalt(dev_t dev)
+{
+	struct plcom_instance *pi = &plcomcons_info;
+
+	switch (pi->pi_type) {
+	case PLCOM_TYPE_PL010:
+		PWRITE1(pi, PL010COM_CR, PL01X_CR_UARTEN);
+		break;
+	case PLCOM_TYPE_PL011:
+		PWRITE4(pi, PL011COM_CR,
+		    PL01X_CR_UARTEN | PL011_CR_RXE | PL011_CR_TXE);
+		PWRITE4(pi, PL011COM_IMSC, 0);
+		break;
+	}
+}
+
 #ifdef KGDB
 int
 plcom_kgdb_attach(struct plcom_instance *pi, int rate, int frequency,
@@ -2520,7 +2529,7 @@ plcom_is_console(bus_space_tag_t iot, bus_addr_t iobase,
 #ifdef KGDB
 	else if (!plcom_kgdb_attached &&
 	    bus_space_is_equal(iot, plcomkgdb_info.pi_iot) &&
-	    iobase == plcomkgdb_info.pi_iobase) 
+	    iobase == plcomkgdb_info.pi_iobase)
 		help = plcomkgdb_info.pi_ioh;
 #endif
 	else

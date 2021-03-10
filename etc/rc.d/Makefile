@@ -1,4 +1,4 @@
-# $NetBSD: Makefile,v 1.104 2019/05/12 01:50:14 kre Exp $
+# $NetBSD: Makefile,v 1.111 2021/01/26 15:08:02 martin Exp $
 
 .include <bsd.own.mk>
 
@@ -14,20 +14,20 @@
 # src/sbin/rcorder.
 
 CONFIGFILES=\
-		DAEMON DISKS LOGIN NETWORKING SERVERS \
+		CRITLOCALMOUNTED DAEMON DISKS LOGIN NETWORKING SERVERS \
 		accounting altqd amd apmd automount automountd autounmountd \
 		bluetooth bootconf.sh bootparams \
-		ccd cgd cleartmp cron \
+		ccd cgd clearcritlocal cleartmp cron \
 		devpubd dhcpcd dhcpd dhcpd6 dhcrelay dmesg \
 		downinterfaces \
-		envsys \
+		entropy envsys \
 		fsck fsck_root ftp_proxy ftpd \
 		gpio \
 		hostapd httpd \
 		identd ifwatchd inetd ip6addrctl ipfilter ipfs ipmon ipnat \
 		ipsec irdaattach iscsi_target iscsid isibootd \
 		kdc \
-		ldconfig ldpd local lpd lvm \
+		ldconfig ldpd lvmlockdir local lpd lvm \
 		makemandb mdnsd mixerctl modules mopd motd mountall \
 		mountcritlocal mountcritremote mountd moused mrouted \
 		named ndbootd network newsyslog nfsd nfslocking npf npf_boot \
@@ -58,6 +58,10 @@ FILESBUILD_fccache= yes
 .in:
 	${_MKTARGET_CREATE}
 	${TOOL_SED} -e 's,@X11ROOTDIR@,${X11ROOTDIR},g' < ${.IMPSRC} > ${.TARGET}
+.endif
+
+.if ${MKZFS} != "no"
+CONFIGFILES+=	zfs
 .endif
 
 .include <bsd.prog.mk>

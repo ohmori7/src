@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.6 2018/11/11 22:50:06 mrg Exp $
+#	$NetBSD: Makefile,v 1.9 2020/08/19 07:48:02 mrg Exp $
 
 REQUIRETOOLS=	yes
 NOLINT=		# defined
@@ -25,20 +25,18 @@ SHLIB_MINOR=	0
 SRCS=		${LIBSUPCXXSRCS} xmalloc.c
 CXXFLAGS+=	${G_SECTION_FLAGS}
 
+# XXX PR#54660
+.if ${MACHINE} == "sparc"
+SRCS+=		atomicity.cc
+DIST=		${GCCDIST}
+GLIBCXX_SRCDIR=	${DIST}/libstdc++-v3
+BUILDSYMLINKS+=	\
+	${GLIBCXX_SRCDIR}/${G_ATOMICITY_SRCDIR}/atomicity.h atomicity.cc
+.endif
+
 COPTS.cp-demangle.c = -Wno-stack-protector -Wno-unused-function
 
-.if ${HAVE_LIBGCC_EH} == "no"
-G_CONFIGLINKS:= ${G_CONFIGLINKS:S,libgcc/config/arm/unwind-arm.h,libgcc/unwind-generic.h,}
-.endif
-
-.if ${MKGCC} != "no"
-.if defined(G_CONFIGLINKS) && !empty(G_CONFIGLINKS)
-BUILDSYMLINKS+=        ${G_CONFIGLINKS}
-.for _src _dst in ${G_CONFIGLINKS}
-DPSRCS+=       ${_dst}
-.endfor
-.endif
-.endif
+.include "../Makefile.gthr"
 
 .include <bsd.lib.mk>
 

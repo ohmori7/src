@@ -1,4 +1,4 @@
-/*	$NetBSD: sdmmc.c,v 1.36 2018/11/06 16:01:38 jmcneill Exp $	*/
+/*	$NetBSD: sdmmc.c,v 1.40 2020/05/24 17:26:18 riastradh Exp $	*/
 /*	$OpenBSD: sdmmc.c,v 1.18 2009/01/09 10:58:38 jsg Exp $	*/
 
 /*
@@ -49,7 +49,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: sdmmc.c,v 1.36 2018/11/06 16:01:38 jmcneill Exp $");
+__KERNEL_RCSID(0, "$NetBSD: sdmmc.c,v 1.40 2020/05/24 17:26:18 riastradh Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_sdmmc.h"
@@ -130,10 +130,11 @@ sdmmc_attach(device_t parent, device_t self, void *aux)
 	sc->sc_busclk = sc->sc_clkmax;
 	sc->sc_buswidth = 1;
 	sc->sc_caps = saa->saa_caps;
+	sc->sc_max_seg = saa->saa_max_seg ? saa->saa_max_seg : MAXPHYS;
 
 	if (ISSET(sc->sc_caps, SMC_CAPS_DMA)) {
 		error = bus_dmamap_create(sc->sc_dmat, MAXPHYS, SDMMC_MAXNSEGS,
-		    MAXPHYS, 0, BUS_DMA_NOWAIT|BUS_DMA_ALLOCNOW, &sc->sc_dmap);
+		    sc->sc_max_seg, 0, BUS_DMA_NOWAIT|BUS_DMA_ALLOCNOW, &sc->sc_dmap);
 		if (error) {
 			aprint_error_dev(sc->sc_dev,
 			    "couldn't create dma map. (error=%d)\n", error);
@@ -151,7 +152,6 @@ sdmmc_attach(device_t parent, device_t self, void *aux)
 	mutex_init(&sc->sc_mtx, MUTEX_DEFAULT, IPL_NONE);
 	mutex_init(&sc->sc_tskq_mtx, MUTEX_DEFAULT, IPL_SDMMC);
 	mutex_init(&sc->sc_discover_task_mtx, MUTEX_DEFAULT, IPL_SDMMC);
-	mutex_init(&sc->sc_intr_task_mtx, MUTEX_DEFAULT, IPL_SDMMC);
 	cv_init(&sc->sc_tskq_cv, "mmctaskq");
 
 	evcnt_attach_dynamic(&sc->sc_ev_xfer, EVCNT_TYPE_MISC, NULL,
@@ -226,8 +226,10 @@ sdmmc_detach(device_t self, int flags)
 		callout_destroy(&sc->sc_card_detect_ch);
 	}
 
+	sdmmc_del_task(sc, &sc->sc_intr_task, NULL);
+	sdmmc_del_task(sc, &sc->sc_discover_task, NULL);
+
 	cv_destroy(&sc->sc_tskq_cv);
-	mutex_destroy(&sc->sc_intr_task_mtx);
 	mutex_destroy(&sc->sc_discover_task_mtx);
 	mutex_destroy(&sc->sc_tskq_mtx);
 	mutex_destroy(&sc->sc_mtx);
@@ -257,32 +259,64 @@ sdmmc_add_task(struct sdmmc_softc *sc, struct sdmmc_task *task)
 {
 
 	mutex_enter(&sc->sc_tskq_mtx);
+	if (task->sc == sc) {
+		KASSERT(task->onqueue);
+		goto out;
+	}
+	KASSERT(task->sc == NULL);
+	KASSERT(!task->onqueue);
 	task->onqueue = 1;
 	task->sc = sc;
 	TAILQ_INSERT_TAIL(&sc->sc_tskq, task, next);
 	cv_broadcast(&sc->sc_tskq_cv);
-	mutex_exit(&sc->sc_tskq_mtx);
+out:	mutex_exit(&sc->sc_tskq_mtx);
 }
 
 static inline void
 sdmmc_del_task1(struct sdmmc_softc *sc, struct sdmmc_task *task)
 {
 
+	KASSERT(mutex_owned(&sc->sc_tskq_mtx));
+
 	TAILQ_REMOVE(&sc->sc_tskq, task, next);
 	task->sc = NULL;
 	task->onqueue = 0;
 }
 
-void
-sdmmc_del_task(struct sdmmc_task *task)
+bool
+sdmmc_del_task(struct sdmmc_softc *sc, struct sdmmc_task *task,
+    kmutex_t *interlock)
 {
-	struct sdmmc_softc *sc = (struct sdmmc_softc *)task->sc;
+	bool cancelled;
 
-	if (sc != NULL) {
-		mutex_enter(&sc->sc_tskq_mtx);
+	KASSERT(interlock == NULL || mutex_owned(interlock));
+
+	mutex_enter(&sc->sc_tskq_mtx);
+	if (task->sc == sc) {
+		KASSERT(task->onqueue);
+		KASSERT(sc->sc_curtask != task);
 		sdmmc_del_task1(sc, task);
-		mutex_exit(&sc->sc_tskq_mtx);
+		cancelled = true;
+	} else {
+		KASSERT(task->sc == NULL);
+		KASSERT(!task->onqueue);
+		mutex_exit(interlock);
+		while (sc->sc_curtask == task) {
+			KASSERT(curlwp != sc->sc_tskq_lwp);
+			cv_wait(&sc->sc_tskq_cv, &sc->sc_tskq_mtx);
+		}
+		if (!mutex_tryenter(interlock)) {
+			mutex_exit(&sc->sc_tskq_mtx);
+			mutex_enter(interlock);
+			mutex_enter(&sc->sc_tskq_mtx);
+		}
+		cancelled = false;
 	}
+	mutex_exit(&sc->sc_tskq_mtx);
+
+	KASSERT(interlock == NULL || mutex_owned(interlock));
+
+	return cancelled;
 }
 
 static void
@@ -299,9 +333,12 @@ sdmmc_task_thread(void *arg)
 		task = TAILQ_FIRST(&sc->sc_tskq);
 		if (task != NULL) {
 			sdmmc_del_task1(sc, task);
+			sc->sc_curtask = task;
 			mutex_exit(&sc->sc_tskq_mtx);
 			(*task->func)(task->arg);
 			mutex_enter(&sc->sc_tskq_mtx);
+			sc->sc_curtask = NULL;
+			cv_broadcast(&sc->sc_tskq_cv);
 		} else {
 			/* Check for the exit condition. */
 			if (sc->sc_dying)
@@ -334,10 +371,7 @@ sdmmc_needs_discover(device_t dev)
 	if (!ISSET(sc->sc_flags, SMF_INITED))
 		return;
 
-	mutex_enter(&sc->sc_discover_task_mtx);
-	if (!sdmmc_task_pending(&sc->sc_discover_task))
-		sdmmc_add_task(sc, &sc->sc_discover_task);
-	mutex_exit(&sc->sc_discover_task_mtx);
+	sdmmc_add_task(sc, &sc->sc_discover_task);
 }
 
 static void
@@ -567,7 +601,7 @@ sdmmc_enable(struct sdmmc_softc *sc)
 	}
 
 	/* XXX wait for card to power up */
-	sdmmc_delay(100000);
+	sdmmc_pause(100000, NULL);
 
 	if (!ISSET(sc->sc_caps, SMC_CAPS_SPI_MODE)) {
 		/* Initialize SD I/O card function(s). */
@@ -656,6 +690,7 @@ sdmmc_function_alloc(struct sdmmc_softc *sc)
 	sf->cis.product = SDMMC_PRODUCT_INVALID;
 	sf->cis.function = SDMMC_FUNCTION_INVALID;
 	sf->width = 1;
+	sf->blklen = sdmmc_chip_host_maxblklen(sc->sc_sct, sc->sc_sch);
 
 	if (ISSET(sc->sc_flags, SMF_MEM_MODE) &&
 	    ISSET(sc->sc_caps, SMC_CAPS_DMA) &&
@@ -788,6 +823,17 @@ sdmmc_delay(u_int usecs)
 	delay(usecs);
 }
 
+void
+sdmmc_pause(u_int usecs, kmutex_t *lock)
+{
+	unsigned ticks = mstohz(usecs/1000);
+
+	if (cold || ticks < 1)
+		delay(usecs);
+	else
+		kpause("sdmmcdelay", false, ticks, lock);
+}
+
 int
 sdmmc_app_command(struct sdmmc_softc *sc, struct sdmmc_function *sf, struct sdmmc_command *cmd)
 {
@@ -908,7 +954,7 @@ sdmmc_set_relative_addr(struct sdmmc_softc *sc, struct sdmmc_function *sf)
 	/* Don't lock */
 
 	if (ISSET(sc->sc_caps, SMC_CAPS_SPI_MODE)) {
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 			"sdmmc_set_relative_addr: SMC_CAPS_SPI_MODE set");
 		return EIO;
 	}
@@ -941,7 +987,7 @@ sdmmc_select_card(struct sdmmc_softc *sc, struct sdmmc_function *sf)
 	/* Don't lock */
 
 	if (ISSET(sc->sc_caps, SMC_CAPS_SPI_MODE)) {
-		aprint_error_dev(sc->sc_dev,
+		device_printf(sc->sc_dev,
 			"sdmmc_select_card: SMC_CAPS_SPI_MODE set");
 		return EIO;
 	}
@@ -959,6 +1005,11 @@ sdmmc_select_card(struct sdmmc_softc *sc, struct sdmmc_function *sf)
 	error = sdmmc_mmc_command(sc, &cmd);
 	if (error == 0 || sf == NULL)
 		sc->sc_card = sf;
+
+	if (error) {
+		device_printf(sc->sc_dev,
+			"sdmmc_select_card: error %d", error);
+	}
 
 	return error;
 }

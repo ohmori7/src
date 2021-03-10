@@ -1,4 +1,4 @@
-/*	$NetBSD: puffs_vfsops.c,v 1.121 2018/05/28 21:04:37 chs Exp $	*/
+/*	$NetBSD: puffs_vfsops.c,v 1.125 2020/02/27 22:12:53 ad Exp $	*/
 
 /*
  * Copyright (c) 2005, 2006  Antti Kantee.  All Rights Reserved.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: puffs_vfsops.c,v 1.121 2018/05/28 21:04:37 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: puffs_vfsops.c,v 1.125 2020/02/27 22:12:53 ad Exp $");
 
 #include <sys/param.h>
 #include <sys/kernel.h>
@@ -216,8 +216,12 @@ puffs_vfsop_mount(struct mount *mp, const char *path, void *data,
 	 * after VFS_MOUNT() because we'd deadlock, so handle it
 	 * here already.
 	 */
-	copy_statvfs_info(&args->pa_svfsb, mp);
-	(void)memcpy(&mp->mnt_stat, &args->pa_svfsb, sizeof(mp->mnt_stat));
+	struct statvfs *sb = STATVFSBUF_GET();
+	puffs_statvfs_to_statvfs(&args->pa_svfsb, sb);
+	copy_statvfs_info(sb, mp);
+	STATVFSBUF_PUT(sb);
+
+	statvfs_to_puffs_statvfs(&mp->mnt_stat, &args->pa_svfsb);
 
 	KASSERT(curlwp != uvm.pagedaemon_lwp);
 	pmp = kmem_zalloc(sizeof(struct puffs_mount), KM_SLEEP);
@@ -448,7 +452,7 @@ puffs_vfsop_unmount(struct mount *mp, int mntflags)
  * This doesn't need to travel to userspace
  */
 int
-puffs_vfsop_root(struct mount *mp, struct vnode **vpp)
+puffs_vfsop_root(struct mount *mp, int lktype, struct vnode **vpp)
 {
 	struct puffs_mount *pmp = MPTOPUFFSMP(mp);
 	int rv;
@@ -457,7 +461,7 @@ puffs_vfsop_root(struct mount *mp, struct vnode **vpp)
 	KASSERT(rv != PUFFS_NOSUCHCOOKIE);
 	if (rv != 0)
 		return rv;
-	rv = vn_lock(*vpp, LK_EXCLUSIVE);
+	rv = vn_lock(*vpp, lktype);
 	if (rv != 0) {
 		vrele(*vpp);
 		*vpp = NULL;
@@ -497,12 +501,9 @@ puffs_vfsop_statvfs(struct mount *mp, struct statvfs *sbp)
 	 *
 	 * XXX: cache the copy in non-error case
 	 */
+	copy_statvfs_info(sbp, mp);
 	if (!error) {
-		copy_statvfs_info(&statvfs_msg->pvfsr_sb, mp);
-		(void)memcpy(sbp, &statvfs_msg->pvfsr_sb,
-		    sizeof(struct statvfs));
-	} else {
-		copy_statvfs_info(sbp, mp);
+		statvfs_to_puffs_statvfs(sbp, &statvfs_msg->pvfsr_sb);
 	}
 
 	PUFFS_MSG_RELEASE(statvfs);
@@ -516,7 +517,9 @@ pageflush_selector(void *cl, struct vnode *vp)
 	KASSERT(mutex_owned(vp->v_interlock));
 
 	return vp->v_type == VREG &&
-	    !(LIST_EMPTY(&vp->v_dirtyblkhd) && UVM_OBJ_IS_CLEAN(&vp->v_uobj));
+	    !(LIST_EMPTY(&vp->v_dirtyblkhd) &&
+	    (vp->v_iflag & VI_ONWORKLST) == 0);
+
 }
 
 static int
@@ -607,7 +610,8 @@ puffs_vfsop_sync(struct mount *mp, int waitfor, struct kauth_cred *cred)
 }
 
 int
-puffs_vfsop_fhtovp(struct mount *mp, struct fid *fhp, struct vnode **vpp)
+puffs_vfsop_fhtovp(struct mount *mp, struct fid *fhp, int lktype,
+    struct vnode **vpp)
 {
 	PUFFS_MSG_VARS(vfs, fhtonode);
 	struct puffs_mount *pmp = MPTOPUFFSMP(mp);
@@ -651,7 +655,7 @@ puffs_vfsop_fhtovp(struct mount *mp, struct fid *fhp, struct vnode **vpp)
 	    fhtonode_msg->pvfsr_rdev, &vp);
 	if (error)
 		goto out;
-	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+	vn_lock(vp, lktype | LK_RETRY);
 
 	*vpp = vp;
  out:

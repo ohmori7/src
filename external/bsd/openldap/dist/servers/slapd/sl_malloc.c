@@ -1,10 +1,10 @@
-/*	$NetBSD: sl_malloc.c,v 1.1.1.6 2018/02/06 01:53:15 christos Exp $	*/
+/*	$NetBSD: sl_malloc.c,v 1.2 2020/08/11 13:15:39 christos Exp $	*/
 
 /* sl_malloc.c - malloc routines using a per-thread slab */
 /* $OpenLDAP$ */
 /* This work is part of OpenLDAP Software <http://www.openldap.org/>.
  *
- * Copyright 2003-2017 The OpenLDAP Foundation.
+ * Copyright 2003-2020 The OpenLDAP Foundation.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -17,7 +17,7 @@
  */
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: sl_malloc.c,v 1.1.1.6 2018/02/06 01:53:15 christos Exp $");
+__RCSID("$NetBSD: sl_malloc.c,v 1.2 2020/08/11 13:15:39 christos Exp $");
 
 #include "portable.h"
 

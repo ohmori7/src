@@ -1,4 +1,4 @@
-	$NetBSD: syscalls.master,v 1.66 2017/02/09 22:02:05 christos Exp $  
+	$NetBSD: syscalls.master,v 1.68 2020/04/26 18:53:32 thorpej Exp $  
 
 ;	@(#)syscalls.master	8.1 (Berkeley) 7/19/93
 
@@ -514,11 +514,15 @@
 306	UNIMPL		tee
 307	UNIMPL		vmsplice
 308	UNIMPL		move_pages
-309	STD		{ int|linux_sys||set_robust_list( \
-			    struct linux_robust_list_head *head, size_t len); }
-310	STD		{ int|linux_sys||get_robust_list(int pid, \
-			    struct linux_robust_list_head **head, \
-			    size_t *len); }
+			;
+			; The NetBSD native robust list calls have different
+			; argument names / types, but they are ABI-compatible
+			; with Linux.
+			;
+309	NOARGS		{ int|sys||__futex_set_robust_list(void *head, \
+			    size_t len); }
+310	NOARGS		{ int|sys||__futex_get_robust_list(lwpid_t lwpid, \
+			    void **headp, size_t *lenp); }
 311	UNIMPL		kexec_load
 312	UNIMPL		getcpu
 313	UNIMPL		epoll_pwait
@@ -529,7 +533,8 @@
 317	UNIMPL		signalfd
 318	UNIMPL		timerfd
 319	UNIMPL		eventfd
-320	UNIMPL		fallocate
+320	STD		{ int|linux_sys||fallocate(int fd, int mode, \
+			    off_t offset, off_t len); }
 321	UNIMPL		timerfd_create
 322	UNIMPL		timerfd_gettime
 323	UNIMPL		timerfd_settime

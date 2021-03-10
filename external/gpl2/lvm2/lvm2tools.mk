@@ -1,4 +1,4 @@
-#	$NetBSD: lvm2tools.mk,v 1.4 2011/03/04 22:48:29 matt Exp $
+#	$NetBSD: lvm2tools.mk,v 1.7 2020/06/01 00:34:25 kamil Exp $
 
 .include <bsd.own.mk>
 

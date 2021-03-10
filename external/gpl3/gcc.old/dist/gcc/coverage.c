@@ -1,5 +1,5 @@
 /* Read and write coverage files, and associated functionality.
-   Copyright (C) 1990-2016 Free Software Foundation, Inc.
+   Copyright (C) 1990-2018 Free Software Foundation, Inc.
    Contributed by James E. Wilson, UC Berkeley/Cygnus Support;
    based on some ideas from Dain Samples of UC Berkeley.
    Further mangling by Bob Manson, Cygnus Support.
@@ -32,6 +32,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "rtl.h"
 #include "tree.h"
 #include "tree-pass.h"
+#include "memmodel.h"
 #include "tm_p.h"
 #include "stringpool.h"
 #include "cgraph.h"
@@ -142,7 +143,8 @@ static void coverage_obj_finish (vec<constructor_elt, va_gc> *);
 tree
 get_gcov_type (void)
 {
-  machine_mode mode = smallest_mode_for_size (GCOV_TYPE_SIZE, MODE_INT);
+  scalar_int_mode mode
+    = smallest_int_mode_for_size (LONG_LONG_TYPE_SIZE > 32 ? 64 : 32);
   return lang_hooks.types.type_for_mode (mode, false);
 }
 
@@ -151,7 +153,7 @@ get_gcov_type (void)
 static tree
 get_gcov_unsigned_t (void)
 {
-  machine_mode mode = smallest_mode_for_size (32, MODE_INT);
+  scalar_int_mode mode = smallest_int_mode_for_size (32);
   return lang_hooks.types.type_for_mode (mode, true);
 }
 
@@ -325,7 +327,9 @@ read_counts_file (void)
       gcov_sync (offset, length);
       if ((is_error = gcov_is_error ()))
 	{
-	  error (is_error < 0 ? "%qs has overflowed" : "%qs is corrupted",
+	  error (is_error < 0
+		 ? G_("%qs has overflowed")
+		 : G_("%qs is corrupted"),
 		 da_file_name);
 	  delete counts_hash;
 	  counts_hash = NULL;
@@ -364,7 +368,7 @@ get_coverage_counts (unsigned counter, unsigned expected,
   else
     {
       gcc_assert (coverage_node_map_initialized_p ());
-      elt.ident = cgraph_node::get (cfun->decl)->profile_id;
+      elt.ident = cgraph_node::get (current_function_decl)->profile_id;
     }
   elt.ctr = counter;
   entry = counts_hash->find (&elt);
@@ -553,7 +557,8 @@ coverage_compute_lineno_checksum (void)
     = expand_location (DECL_SOURCE_LOCATION (current_function_decl));
   unsigned chksum = xloc.line;
 
-  chksum = coverage_checksum_string (chksum, xloc.file);
+  if (xloc.file)
+    chksum = coverage_checksum_string (chksum, xloc.file);
   chksum = coverage_checksum_string
     (chksum, IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (current_function_decl)));
 
@@ -580,7 +585,8 @@ coverage_compute_profile_id (struct cgraph_node *n)
       bool use_name_only = (PARAM_VALUE (PARAM_PROFILE_FUNC_INTERNAL_ID) == 0);
 
       chksum = (use_name_only ? 0 : xloc.line);
-      chksum = coverage_checksum_string (chksum, xloc.file);
+      if (xloc.file)
+	chksum = coverage_checksum_string (chksum, xloc.file);
       chksum = coverage_checksum_string
 	(chksum, IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (n->decl)));
       if (!use_name_only && first_global_object_name)
@@ -657,8 +663,20 @@ coverage_begin_function (unsigned lineno_checksum, unsigned cfg_checksum)
   gcov_write_unsigned (cfg_checksum);
   gcov_write_string (IDENTIFIER_POINTER
 		     (DECL_ASSEMBLER_NAME (current_function_decl)));
-  gcov_write_string (xloc.file);
+  gcov_write_unsigned (DECL_ARTIFICIAL (current_function_decl)
+		       && !DECL_LAMBDA_FUNCTION (current_function_decl));
+  gcov_write_filename (xloc.file);
   gcov_write_unsigned (xloc.line);
+  gcov_write_unsigned (xloc.column);
+
+  expanded_location endloc = expand_location (cfun->function_end_locus);
+
+  /* Function can start in a single file and end in another one.  */
+  /* Work-around for PR gcov-profile/88045.  */
+  int end_line = endloc.file == xloc.file ? endloc.line : xloc.line;
+  if (xloc.line > end_line)
+    end_line = xloc.line;
+  gcov_write_unsigned (end_line);
   gcov_write_length (offset);
 
   return !gcov_is_error ();
@@ -763,7 +781,7 @@ build_var (tree fn_decl, tree type, int counter)
   TREE_STATIC (var) = 1;
   TREE_ADDRESSABLE (var) = 1;
   DECL_NONALIASED (var) = 1;
-  DECL_ALIGN (var) = TYPE_ALIGN (type);
+  SET_DECL_ALIGN (var, TYPE_ALIGN (type));
 
   return var;
 }
@@ -1065,7 +1083,34 @@ build_init_ctor (tree gcov_info_type)
   append_to_statement_list (stmt, &ctor);
 
   /* Generate a constructor to run it.  */
-  cgraph_build_static_cdtor ('I', ctor, DEFAULT_INIT_PRIORITY);
+  int priority = SUPPORTS_INIT_PRIORITY
+    ? MAX_RESERVED_INIT_PRIORITY: DEFAULT_INIT_PRIORITY;
+  cgraph_build_static_cdtor ('I', ctor, priority);
+}
+
+/* Generate the destructor function to call __gcov_exit.  */
+
+static void
+build_gcov_exit_decl (void)
+{
+  tree init_fn = build_function_type_list (void_type_node, void_type_node,
+					   NULL);
+  init_fn = build_decl (BUILTINS_LOCATION, FUNCTION_DECL,
+			get_identifier ("__gcov_exit"), init_fn);
+  TREE_PUBLIC (init_fn) = 1;
+  DECL_EXTERNAL (init_fn) = 1;
+  DECL_ASSEMBLER_NAME (init_fn);
+
+  /* Generate a call to __gcov_exit ().  */
+  tree dtor = NULL;
+  tree stmt = build_call_expr (init_fn, 0);
+  append_to_statement_list (stmt, &dtor);
+
+  /* Generate a destructor to run it.  */
+  int priority = SUPPORTS_INIT_PRIORITY
+    ? MAX_RESERVED_INIT_PRIORITY: DEFAULT_INIT_PRIORITY;
+
+  cgraph_build_static_cdtor ('D', dtor, priority);
 }
 
 /* Create the gcov_info types and object.  Generate the constructor
@@ -1123,6 +1168,7 @@ coverage_obj_init (void)
   DECL_NAME (gcov_info_var) = get_identifier (name_buf);
 
   build_init_ctor (gcov_info_type);
+  build_gcov_exit_decl ();
 
   return true;
 }
@@ -1228,6 +1274,9 @@ coverage_init (const char *filename)
 	  gcov_write_unsigned (GCOV_NOTE_MAGIC);
 	  gcov_write_unsigned (GCOV_VERSION);
 	  gcov_write_unsigned (bbg_file_stamp);
+
+	  /* Do not support has_unexecuted_blocks for Ada.  */
+	  gcov_write_unsigned (strcmp (lang_hooks.name, "GNU Ada") != 0);
 	}
     }
 

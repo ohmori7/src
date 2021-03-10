@@ -1,4 +1,4 @@
-# $NetBSD: Makefile,v 1.9 2019/06/01 10:58:12 mrg Exp $
+# $NetBSD: Makefile,v 1.13 2020/11/12 17:53:43 nia Exp $
 
 LIB=		sqlite3
 INCS=		sqlite3.h sqlite3ext.h
@@ -8,6 +8,9 @@ SRCS=		sqlite3.c
 
 CFLAGS+=	-DNDEBUG
 
+LDADD+=		-lm
+DPADD+=		${LIBM}
+
 FILES+=			sqlite3.pc
 FILESOWN_sqlite3.pc=	${BINOWN}
 FILESGRP_sqlite3.pc=	${BINGRP}
@@ -15,6 +18,8 @@ FILESMODE_sqlite3.pc=	${NONBINMODE}
 FILESDIR_sqlite3.pc=	/usr/lib/pkgconfig
 
 CLEANFILES+=sqlite3.pc
+
+CWARNFLAGS.clang+=	-Wno-error=implicit-int-float-conversion
 
 .include <bsd.own.mk>
 

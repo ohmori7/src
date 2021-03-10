@@ -1,4 +1,4 @@
-/*	$NetBSD: md.h,v 1.5 2019/06/12 06:20:18 martin Exp $	*/
+/*	$NetBSD: md.h,v 1.9 2020/10/05 12:28:45 martin Exp $	*/
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -76,7 +76,7 @@
 /*
  *  Default filesets to fetch and install during installation
  *  or upgrade. The standard sets are:
- *      base etc comp games man misc tests text xbase xcomp xetc xfont xserver
+ *      base etc comp games man misc rescue tests text xbase xcomp xetc xfont xserver
  *
  * x86_64 has the  MD set kern first, because generic kernels are  too
  * big to fit on install floppies.
@@ -85,6 +85,7 @@
  * from floppy.
  */
 #define SET_KERNEL_1_NAME	"kern-GENERIC"
+#define	SET_KERNEL_2_NAME	"kern-GENERIC_KASLR"
 
 #define SET_KERNEL_GENERIC	SET_KERNEL_1
 
@@ -110,3 +111,23 @@ extern struct mbr_bootsel *mbs;
 /*
  *  prototypes for MD code.
  */
+
+/*
+ * When we do an UEFI install, we have completely different default
+ * partitions and need to adjust the description at runtime.
+ */
+void x86_md_part_defaults(struct pm_devs*, struct part_usage_info**,
+            size_t *num_usage_infos);
+
+#define MD_PART_DEFAULTS(A,B,C)	x86_md_part_defaults(A,&(B),&(C))
+
+/* no need to install bootblock if installing for UEFI */
+bool x86_md_need_bootblock(struct install_partition_desc *install);
+#define	MD_NEED_BOOTBLOCK(A)	x86_md_need_bootblock(A)
+
+/* post-process boot.cfg for KASLR if that kernel has been selected */
+void amd64_md_boot_cfg_finalize(const char*);
+#define	MD_BOOT_CFG_FINALIZE(P)	amd64_md_boot_cfg_finalize(P)
+
+#define	HAVE_EFI_BOOT		1	/* we support EFI boot partitions */
+

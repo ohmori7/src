@@ -1,6 +1,6 @@
 /* RTX cost tables shared between arm and aarch64.
 
-   Copyright (C) 2013-2016 Free Software Foundation, Inc.
+   Copyright (C) 2013-2018 Free Software Foundation, Inc.
    Contributed by ARM Ltd.
 
    This file is part of GCC.
@@ -154,7 +154,7 @@ const struct cpu_cost_table cortexa53_extra_costs =
       COSTS_N_INSNS (1),	/* extend.  */
       COSTS_N_INSNS (1),	/* add.  */
       COSTS_N_INSNS (1),	/* extend_add.  */
-      COSTS_N_INSNS (7)		/* idiv.  */
+      COSTS_N_INSNS (9)		/* idiv.  */
     },
     /* MULT DImode */
     {
@@ -191,35 +191,35 @@ const struct cpu_cost_table cortexa53_extra_costs =
   {
     /* FP SFmode */
     {
-      COSTS_N_INSNS (15),	/* div.  */
-      COSTS_N_INSNS (3),	/* mult.  */
-      COSTS_N_INSNS (7),	/* mult_addsub. */
-      COSTS_N_INSNS (7),	/* fma.  */
-      COSTS_N_INSNS (3),	/* addsub.  */
-      COSTS_N_INSNS (1),	/* fpconst. */
-      COSTS_N_INSNS (2),	/* neg.  */
-      COSTS_N_INSNS (1),	/* compare.  */
-      COSTS_N_INSNS (3),	/* widen.  */
-      COSTS_N_INSNS (3),	/* narrow.  */
-      COSTS_N_INSNS (3),	/* toint.  */
-      COSTS_N_INSNS (3),	/* fromint.  */
-      COSTS_N_INSNS (3)		/* roundint.  */
+      COSTS_N_INSNS (5),	/* div.  */
+      COSTS_N_INSNS (1),	/* mult.  */
+      COSTS_N_INSNS (2),	/* mult_addsub.  */
+      COSTS_N_INSNS (2),	/* fma.  */
+      COSTS_N_INSNS (1),	/* addsub.  */
+      0,			/* fpconst.  */
+      COSTS_N_INSNS (1),	/* neg.  */
+      0,			/* compare.  */
+      COSTS_N_INSNS (1),	/* widen.  */
+      COSTS_N_INSNS (1),	/* narrow.  */
+      COSTS_N_INSNS (1),	/* toint.  */
+      COSTS_N_INSNS (1),	/* fromint.  */
+      COSTS_N_INSNS (1)		/* roundint.  */
     },
     /* FP DFmode */
     {
-      COSTS_N_INSNS (30),	/* div.  */
-      COSTS_N_INSNS (3),	/* mult.  */
-      COSTS_N_INSNS (7),	/* mult_addsub.  */
-      COSTS_N_INSNS (7),	/* fma.  */
-      COSTS_N_INSNS (3),	/* addsub.  */
-      COSTS_N_INSNS (1),	/* fpconst.  */
-      COSTS_N_INSNS (2),	/* neg.  */
-      COSTS_N_INSNS (1),	/* compare.  */
-      COSTS_N_INSNS (3),	/* widen.  */
-      COSTS_N_INSNS (3),	/* narrow.  */
-      COSTS_N_INSNS (3),	/* toint.  */
-      COSTS_N_INSNS (3),	/* fromint.  */
-      COSTS_N_INSNS (3)		/* roundint.  */
+      COSTS_N_INSNS (10),	/* div.  */
+      COSTS_N_INSNS (1),	/* mult.  */
+      COSTS_N_INSNS (2),	/* mult_addsub.  */
+      COSTS_N_INSNS (2),	/* fma.  */
+      COSTS_N_INSNS (1),	/* addsub.  */
+      0,			/* fpconst.  */
+      COSTS_N_INSNS (1),	/* neg.  */
+      0,			/* compare.  */
+      COSTS_N_INSNS (1),	/* widen.  */
+      COSTS_N_INSNS (1),	/* narrow.  */
+      COSTS_N_INSNS (1),	/* toint.  */
+      COSTS_N_INSNS (1),	/* fromint.  */
+      COSTS_N_INSNS (1)		/* roundint.  */
     }
   },
   /* Vector */
@@ -294,35 +294,35 @@ const struct cpu_cost_table cortexa57_extra_costs =
   {
     /* FP SFmode */
     {
-      COSTS_N_INSNS (17),      /* div.  */
-      COSTS_N_INSNS (5),       /* mult.  */
-      COSTS_N_INSNS (9),       /* mult_addsub. */
-      COSTS_N_INSNS (9),       /* fma.  */
-      COSTS_N_INSNS (4),       /* addsub.  */
-      COSTS_N_INSNS (2),       /* fpconst. */
-      COSTS_N_INSNS (2),       /* neg.  */
-      COSTS_N_INSNS (2),       /* compare.  */
-      COSTS_N_INSNS (4),       /* widen.  */
-      COSTS_N_INSNS (4),       /* narrow.  */
-      COSTS_N_INSNS (4),       /* toint.  */
-      COSTS_N_INSNS (4),       /* fromint.  */
-      COSTS_N_INSNS (4)        /* roundint.  */
+      COSTS_N_INSNS (6),      /* div.  */
+      COSTS_N_INSNS (1),       /* mult.  */
+      COSTS_N_INSNS (2),       /* mult_addsub.  */
+      COSTS_N_INSNS (2),       /* fma.  */
+      COSTS_N_INSNS (1),       /* addsub.  */
+      0,		       /* fpconst.  */
+      0,		       /* neg.  */
+      0,		       /* compare.  */
+      COSTS_N_INSNS (1),       /* widen.  */
+      COSTS_N_INSNS (1),       /* narrow.  */
+      COSTS_N_INSNS (1),       /* toint.  */
+      COSTS_N_INSNS (1),       /* fromint.  */
+      COSTS_N_INSNS (1)        /* roundint.  */
     },
     /* FP DFmode */
     {
-      COSTS_N_INSNS (31),      /* div.  */
-      COSTS_N_INSNS (5),       /* mult.  */
-      COSTS_N_INSNS (9),       /* mult_addsub.  */
-      COSTS_N_INSNS (9),       /* fma.  */
-      COSTS_N_INSNS (4),       /* addsub.  */
-      COSTS_N_INSNS (2),       /* fpconst.  */
-      COSTS_N_INSNS (2),       /* neg.  */
-      COSTS_N_INSNS (2),       /* compare.  */
-      COSTS_N_INSNS (4),       /* widen.  */
-      COSTS_N_INSNS (4),       /* narrow.  */
-      COSTS_N_INSNS (4),       /* toint.  */
-      COSTS_N_INSNS (4),       /* fromint.  */
-      COSTS_N_INSNS (4)        /* roundint.  */
+      COSTS_N_INSNS (11),      /* div.  */
+      COSTS_N_INSNS (1),       /* mult.  */
+      COSTS_N_INSNS (2),       /* mult_addsub.  */
+      COSTS_N_INSNS (2),       /* fma.  */
+      COSTS_N_INSNS (1),       /* addsub.  */
+      0,		       /* fpconst.  */
+      0,		       /* neg.  */
+      0,		       /* compare.  */
+      COSTS_N_INSNS (1),       /* widen.  */
+      COSTS_N_INSNS (1),       /* narrow.  */
+      COSTS_N_INSNS (1),       /* toint.  */
+      COSTS_N_INSNS (1),       /* fromint.  */
+      COSTS_N_INSNS (1)        /* roundint.  */
     }
   },
   /* Vector */

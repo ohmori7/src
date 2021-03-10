@@ -1,10 +1,10 @@
-/*	$NetBSD: backend.c,v 1.1.1.6 2018/02/06 01:53:15 christos Exp $	*/
+/*	$NetBSD: backend.c,v 1.2 2020/08/11 13:15:39 christos Exp $	*/
 
 /* backend.c - routines for dealing with back-end databases */
 /* $OpenLDAP$ */
 /* This work is part of OpenLDAP Software <http://www.openldap.org/>.
  *
- * Copyright 1998-2017 The OpenLDAP Foundation.
+ * Copyright 1998-2020 The OpenLDAP Foundation.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,7 +28,7 @@
 
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: backend.c,v 1.1.1.6 2018/02/06 01:53:15 christos Exp $");
+__RCSID("$NetBSD: backend.c,v 1.2 2020/08/11 13:15:39 christos Exp $");
 
 #include "portable.h"
 
@@ -1505,7 +1505,7 @@ fe_acl_group(
 					 * or if filter parsing fails.
 					 * In the latter case,
 					 * we should give up. */
-					if ( ludp->lud_filter != NULL && ludp->lud_filter != '\0') {
+					if ( ludp->lud_filter != NULL && *ludp->lud_filter != '\0') {
 						filter = str2filter_x( op, ludp->lud_filter );
 						if ( filter == NULL ) {
 							/* give up... */
@@ -1525,7 +1525,7 @@ fe_acl_group(
 							op->o_private = o_priv;
 							if ( rc2 != 0 ) {
 								/* give up... */
-								rc = LDAP_OTHER;
+								rc = (rc2 == LDAP_NO_SUCH_OBJECT) ? rc2 : LDAP_OTHER;
 								goto loopit;
 							}
 						}

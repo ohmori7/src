@@ -1,4 +1,8 @@
-# $NetBSD: Makefile,v 1.9 2019/02/08 22:06:12 mrg Exp $
+# $NetBSD: Makefile,v 1.15 2020/09/14 15:01:58 kamil Exp $
+
+UNSUPPORTED_COMPILER.clang=     # defined
+NOSANITIZER=    # defined
+NOCOMPAT=	# defined
 
 .include <bsd.own.mk>
 
@@ -7,9 +11,11 @@
 
 .PATH: ${SANITIZER}/tsan
 
+# XXXmknative
 TSAN_SRCS= \
 	tsan_clock.cc \
 	tsan_debugging.cc \
+	tsan_external.cc \
 	tsan_fd.cc \
 	tsan_flags.cc \
 	tsan_ignoreset.cc \
@@ -42,15 +48,24 @@ TSAN_SRCS= \
 	tsan_symbolize.cc \
 	tsan_sync.cc 
 
-# XXX ${MACHINE} won't match mips64 or ppc64
-.if exists(${SANITIZER}/tsan/tsan_rtl_${MACHINE}.S)
-TSAN_SRCS+= tsan_rtl_${MACHINE}.S
+.if ${MACHINE_ARCH} == "x86_64"
+TSAN_SRCS+= tsan_rtl_amd64.S
+.elif ${MACHINE_ARCH} == "aarch64"
+TSAN_SRCS+= tsan_rtl_aarch64.S
+.elif ${MACHINE_ARCH} == "mips64el"
+TSAN_SRCS+= tsan_rtl_mips64.S
+.elif ${MACHINE_ARCH} == "powerpc64"
+TSAN_SRCS+= tsan_rtl_ppc64.S
 .else
-TSAN_SRCS+= tsan_rtl_unimpl.cc
+.error Unsupported
 .endif
 
 LIB=	tsan
 SRCS+=	${TSAN_SRCS}
+LIBDPLIBS+= rt ${NETBSDSRCDIR}/lib/librt
+LIBDPLIBS+= m  ${NETBSDSRCDIR}/lib/libm
+LIBDPLIBS+= pthread ${NETBSDSRCDIR}/lib/libpthread
 CPPFLAGS+=-DCAN_SANITIZE_UB=0
+COPTS.tsan_interceptors.cc += -Wno-unused-function
 
 .include <bsd.lib.mk>

@@ -1,5 +1,5 @@
 /* Optimization of PHI nodes by converting them into straightline code.
-   Copyright (C) 2004-2016 Free Software Foundation, Inc.
+   Copyright (C) 2004-2018 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -49,7 +49,8 @@ along with GCC; see the file COPYING3.  If not see
 static unsigned int tree_ssa_phiopt_worker (bool, bool);
 static bool conditional_replacement (basic_block, basic_block,
 				     edge, edge, gphi *, tree, tree);
-static gphi *factor_out_conditional_conversion (edge, edge, gphi *, tree, tree);
+static gphi *factor_out_conditional_conversion (edge, edge, gphi *, tree, tree,
+						gimple *);
 static int value_replacement (basic_block, basic_block,
 			      edge, edge, gimple *, tree, tree);
 static bool minmax_replacement (basic_block, basic_block,
@@ -233,7 +234,7 @@ tree_ssa_phiopt_worker (bool do_store_elim, bool do_hoist_loads)
 	  continue;
 	}
       else if (do_hoist_loads
-		 && EDGE_SUCC (bb1, 0)->dest == EDGE_SUCC (bb2, 0)->dest)
+	       && EDGE_SUCC (bb1, 0)->dest == EDGE_SUCC (bb2, 0)->dest)
 	{
 	  basic_block bb3 = EDGE_SUCC (bb1, 0)->dest;
 
@@ -313,7 +314,8 @@ tree_ssa_phiopt_worker (bool do_store_elim, bool do_hoist_loads)
 	  gcc_assert (arg0 != NULL_TREE && arg1 != NULL_TREE);
 
 	  gphi *newphi = factor_out_conditional_conversion (e1, e2, phi,
-							    arg0, arg1);
+							    arg0, arg1,
+							    cond_stmt);
 	  if (newphi != NULL)
 	    {
 	      phi = newphi;
@@ -372,8 +374,7 @@ replace_phi_edge_with_variable (basic_block cond_block,
     {
       EDGE_SUCC (cond_block, 0)->flags |= EDGE_FALLTHRU;
       EDGE_SUCC (cond_block, 0)->flags &= ~(EDGE_TRUE_VALUE | EDGE_FALSE_VALUE);
-      EDGE_SUCC (cond_block, 0)->probability = REG_BR_PROB_BASE;
-      EDGE_SUCC (cond_block, 0)->count += EDGE_SUCC (cond_block, 1)->count;
+      EDGE_SUCC (cond_block, 0)->probability = profile_probability::always ();
 
       block_to_remove = EDGE_SUCC (cond_block, 1)->dest;
     }
@@ -382,8 +383,7 @@ replace_phi_edge_with_variable (basic_block cond_block,
       EDGE_SUCC (cond_block, 1)->flags |= EDGE_FALLTHRU;
       EDGE_SUCC (cond_block, 1)->flags
 	&= ~(EDGE_TRUE_VALUE | EDGE_FALSE_VALUE);
-      EDGE_SUCC (cond_block, 1)->probability = REG_BR_PROB_BASE;
-      EDGE_SUCC (cond_block, 1)->count += EDGE_SUCC (cond_block, 0)->count;
+      EDGE_SUCC (cond_block, 1)->probability = profile_probability::always ();
 
       block_to_remove = EDGE_SUCC (cond_block, 0)->dest;
     }
@@ -402,11 +402,12 @@ replace_phi_edge_with_variable (basic_block cond_block,
 
 /* PR66726: Factor conversion out of COND_EXPR.  If the arguments of the PHI
    stmt are CONVERT_STMT, factor out the conversion and perform the conversion
-   to the result of PHI stmt.  Return the newly-created PHI, if any.  */
+   to the result of PHI stmt.  COND_STMT is the controlling predicate.
+   Return the newly-created PHI, if any.  */
 
 static gphi *
 factor_out_conditional_conversion (edge e0, edge e1, gphi *phi,
-				   tree arg0, tree arg1)
+				   tree arg0, tree arg1, gimple *cond_stmt)
 {
   gimple *arg0_def_stmt = NULL, *arg1_def_stmt = NULL, *new_stmt;
   tree new_arg0 = NULL_TREE, new_arg1 = NULL_TREE;
@@ -472,7 +473,31 @@ factor_out_conditional_conversion (edge e0, edge e1, gphi *phi,
 	  && int_fits_type_p (arg1, TREE_TYPE (new_arg0)))
 	{
 	  if (gimple_assign_cast_p (arg0_def_stmt))
-	    new_arg1 = fold_convert (TREE_TYPE (new_arg0), arg1);
+	    {
+	      /* For the INTEGER_CST case, we are just moving the
+		 conversion from one place to another, which can often
+		 hurt as the conversion moves further away from the
+		 statement that computes the value.  So, perform this
+		 only if new_arg0 is an operand of COND_STMT, or
+		 if arg0_def_stmt is the only non-debug stmt in
+		 its basic block, because then it is possible this
+		 could enable further optimizations (minmax replacement
+		 etc.).  See PR71016.  */
+	      if (new_arg0 != gimple_cond_lhs (cond_stmt)
+		  && new_arg0 != gimple_cond_rhs (cond_stmt)
+		  && gimple_bb (arg0_def_stmt) == e0->src)
+		{
+		  gsi = gsi_for_stmt (arg0_def_stmt);
+		  gsi_prev_nondebug (&gsi);
+		  if (!gsi_end_p (gsi))
+		    return NULL;
+		  gsi = gsi_for_stmt (arg0_def_stmt);
+		  gsi_next_nondebug (&gsi);
+		  if (!gsi_end_p (gsi))
+		    return NULL;
+		}
+	      new_arg1 = fold_convert (TREE_TYPE (new_arg0), arg1);
+	    }
 	  else
 	    return NULL;
 	}
@@ -498,11 +523,11 @@ factor_out_conditional_conversion (edge e0, edge e1, gphi *phi,
   if (dump_file && (dump_flags & TDF_DETAILS))
     {
       fprintf (dump_file, "PHI ");
-      print_generic_expr (dump_file, gimple_phi_result (phi), 0);
+      print_generic_expr (dump_file, gimple_phi_result (phi));
       fprintf (dump_file,
 	       " changed to factor conversion out from COND_EXPR.\n");
       fprintf (dump_file, "New stmt with CAST that defines ");
-      print_generic_expr (dump_file, result, 0);
+      print_generic_expr (dump_file, result);
       fprintf (dump_file, ".\n");
     }
 
@@ -651,7 +676,6 @@ conditional_replacement (basic_block cond_bb, basic_block middle_bb,
     }
 
   replace_phi_edge_with_variable (cond_bb, e1, phi, new_var);
-  reset_flow_sensitive_info_in_bb (cond_bb);
 
   /* Note that we optimized this PHI.  */
   return true;
@@ -669,12 +693,12 @@ jump_function_from_stmt (tree *arg, gimple *stmt)
     {
       /* For arg = &p->i transform it to p, if possible.  */
       tree rhs1 = gimple_assign_rhs1 (stmt);
-      HOST_WIDE_INT offset;
+      poly_int64 offset;
       tree tem = get_addr_base_and_unit_offset (TREE_OPERAND (rhs1, 0),
 						&offset);
       if (tem
 	  && TREE_CODE (tem) == MEM_REF
-	  && (mem_ref_offset (tem) + offset) == 0)
+	  && known_eq (mem_ref_offset (tem) + offset, 0))
 	{
 	  *arg = TREE_OPERAND (tem, 0);
 	  return true;
@@ -816,7 +840,7 @@ neutral_element_p (tree_code code, tree arg, bool right)
 /* Returns true if ARG is an absorbing element for operation CODE.  */
 
 static bool
-absorbing_element_p (tree_code code, tree arg)
+absorbing_element_p (tree_code code, tree arg, bool right, tree rval)
 {
   switch (code)
     {
@@ -826,6 +850,25 @@ absorbing_element_p (tree_code code, tree arg)
     case MULT_EXPR:
     case BIT_AND_EXPR:
       return integer_zerop (arg);
+
+    case LSHIFT_EXPR:
+    case RSHIFT_EXPR:
+    case LROTATE_EXPR:
+    case RROTATE_EXPR:
+      return !right && integer_zerop (arg);
+
+    case TRUNC_DIV_EXPR:
+    case CEIL_DIV_EXPR:
+    case FLOOR_DIV_EXPR:
+    case ROUND_DIV_EXPR:
+    case EXACT_DIV_EXPR:
+    case TRUNC_MOD_EXPR:
+    case CEIL_MOD_EXPR:
+    case FLOOR_MOD_EXPR:
+    case ROUND_MOD_EXPR:
+      return (!right
+	      && integer_zerop (arg)
+	      && tree_single_nonzero_warnv_p (rval, NULL));
 
     default:
       return false;
@@ -942,10 +985,10 @@ value_replacement (basic_block cond_bb, basic_block middle_bb,
 	  if (dump_file && (dump_flags & TDF_DETAILS))
 	    {
 	      fprintf (dump_file, "PHI ");
-	      print_generic_expr (dump_file, gimple_phi_result (phi), 0);
+	      print_generic_expr (dump_file, gimple_phi_result (phi));
 	      fprintf (dump_file, " reduced for COND_EXPR in block %d to ",
 		       cond_bb->index);
-	      print_generic_expr (dump_file, arg, 0);
+	      print_generic_expr (dump_file, arg);
 	      fprintf (dump_file, ".\n");
             }
           return 1;
@@ -953,11 +996,13 @@ value_replacement (basic_block cond_bb, basic_block middle_bb,
 
     }
 
-  /* Now optimize (x != 0) ? x + y : y to just y.
-     The following condition is too restrictive, there can easily be another
-     stmt in middle_bb, for instance a CONVERT_EXPR for the second argument.  */
-  gimple *assign = last_and_only_stmt (middle_bb);
-  if (!assign || gimple_code (assign) != GIMPLE_ASSIGN
+  /* Now optimize (x != 0) ? x + y : y to just x + y.  */
+  gsi = gsi_last_nondebug_bb (middle_bb);
+  if (gsi_end_p (gsi))
+    return 0;
+
+  gimple *assign = gsi_stmt (gsi);
+  if (!is_gimple_assign (assign)
       || gimple_assign_rhs_class (assign) != GIMPLE_BINARY_RHS
       || (!INTEGRAL_TYPE_P (TREE_TYPE (arg0))
 	  && !POINTER_TYPE_P (TREE_TYPE (arg0))))
@@ -967,6 +1012,71 @@ value_replacement (basic_block cond_bb, basic_block middle_bb,
   if (!gimple_seq_empty_p (phi_nodes (middle_bb)))
     return 0;
 
+  /* Allow up to 2 cheap preparation statements that prepare argument
+     for assign, e.g.:
+      if (y_4 != 0)
+	goto <bb 3>;
+      else
+	goto <bb 4>;
+     <bb 3>:
+      _1 = (int) y_4;
+      iftmp.0_6 = x_5(D) r<< _1;
+     <bb 4>:
+      # iftmp.0_2 = PHI <iftmp.0_6(3), x_5(D)(2)>
+     or:
+      if (y_3(D) == 0)
+	goto <bb 4>;
+      else
+	goto <bb 3>;
+     <bb 3>:
+      y_4 = y_3(D) & 31;
+      _1 = (int) y_4;
+      _6 = x_5(D) r<< _1;
+     <bb 4>:
+      # _2 = PHI <x_5(D)(2), _6(3)>  */
+  gimple *prep_stmt[2] = { NULL, NULL };
+  int prep_cnt;
+  for (prep_cnt = 0; ; prep_cnt++)
+    {
+      gsi_prev_nondebug (&gsi);
+      if (gsi_end_p (gsi))
+	break;
+
+      gimple *g = gsi_stmt (gsi);
+      if (gimple_code (g) == GIMPLE_LABEL)
+	break;
+
+      if (prep_cnt == 2 || !is_gimple_assign (g))
+	return 0;
+
+      tree lhs = gimple_assign_lhs (g);
+      tree rhs1 = gimple_assign_rhs1 (g);
+      use_operand_p use_p;
+      gimple *use_stmt;
+      if (TREE_CODE (lhs) != SSA_NAME
+	  || TREE_CODE (rhs1) != SSA_NAME
+	  || !INTEGRAL_TYPE_P (TREE_TYPE (lhs))
+	  || !INTEGRAL_TYPE_P (TREE_TYPE (rhs1))
+	  || !single_imm_use (lhs, &use_p, &use_stmt)
+	  || use_stmt != (prep_cnt ? prep_stmt[prep_cnt - 1] : assign))
+	return 0;
+      switch (gimple_assign_rhs_code (g))
+	{
+	CASE_CONVERT:
+	  break;
+	case PLUS_EXPR:
+	case BIT_AND_EXPR:
+	case BIT_IOR_EXPR:
+	case BIT_XOR_EXPR:
+	  if (TREE_CODE (gimple_assign_rhs2 (g)) != INTEGER_CST)
+	    return 0;
+	  break;
+	default:
+	  return 0;
+	}
+      prep_stmt[prep_cnt] = g;
+    }
+
   /* Only transform if it removes the condition.  */
   if (!single_non_singleton_phi_for_edges (phi_nodes (gimple_bb (phi)), e0, e1))
     return 0;
@@ -975,9 +1085,9 @@ value_replacement (basic_block cond_bb, basic_block middle_bb,
   if (optimize_bb_for_speed_p (cond_bb)
       /* The special case is useless if it has a low probability.  */
       && profile_status_for_fn (cfun) != PROFILE_ABSENT
-      && EDGE_PRED (middle_bb, 0)->probability < PROB_EVEN
+      && EDGE_PRED (middle_bb, 0)->probability < profile_probability::even ()
       /* If assign is cheap, there is no point avoiding it.  */
-      && estimate_num_insns (assign, &eni_time_weights)
+      && estimate_num_insns (bb_seq (middle_bb), &eni_time_weights)
 	 >= 3 * estimate_num_insns (cond, &eni_time_weights))
     return 0;
 
@@ -987,6 +1097,32 @@ value_replacement (basic_block cond_bb, basic_block middle_bb,
   enum tree_code code_def = gimple_assign_rhs_code (assign);
   tree cond_lhs = gimple_cond_lhs (cond);
   tree cond_rhs = gimple_cond_rhs (cond);
+
+  /* Propagate the cond_rhs constant through preparation stmts,
+     make sure UB isn't invoked while doing that.  */
+  for (int i = prep_cnt - 1; i >= 0; --i)
+    {
+      gimple *g = prep_stmt[i];
+      tree grhs1 = gimple_assign_rhs1 (g);
+      if (!operand_equal_for_phi_arg_p (cond_lhs, grhs1))
+	return 0;
+      cond_lhs = gimple_assign_lhs (g);
+      cond_rhs = fold_convert (TREE_TYPE (grhs1), cond_rhs);
+      if (TREE_CODE (cond_rhs) != INTEGER_CST
+	  || TREE_OVERFLOW (cond_rhs))
+	return 0;
+      if (gimple_assign_rhs_class (g) == GIMPLE_BINARY_RHS)
+	{
+	  cond_rhs = int_const_binop (gimple_assign_rhs_code (g), cond_rhs,
+				      gimple_assign_rhs2 (g));
+	  if (TREE_OVERFLOW (cond_rhs))
+	    return 0;
+	}
+      cond_rhs = fold_convert (TREE_TYPE (cond_lhs), cond_rhs);
+      if (TREE_CODE (cond_rhs) != INTEGER_CST
+	  || TREE_OVERFLOW (cond_rhs))
+	return 0;
+    }
 
   if (((code == NE_EXPR && e1 == false_edge)
 	|| (code == EQ_EXPR && e1 == true_edge))
@@ -998,27 +1134,29 @@ value_replacement (basic_block cond_bb, basic_block middle_bb,
 	      && operand_equal_for_phi_arg_p (rhs1, cond_lhs)
 	      && neutral_element_p (code_def, cond_rhs, false))
 	  || (operand_equal_for_phi_arg_p (arg1, cond_rhs)
-	      && (operand_equal_for_phi_arg_p (rhs2, cond_lhs)
-		  || operand_equal_for_phi_arg_p (rhs1, cond_lhs))
-	      && absorbing_element_p (code_def, cond_rhs))))
+	      && ((operand_equal_for_phi_arg_p (rhs2, cond_lhs)
+		   && absorbing_element_p (code_def, cond_rhs, true, rhs2))
+		  || (operand_equal_for_phi_arg_p (rhs1, cond_lhs)
+		      && absorbing_element_p (code_def,
+					      cond_rhs, false, rhs2))))))
     {
       gsi = gsi_for_stmt (cond);
+      /* Moving ASSIGN might change VR of lhs, e.g. when moving u_6
+	 def-stmt in:
+	   if (n_5 != 0)
+	     goto <bb 3>;
+	   else
+	     goto <bb 4>;
+
+	   <bb 3>:
+	   # RANGE [0, 4294967294]
+	   u_6 = n_5 + 4294967295;
+
+	   <bb 4>:
+	   # u_3 = PHI <u_6(3), 4294967295(2)>  */
+      reset_flow_sensitive_info (lhs);
       if (INTEGRAL_TYPE_P (TREE_TYPE (lhs)))
 	{
-	  /* Moving ASSIGN might change VR of lhs, e.g. when moving u_6
-	     def-stmt in:
-	     if (n_5 != 0)
-	       goto <bb 3>;
-	     else
-	       goto <bb 4>;
-
-	     <bb 3>:
-	     # RANGE [0, 4294967294]
-	     u_6 = n_5 + 4294967295;
-
-	     <bb 4>:
-	     # u_3 = PHI <u_6(3), 4294967295(2)>  */
-	  SSA_NAME_RANGE_INFO (lhs) = NULL;
 	  /* If available, we can use VR of phi result at least.  */
 	  tree phires = gimple_phi_result (phi);
 	  struct range_info_def *phires_range_info
@@ -1027,7 +1165,15 @@ value_replacement (basic_block cond_bb, basic_block middle_bb,
 	    duplicate_ssa_name_range_info (lhs, SSA_NAME_RANGE_TYPE (phires),
 					   phires_range_info);
 	}
-      gimple_stmt_iterator gsi_from = gsi_for_stmt (assign);
+      gimple_stmt_iterator gsi_from;
+      for (int i = prep_cnt - 1; i >= 0; --i)
+	{
+	  tree plhs = gimple_assign_lhs (prep_stmt[i]);
+	  reset_flow_sensitive_info (plhs);
+	  gsi_from = gsi_for_stmt (prep_stmt[i]);
+	  gsi_move_before (&gsi_from, &gsi);
+	}
+      gsi_from = gsi_for_stmt (assign);
       gsi_move_before (&gsi_from, &gsi);
       replace_phi_edge_with_variable (cond_bb, e1, phi, lhs);
       return 2;
@@ -1058,7 +1204,7 @@ minmax_replacement (basic_block cond_bb, basic_block middle_bb,
   type = TREE_TYPE (PHI_RESULT (phi));
 
   /* The optimization may be unsafe due to NaNs.  */
-  if (HONOR_NANS (type))
+  if (HONOR_NANS (type) || HONOR_SIGNED_ZEROS (type))
     return false;
 
   cond = as_a <gcond *> (last_stmt (cond_bb));
@@ -1079,7 +1225,8 @@ minmax_replacement (basic_block cond_bb, basic_block middle_bb,
 	  if (cmp == LT_EXPR)
 	    {
 	      bool overflow;
-	      wide_int alt = wi::sub (larger, 1, TYPE_SIGN (TREE_TYPE (larger)),
+	      wide_int alt = wi::sub (wi::to_wide (larger), 1,
+				      TYPE_SIGN (TREE_TYPE (larger)),
 				      &overflow);
 	      if (! overflow)
 		alt_larger = wide_int_to_tree (TREE_TYPE (larger), alt);
@@ -1087,7 +1234,8 @@ minmax_replacement (basic_block cond_bb, basic_block middle_bb,
 	  else
 	    {
 	      bool overflow;
-	      wide_int alt = wi::add (larger, 1, TYPE_SIGN (TREE_TYPE (larger)),
+	      wide_int alt = wi::add (wi::to_wide (larger), 1,
+				      TYPE_SIGN (TREE_TYPE (larger)),
 				      &overflow);
 	      if (! overflow)
 		alt_larger = wide_int_to_tree (TREE_TYPE (larger), alt);
@@ -1105,7 +1253,8 @@ minmax_replacement (basic_block cond_bb, basic_block middle_bb,
 	  if (cmp == GT_EXPR)
 	    {
 	      bool overflow;
-	      wide_int alt = wi::add (smaller, 1, TYPE_SIGN (TREE_TYPE (smaller)),
+	      wide_int alt = wi::add (wi::to_wide (smaller), 1,
+				      TYPE_SIGN (TREE_TYPE (smaller)),
 				      &overflow);
 	      if (! overflow)
 		alt_smaller = wide_int_to_tree (TREE_TYPE (smaller), alt);
@@ -1113,7 +1262,8 @@ minmax_replacement (basic_block cond_bb, basic_block middle_bb,
 	  else
 	    {
 	      bool overflow;
-	      wide_int alt = wi::sub (smaller, 1, TYPE_SIGN (TREE_TYPE (smaller)),
+	      wide_int alt = wi::sub (wi::to_wide (smaller), 1,
+				      TYPE_SIGN (TREE_TYPE (smaller)),
 				      &overflow);
 	      if (! overflow)
 		alt_smaller = wide_int_to_tree (TREE_TYPE (smaller), alt);
@@ -1343,6 +1493,8 @@ minmax_replacement (basic_block cond_bb, basic_block middle_bb,
       /* Move the statement from the middle block.  */
       gsi = gsi_last_bb (cond_bb);
       gsi_from = gsi_last_nondebug_bb (middle_bb);
+      reset_flow_sensitive_info (SINGLE_SSA_TREE_OPERAND (gsi_stmt (gsi_from),
+							  SSA_OP_DEF));
       gsi_move_before (&gsi_from, &gsi);
     }
 
@@ -1361,7 +1513,6 @@ minmax_replacement (basic_block cond_bb, basic_block middle_bb,
   gsi_insert_before (&gsi, new_stmt, GSI_NEW_STMT);
 
   replace_phi_edge_with_variable (cond_bb, e1, phi, result);
-  reset_flow_sensitive_info_in_bb (cond_bb);
 
   return true;
 }
@@ -1489,7 +1640,6 @@ abs_replacement (basic_block cond_bb, basic_block middle_bb,
     }
 
   replace_phi_edge_with_variable (cond_bb, e1, phi, result);
-  reset_flow_sensitive_info_in_bb (cond_bb);
 
   /* Note that we optimized this PHI.  */
   return true;
@@ -1744,6 +1894,11 @@ cond_store_replacement (basic_block middle_bb, basic_block join_bb,
       || gimple_has_volatile_ops (assign))
     return false;
 
+  /* And no PHI nodes so all uses in the single stmt are also
+     available where we insert to.  */
+  if (!gimple_seq_empty_p (phi_nodes (middle_bb)))
+    return false;
+
   locus = gimple_location (assign);
   lhs = gimple_assign_lhs (assign);
   rhs = gimple_assign_rhs1 (assign);
@@ -1885,6 +2040,36 @@ cond_if_else_store_replacement_1 (basic_block then_bb, basic_block else_bb,
   return true;
 }
 
+/* Return the single store in BB with VDEF or NULL if there are
+   other stores in the BB or loads following the store.  */
+
+static gimple *
+single_trailing_store_in_bb (basic_block bb, tree vdef)
+{
+  if (SSA_NAME_IS_DEFAULT_DEF (vdef))
+    return NULL;
+  gimple *store = SSA_NAME_DEF_STMT (vdef);
+  if (gimple_bb (store) != bb
+      || gimple_code (store) == GIMPLE_PHI)
+    return NULL;
+
+  /* Verify there is no other store in this BB.  */
+  if (!SSA_NAME_IS_DEFAULT_DEF (gimple_vuse (store))
+      && gimple_bb (SSA_NAME_DEF_STMT (gimple_vuse (store))) == bb
+      && gimple_code (SSA_NAME_DEF_STMT (gimple_vuse (store))) != GIMPLE_PHI)
+    return NULL;
+
+  /* Verify there is no load or store after the store.  */
+  use_operand_p use_p;
+  imm_use_iterator imm_iter;
+  FOR_EACH_IMM_USE_FAST (use_p, imm_iter, gimple_vdef (store))
+    if (USE_STMT (use_p) != store
+	&& gimple_bb (USE_STMT (use_p)) == bb)
+      return NULL;
+
+  return store;
+}
+
 /* Conditional store replacement.  We already know
    that the recognized pattern looks like so:
 
@@ -1911,8 +2096,6 @@ static bool
 cond_if_else_store_replacement (basic_block then_bb, basic_block else_bb,
                                 basic_block join_bb)
 {
-  gimple *then_assign = last_and_only_stmt (then_bb);
-  gimple *else_assign = last_and_only_stmt (else_bb);
   vec<data_reference_p> then_datarefs, else_datarefs;
   vec<ddr_p> then_ddrs, else_ddrs;
   gimple *then_store, *else_store;
@@ -1923,13 +2106,32 @@ cond_if_else_store_replacement (basic_block then_bb, basic_block else_bb,
   tree then_lhs, else_lhs;
   basic_block blocks[3];
 
+  /* Handle the case with single store in THEN_BB and ELSE_BB.  That is
+     cheap enough to always handle as it allows us to elide dependence
+     checking.  */
+  gphi *vphi = NULL;
+  for (gphi_iterator si = gsi_start_phis (join_bb); !gsi_end_p (si);
+       gsi_next (&si))
+    if (virtual_operand_p (gimple_phi_result (si.phi ())))
+      {
+	vphi = si.phi ();
+	break;
+      }
+  if (!vphi)
+    return false;
+  tree then_vdef = PHI_ARG_DEF_FROM_EDGE (vphi, single_succ_edge (then_bb));
+  tree else_vdef = PHI_ARG_DEF_FROM_EDGE (vphi, single_succ_edge (else_bb));
+  gimple *then_assign = single_trailing_store_in_bb (then_bb, then_vdef);
+  if (then_assign)
+    {
+      gimple *else_assign = single_trailing_store_in_bb (else_bb, else_vdef);
+      if (else_assign)
+	return cond_if_else_store_replacement_1 (then_bb, else_bb, join_bb,
+						 then_assign, else_assign);
+    }
+
   if (MAX_STORES_TO_SINK == 0)
     return false;
-
-  /* Handle the case with single statement in THEN_BB and ELSE_BB.  */
-  if (then_assign && else_assign)
-    return cond_if_else_store_replacement_1 (then_bb, else_bb, join_bb,
-                                             then_assign, else_assign);
 
   /* Find data references.  */
   then_datarefs.create (1);

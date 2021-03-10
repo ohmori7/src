@@ -1,4 +1,4 @@
-/*	$NetBSD: md.c,v 1.6 2019/06/13 09:36:54 martin Exp $ */
+/*	$NetBSD: md.c,v 1.13 2020/10/12 16:14:33 martin Exp $ */
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -65,21 +65,23 @@ md_init_set_status(int flags)
 bool
 md_get_info(struct install_partition_desc *install)
 {
+	int res;
 
 	if (pm->no_mbr || pm->no_part)
 		return true;
 
+again:
 	if (pm->parts == NULL) {
 
 		const struct disk_partitioning_scheme *ps =
 		    select_part_scheme(pm, NULL, true, NULL);
 
 		if (!ps)
-			return true;
+			return false;
 
 		struct disk_partitions *parts =
 		   (*ps->create_new_for_disk)(pm->diskdev,
-		   0, pm->dlsize, pm->dlsize, true);
+		   0, pm->dlsize, true, NULL);
 		if (!parts)
 			return false;
 
@@ -88,13 +90,21 @@ md_get_info(struct install_partition_desc *install)
 			pm->dlsize = ps->size_limit;
 	}
 
-	return set_bios_geom_with_mbr_guess(pm->parts);
+	res = set_bios_geom_with_mbr_guess(pm->parts);
+	if (res == 0)
+		return false;
+	else if (res == 1)
+		return true;
+
+	pm->parts->pscheme->destroy_part_scheme(pm->parts);
+	pm->parts = NULL;
+	goto again;
 }
 
 /*
  * md back-end code for menu-driven BSD disklabel editor.
  */
-bool
+int
 md_make_bsd_partitions(struct install_partition_desc *install)
 {
 
@@ -169,7 +179,8 @@ int
 md_post_newfs(struct install_partition_desc *install)
 {
 	if (!nobootfs) {
-		msg_display(msg_string(MSG_copybootloader), pm->diskdev);
+		msg_fmt_display(msg_string(MSG_copybootloader), "%s",
+		    pm->diskdev);
 		cp_to_target("/usr/mdec/boot", PART_BOOT_MOUNT);
 	}
 
@@ -206,7 +217,7 @@ md_pre_update(struct install_partition_desc *install)
 		if (install->infos[i].size/512 >= PART_BOOT_MIN)
 			break;
 		msg_display(MSG_boottoosmall);
-		msg_display_add(MSG_nobootpart, 0);
+		msg_fmt_display_add(MSG_nobootpart, "%d", 0);
 		if (!ask_yesno(NULL))
 			return false;
 		nobootfs = 1;
@@ -270,13 +281,13 @@ md_parts_use_wholedisk(struct disk_partitions *parts)
 	};
 
 	boot_part.nat_type = parts->pscheme->get_fs_part_type(
-	    boot_part.fs_type, boot_part.fs_sub_type);
+	    PT_root, boot_part.fs_type, boot_part.fs_sub_type);
 
 	return parts_use_wholedisk(parts, 1, &boot_part);
 }
 
 int
-md_pre_mount(struct install_partition_desc *install)
+md_pre_mount(struct install_partition_desc *install, size_t ndx)
 {
 	return 0;
 }

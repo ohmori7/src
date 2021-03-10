@@ -1,4 +1,4 @@
-/*	$NetBSD: rmixl_pcix.c,v 1.13 2015/10/02 05:22:51 msaitoh Exp $	*/
+/*	$NetBSD: rmixl_pcix.c,v 1.15 2020/07/07 03:38:47 thorpej Exp $	*/
 
 /*
  * Copyright (c) 2001 Wasabi Systems, Inc.
@@ -40,7 +40,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: rmixl_pcix.c,v 1.13 2015/10/02 05:22:51 msaitoh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: rmixl_pcix.c,v 1.15 2020/07/07 03:38:47 thorpej Exp $");
 
 #include "opt_pci.h"
 #include "pci.h"
@@ -506,9 +506,7 @@ rmixl_pcix_intcfg(rmixl_pcix_softc_t *sc)
 	 * allocate per-cpu, per-pin interrupt event counters
 	 */
 	size = ncpu * PCI_INTERRUPT_PIN_MAX * sizeof(rmixl_pcix_evcnt_t);
-	ev = malloc(size, M_DEVBUF, M_NOWAIT);
-	if (ev == NULL)
-		panic("%s: cannot malloc evcnts\n", __func__);
+	ev = malloc(size, M_DEVBUF, M_WAITOK);
 	sc->sc_evcnts = ev;
 	for (int pin=PCI_INTERRUPT_PIN_A; pin <= PCI_INTERRUPT_PIN_MAX; pin++) {
 		for (int cpu=0; cpu < ncpu; cpu++) {
@@ -541,7 +539,7 @@ rmixl_pcix_init(rmixl_pcix_softc_t *sc)
 {
 	pci_chipset_tag_t pc = &sc->sc_pci_chipset;
 #if NPCI > 0 && defined(PCI_NETBSD_CONFIGURE)
-	struct extent *ioext, *memext;
+	struct pciconf_resources *pcires;
 #endif
 
 	pc->pc_conf_v = (void *)sc;
@@ -566,23 +564,19 @@ rmixl_pcix_init(rmixl_pcix_softc_t *sc)
 	 */
 	struct rmixl_config *rcp = &rmixl_configuration;
 
-	aprint_normal_dev(sc->sc_dev, "%s: configuring PCI bus\n");
+	aprint_normal_dev(sc->sc_dev, "configuring PCI bus\n");
 
-	ioext  = extent_create("pciio",
-		rcp->rc_pci_io_pbase,
-		rcp->rc_pci_io_pbase + rcp->rc_pci_io_size - 1,
-		M_DEVBUF, NULL, 0, EX_NOWAIT);
+	pcires = pciconf_resource_init();
 
-	memext = extent_create("pcimem",
-		rcp->rc_pci_mem_pbase,
-		rcp->rc_pci_mem_pbase + rcp->rc_pci_mem_size - 1,
-		M_DEVBUF, NULL, 0, EX_NOWAIT);
+	pciconf_resource_add(pcires, PCICONF_RESOURCE_IO,
+	    rcp->rc_pci_io_pbase, rcp->rc_pci_io_size);
+	pciconf_resource_add(pcires, PCICONF_RESOURCE_MEM,
+	    rcp->rc_pci_mem_pbase, rcp->rc_pci_mem_size);
 
-	pci_configure_bus(pc, ioext, memext, NULL, 0,
+	pci_configure_bus(pc, pcires, 0,
 	    mips_cache_info.mci_dcache_align);
 
-	extent_destroy(ioext);
-	extent_destroy(memext);
+	pciconf_resource_fini(pcires);
 #endif
 }
 
@@ -982,14 +976,7 @@ rmixl_pcix_pip_add_1(rmixl_pcix_softc_t *sc, int irq, int ipl)
 	 * allocate and initialize softc intr struct
 	 * with one or more dispatch handles
 	 */
-	pip_new = malloc(size, M_DEVBUF, M_NOWAIT|M_ZERO);
-	if (pip_new == NULL) {
-#ifdef DIAGNOSTIC
-		printf("%s: cannot malloc\n", __func__);
-#endif
-		return NULL;
-	}
-
+	pip_new = malloc(size, M_DEVBUF, M_WAITOK|M_ZERO);
 	if (pip_old == NULL) {
 		/* initialize the interrupt struct */
 		pip_new->sc = sc;

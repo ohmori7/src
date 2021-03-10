@@ -1,4 +1,4 @@
-/*	$NetBSD: if_vlan.c,v 1.137 2019/06/18 08:36:52 msaitoh Exp $	*/
+/*	$NetBSD: if_vlan.c,v 1.153 2020/09/26 18:38:09 roy Exp $	*/
 
 /*
  * Copyright (c) 2000, 2001 The NetBSD Foundation, Inc.
@@ -78,7 +78,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_vlan.c,v 1.137 2019/06/18 08:36:52 msaitoh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_vlan.c,v 1.153 2020/09/26 18:38:09 roy Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_inet.h"
@@ -119,6 +119,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_vlan.c,v 1.137 2019/06/18 08:36:52 msaitoh Exp $"
 #ifdef INET6
 #include <netinet6/in6_ifattach.h>
 #include <netinet6/in6_var.h>
+#include <netinet6/nd6.h>
 #endif
 
 #include "ioconf.h"
@@ -130,14 +131,9 @@ struct vlan_mc_entry {
 	 * used since multiple sockaddr may mapped into the same
 	 * ether_multi (e.g., AF_UNSPEC).
 	 */
-	union {
-		struct ether_multi	*mcu_enm;
-	} mc_u;
+	struct ether_multi	*mc_enm;
 	struct sockaddr_storage		mc_addr;
 };
-
-#define	mc_enm		mc_u.mcu_enm
-
 
 struct ifvlan_linkmib {
 	struct ifvlan *ifvm_ifvlan;
@@ -153,9 +149,7 @@ struct ifvlan_linkmib {
 };
 
 struct ifvlan {
-	union {
-		struct ethercom ifvu_ec;
-	} ifv_u;
+	struct ethercom ifv_ec;
 	struct ifvlan_linkmib *ifv_mib;	/*
 					 * reader must use vlan_getref_linkmib()
 					 * instead of direct dereference
@@ -170,8 +164,6 @@ struct ifvlan {
 };
 
 #define	IFVF_PROMISC	0x01		/* promiscuous mode enabled */
-
-#define	ifv_ec		ifv_u.ifvu_ec
 
 #define	ifv_if		ifv_ec.ec_if
 
@@ -215,10 +207,9 @@ static void	vlan_linkmib_update(struct ifvlan *, struct ifvlan_linkmib *);
 static struct ifvlan_linkmib*	vlan_lookup_tag_psref(struct ifnet *,
     uint16_t, struct psref *);
 
-LIST_HEAD(vlan_ifvlist, ifvlan);
 static struct {
 	kmutex_t lock;
-	struct vlan_ifvlist list;
+	LIST_HEAD(vlan_ifvlist, ifvlan) list;
 } ifv_list __cacheline_aligned;
 
 
@@ -289,7 +280,7 @@ vlaninit(void)
 	if_clone_attach(&vlan_cloner);
 
 	vlan_hash_init();
-	MODULE_HOOK_SET(if_vlan_vlan_input_hook, "vlan_inp", vlan_input);
+	MODULE_HOOK_SET(if_vlan_vlan_input_hook, vlan_input);
 }
 
 static int
@@ -364,9 +355,8 @@ vlan_clone_create(struct if_clone *ifc, int unit)
 	if_initname(ifp, ifc->ifc_name, unit);
 	ifp->if_softc = ifv;
 	ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
-	ifp->if_extflags = IFEF_NO_LINK_STATE_CHANGE;
 #ifdef NET_MPSAFE
-	ifp->if_extflags |= IFEF_MPSAFE;
+	ifp->if_extflags = IFEF_MPSAFE;
 #endif
 	ifp->if_start = vlan_start;
 	ifp->if_transmit = vlan_transmit;
@@ -379,6 +369,13 @@ vlan_clone_create(struct if_clone *ifc, int unit)
 		    rv);
 		goto fail;
 	}
+
+	/*
+	 * Set the link state to down.
+	 * When the parent interface attaches we will use that link state.
+	 * When the parent interface link state changes, so will ours.
+	 */
+	ifp->if_link_state = LINK_STATE_DOWN;
 
 	vlan_reset_linkname(ifp);
 	if_register(ifp);
@@ -467,6 +464,8 @@ vlan_config(struct ifvlan *ifv, struct ifnet *p, uint16_t tag)
 	case IFT_ETHER:
 	    {
 		struct ethercom *ec = (void *)p;
+		struct vlanid_list *vidmem;
+
 		nmib->ifvm_msw = &vlan_ether_multisw;
 		nmib->ifvm_encaplen = ETHER_VLAN_ENCAP_LEN;
 		nmib->ifvm_mintu = ETHERMIN;
@@ -493,7 +492,29 @@ vlan_config(struct ifvlan *ifv, struct ifnet *p, uint16_t tag)
 			}
 			error = 0;
 		}
+		/* Add a vid to the list */
+		vidmem = kmem_alloc(sizeof(struct vlanid_list), KM_SLEEP);
+		vidmem->vid = vid;
+		ETHER_LOCK(ec);
+		SIMPLEQ_INSERT_TAIL(&ec->ec_vids, vidmem, vid_list);
+		ETHER_UNLOCK(ec);
 
+		if (ec->ec_vlan_cb != NULL) {
+			/*
+			 * Call ec_vlan_cb(). It will setup VLAN HW filter or
+			 * HW tagging function.
+			 */
+			error = (*ec->ec_vlan_cb)(ec, vid, true);
+			if (error) {
+				ec->ec_nvlans--;
+				if (ec->ec_nvlans == 0) {
+					IFNET_LOCK(p);
+					(void)ether_disable_vlan_mtu(p);
+					IFNET_UNLOCK(p);
+				}
+				goto done;
+			}
+		}
 		/*
 		 * If the parent interface can do hardware-assisted
 		 * VLAN encapsulation, then propagate its hardware-
@@ -501,7 +522,6 @@ vlan_config(struct ifvlan *ifv, struct ifnet *p, uint16_t tag)
 		 * offload.
 		 */
 		if (ec->ec_capabilities & ETHERCAP_VLAN_HWTAGGING) {
-			ec->ec_capenable |= ETHERCAP_VLAN_HWTAGGING;
 			ifp->if_capabilities = p->if_capabilities &
 			    (IFCAP_TSOv4 | IFCAP_TSOv6 |
 				IFCAP_CSUM_IPv4_Tx  | IFCAP_CSUM_IPv4_Rx |
@@ -547,6 +567,12 @@ vlan_config(struct ifvlan *ifv, struct ifnet *p, uint16_t tag)
 	nmib = NULL;
 	nmib_psref = NULL;
 	omib_cleanup = true;
+
+
+	/*
+	 * We inherit the parents link state.
+	 */
+	if_link_state_change(&ifv->ifv_if, p->if_link_state);
 
 done:
 	mutex_exit(&ifv->ifv_lock);
@@ -620,9 +646,31 @@ vlan_unconfig_locked(struct ifvlan *ifv, struct ifvlan_linkmib *nmib)
 	case IFT_ETHER:
 	    {
 		struct ethercom *ec = (void *)p;
+		struct vlanid_list *vlanidp;
+		uint16_t vid = EVL_VLANOFTAG(nmib->ifvm_tag);
+
+		ETHER_LOCK(ec);
+		SIMPLEQ_FOREACH(vlanidp, &ec->ec_vids, vid_list) {
+			if (vlanidp->vid == vid) {
+				SIMPLEQ_REMOVE(&ec->ec_vids, vlanidp,
+				    vlanid_list, vid_list);
+				break;
+			}
+		}
+		ETHER_UNLOCK(ec);
+		if (vlanidp != NULL)
+			kmem_free(vlanidp, sizeof(*vlanidp));
+
+		if (ec->ec_vlan_cb != NULL) {
+			/*
+			 * Call ec_vlan_cb(). It will setup VLAN HW filter or
+			 * HW tagging function.
+			 */
+			(void)(*ec->ec_vlan_cb)(ec, vid, false);
+		}
 		if (--ec->ec_nvlans == 0) {
 			IFNET_LOCK(p);
-			(void) ether_disable_vlan_mtu(p);
+			(void)ether_disable_vlan_mtu(p);
 			IFNET_UNLOCK(p);
 		}
 
@@ -738,12 +786,11 @@ vlan_getref_linkmib(struct ifvlan *sc, struct psref *psref)
 	int s;
 
 	s = pserialize_read_enter();
-	mib = sc->ifv_mib;
+	mib = atomic_load_consume(&sc->ifv_mib);
 	if (mib == NULL) {
 		pserialize_read_exit(s);
 		return NULL;
 	}
-	membar_datadep_consumer();
 	psref_acquire(psref, &mib->ifvm_psref, ifvm_psref_class);
 	pserialize_read_exit(s);
 
@@ -770,7 +817,7 @@ vlan_lookup_tag_psref(struct ifnet *ifp, uint16_t tag, struct psref *psref)
 	s = pserialize_read_enter();
 	PSLIST_READER_FOREACH(sc, &ifv_hash.lists[idx], struct ifvlan,
 	    ifv_hash) {
-		struct ifvlan_linkmib *mib = sc->ifv_mib;
+		struct ifvlan_linkmib *mib = atomic_load_consume(&sc->ifv_mib);
 		if (mib == NULL)
 			continue;
 		if (mib->ifvm_tag != tag)
@@ -793,8 +840,7 @@ vlan_linkmib_update(struct ifvlan *ifv, struct ifvlan_linkmib *nmib)
 
 	KASSERT(mutex_owned(&ifv->ifv_lock));
 
-	membar_producer();
-	ifv->ifv_mib = nmib;
+	atomic_store_release(&ifv->ifv_mib, nmib);
 
 	pserialize_perform(ifv->ifv_psz);
 	psref_target_destroy(&omib->ifvm_psref, ifvm_psref_class);
@@ -1001,10 +1047,10 @@ vlan_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 			error = ENOENT;
 			break;
 		}
+
 		error = vlan_config(ifv, pr, vlr.vlr_tag);
-		if (error != 0) {
+		if (error != 0)
 			break;
-		}
 
 		/* Update promiscuous mode, if necessary. */
 		vlan_set_promisc(ifp);
@@ -1339,7 +1385,7 @@ vlan_start(struct ifnet *ifp)
 		 * If the parent can insert the tag itself, just mark
 		 * the tag in the mbuf header.
 		 */
-		if (ec->ec_capabilities & ETHERCAP_VLAN_HWTAGGING) {
+		if (ec->ec_capenable & ETHERCAP_VLAN_HWTAGGING) {
 			vlan_set_tag(m, mib->ifvm_tag);
 		} else {
 			/*
@@ -1349,7 +1395,7 @@ vlan_start(struct ifnet *ifp)
 			if (m == NULL) {
 				printf("%s: unable to prepend encap header",
 				    p->if_xname);
-				ifp->if_oerrors++;
+				if_statinc(ifp, if_oerrors);
 				continue;
 			}
 
@@ -1364,7 +1410,7 @@ vlan_start(struct ifnet *ifp)
 				if (m == NULL) {
 					printf("%s: unable to pullup encap "
 					    "header", p->if_xname);
-					ifp->if_oerrors++;
+					if_statinc(ifp, if_oerrors);
 					continue;
 				}
 
@@ -1413,10 +1459,10 @@ vlan_start(struct ifnet *ifp)
 		error = if_transmit_lock(p, m);
 		if (error) {
 			/* mbuf is already freed */
-			ifp->if_oerrors++;
+			if_statinc(ifp, if_oerrors);
 			continue;
 		}
-		ifp->if_opackets++;
+		if_statinc(ifp, if_opackets);
 	}
 
 	ifp->if_flags &= ~IFF_OACTIVE;
@@ -1457,7 +1503,7 @@ vlan_transmit(struct ifnet *ifp, struct mbuf *m)
 	 * If the parent can insert the tag itself, just mark
 	 * the tag in the mbuf header.
 	 */
-	if (ec->ec_capabilities & ETHERCAP_VLAN_HWTAGGING) {
+	if (ec->ec_capenable & ETHERCAP_VLAN_HWTAGGING) {
 		vlan_set_tag(m, mib->ifvm_tag);
 	} else {
 		/*
@@ -1467,7 +1513,7 @@ vlan_transmit(struct ifnet *ifp, struct mbuf *m)
 		if (m == NULL) {
 			printf("%s: unable to prepend encap header",
 			    p->if_xname);
-			ifp->if_oerrors++;
+			if_statinc(ifp, if_oerrors);
 			error = ENOBUFS;
 			goto out;
 		}
@@ -1483,7 +1529,7 @@ vlan_transmit(struct ifnet *ifp, struct mbuf *m)
 			if (m == NULL) {
 				printf("%s: unable to pullup encap "
 				    "header", p->if_xname);
-				ifp->if_oerrors++;
+				if_statinc(ifp, if_oerrors);
 				error = ENOBUFS;
 				goto out;
 			}
@@ -1532,16 +1578,17 @@ vlan_transmit(struct ifnet *ifp, struct mbuf *m)
 	}
 
 	error = if_transmit_lock(p, m);
+	net_stat_ref_t nsr = IF_STAT_GETREF(ifp);
 	if (error) {
 		/* mbuf is already freed */
-		ifp->if_oerrors++;
+		if_statinc_ref(nsr, if_oerrors);
 	} else {
-
-		ifp->if_opackets++;
-		ifp->if_obytes += pktlen;
+		if_statinc_ref(nsr, if_opackets);
+		if_statadd_ref(nsr, if_obytes, pktlen);
 		if (mcast)
-			ifp->if_omcasts++;
+			if_statinc_ref(nsr, if_omcasts);
 	}
+	IF_STAT_PUTREF(ifp);
 
 out:
 	/* Remove reference to mib before release */
@@ -1597,7 +1644,7 @@ vlan_input(struct ifnet *ifp, struct mbuf *m)
 	mib = vlan_lookup_tag_psref(ifp, vid, &psref);
 	if (mib == NULL) {
 		m_freem(m);
-		ifp->if_noproto++;
+		if_statinc(ifp, if_noproto);
 		return;
 	}
 	KASSERT(mib->ifvm_encaplen == ETHER_VLAN_ENCAP_LEN);
@@ -1606,7 +1653,7 @@ vlan_input(struct ifnet *ifp, struct mbuf *m)
 	if ((ifv->ifv_if.if_flags & (IFF_UP | IFF_RUNNING)) !=
 	    (IFF_UP | IFF_RUNNING)) {
 		m_freem(m);
-		ifp->if_noproto++;
+		if_statinc(ifp, if_noproto);
 		goto out;
 	}
 
@@ -1621,7 +1668,6 @@ vlan_input(struct ifnet *ifp, struct mbuf *m)
 	}
 
 	m_set_rcvif(m, &ifv->ifv_if);
-	ifv->ifv_if.if_ipackets++;
 
 	if (pfil_run_hooks(ifp->if_pfil, &m, ifp, PFIL_IN) != 0)
 		goto out;
@@ -1632,6 +1678,35 @@ vlan_input(struct ifnet *ifp, struct mbuf *m)
 	if_input(&ifv->ifv_if, m);
 out:
 	vlan_putref_linkmib(mib, &psref);
+}
+
+/*
+ * If the parent link state changed, the vlan link state should change also.
+ */
+void
+vlan_link_state_changed(struct ifnet *p, int link_state)
+{
+	struct ifvlan *ifv;
+	struct ifvlan_linkmib *mib;
+	struct psref psref;
+	struct ifnet *ifp;
+
+	mutex_enter(&ifv_list.lock);
+
+	LIST_FOREACH(ifv, &ifv_list.list, ifv_list) {
+		mib = vlan_getref_linkmib(ifv, &psref);
+		if (mib == NULL)
+			continue;
+
+		if (mib->ifvm_p == p) {
+			ifp = &mib->ifvm_ifvlan->ifv_if;
+			if_link_state_change(ifp, link_state);
+		}
+
+		vlan_putref_linkmib(mib, &psref);
+	}
+
+	mutex_exit(&ifv_list.lock);
 }
 
 /*

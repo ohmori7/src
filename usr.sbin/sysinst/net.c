@@ -1,4 +1,4 @@
-/*	$NetBSD: net.c,v 1.27 2019/06/12 06:20:18 martin Exp $	*/
+/*	$NetBSD: net.c,v 1.36 2021/01/31 22:45:46 rillig Exp $	*/
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -241,8 +241,8 @@ get_ifconfig_info(struct net_desc *devs)
 	}
 
 	buf = malloc (STRSIZE * sizeof(char));
-	for (i = 0, buf_tmp = buf_in; strlen(buf_tmp) > 0 && buf_tmp < buf_in +
-	     strlen(buf_in);) {
+	for (i = 0, buf_tmp = buf_in; i < MAX_NETS && strlen(buf_tmp) > 0
+	    && buf_tmp < buf_in + strlen(buf_in);) {
 		tmp = stpncpy(buf, buf_tmp, strcspn(buf_tmp," \n"));
 		*tmp='\0';
 		buf_tmp += (strcspn(buf_tmp, " \n") + 1) * sizeof(char);
@@ -260,7 +260,8 @@ get_ifconfig_info(struct net_desc *devs)
 		strlcpy (devs[i].if_dev, buf, STRSIZE);
 		i++;
 	}
-	strcpy(devs[i].if_dev, "\0");
+	if (i < MAX_NETS)
+		devs[i].if_dev[0] = 0;	/* XXX ? */
 
 	free(buf);
 	free(buf_in);
@@ -278,7 +279,7 @@ do_ifreq(struct ifreq *ifr, unsigned long cmd)
 		return -1;
 
 	memset(ifr, 0, sizeof *ifr);
-	strncpy(ifr->ifr_name, net_dev, sizeof ifr->ifr_name);
+	strlcpy(ifr->ifr_name, net_dev, sizeof ifr->ifr_name);
 	rval = ioctl(sock, cmd, ifr);
 	close(sock);
 
@@ -296,7 +297,7 @@ do_ifmreq(struct ifmediareq *ifmr, unsigned long cmd)
 		return -1;
 
 	memset(ifmr, 0, sizeof *ifmr);
-	strncpy(ifmr->ifm_name, net_dev, sizeof ifmr->ifm_name);
+	strlcpy(ifmr->ifm_name, net_dev, sizeof ifmr->ifm_name);
 	rval = ioctl(sock, cmd, ifmr);
 	close(sock);
 
@@ -453,7 +454,8 @@ handle_license(const char *dev)
 			if (sysctlbyname(buf, &val, &len, NULL, 0) != -1
 			    && val != 0)
 				return 1;
-			msg_display(MSG_license, dev, licdev[i].lic);
+			msg_fmt_display(MSG_license, "%s%s",
+			    dev, licdev[i].lic);
 			if (ask_yesno(NULL)) {
 				val = 1;
 				if (sysctlbyname(buf, NULL, NULL, &val,
@@ -484,7 +486,7 @@ config_network(void)
  	char buffer[STRSIZE];
  	struct statvfs sb;
 	struct net_desc net_devs[MAX_NETS];
-	menu_ent net_menu[5];
+	menu_ent *net_menu;
 	int menu_no;
 	int num_devs;
 	int selected_net;
@@ -504,33 +506,40 @@ config_network(void)
 	if (num_devs < 1) {
 		/* No network interfaces found! */
 		hit_enter_to_continue(NULL, MSG_nonet);
-		return (-1);
+		return -1;
+	}
+
+	net_menu = calloc(num_devs, sizeof(*net_menu));
+	if (net_menu == NULL) {
+		err_msg_win(err_outofmem);
+		return -1;
 	}
 
 	for (i = 0; i < num_devs; i++) {
 		net_menu[i].opt_name = net_devs[i].if_dev;
-		net_menu[i].opt_exp_name = NULL;
-		net_menu[i].opt_menu = OPT_NOMENU;
 		net_menu[i].opt_flags = OPT_EXIT;
 		net_menu[i].opt_action = set_menu_select;
 	}
-again:
-	selected_net = -1;
+
 	menu_no = new_menu(MSG_netdevs,
 		net_menu, num_devs, -1, 4, 0, 0,
 		MC_SCROLL,
-		NULL, NULL, NULL, NULL, NULL);
-	msg_display(MSG_asknetdev, "");
+		NULL, NULL, NULL, NULL, MSG_cancel);
+again:
+	selected_net = -1;
+	msg_display(MSG_asknetdev);
 	process_menu(menu_no, &selected_net);
-	free_menu(menu_no);
-	
-	if (selected_net == -1)
-	    return 0;
+
+	if (selected_net == -1) {
+		free_menu(menu_no);
+		free(net_menu);
+		return 0;
+	}
 
 	network_up = 1;
 	dhcp_config = 0;
 
-	strncpy(net_dev, net_devs[selected_net].if_dev, STRSIZE);
+	strlcpy(net_dev, net_devs[selected_net].if_dev, sizeof net_dev);
 
 	if (!handle_license(net_dev))
 		goto done;
@@ -723,8 +732,11 @@ again:
 	}
 
 	/* confirm the setting */
+	msg_clear();
 	if (slip)
-		msg_display(MSG_netok_slip, net_domain, net_host,
+		msg_fmt_table_add(MSG_netok_slip, "%s%s%s%s%s%s%s%s%s",
+		    net_domain,
+		    net_host,
 		    *net_namesvr == '\0' ? "<none>" : net_namesvr,
 		    net_dev,
 		    *net_media == '\0' ? "<default>" : net_media,
@@ -733,7 +745,9 @@ again:
 		    *net_mask == '\0' ? "<none>" : net_mask,
 		    *net_defroute == '\0' ? "<none>" : net_defroute);
 	else
-		msg_display(MSG_netok, net_domain, net_host,
+		msg_fmt_table_add(MSG_netok, "%s%s%s%s%s%s%s%s",
+		    net_domain,
+		    net_host,
 		    *net_namesvr == '\0' ? "<none>" : net_namesvr,
 		    net_dev,
 		    *net_media == '\0' ? "<default>" : net_media,
@@ -741,12 +755,15 @@ again:
 		    *net_mask == '\0' ? "<none>" : net_mask,
 		    *net_defroute == '\0' ? "<none>" : net_defroute);
 #ifdef INET6
-	msg_display_add(MSG_netokv6,
+	msg_fmt_table_add(MSG_netokv6, "%s",
 		     !is_v6kernel() ? "<not supported>" : net_ip6);
 #endif
 done:
 	if (!ask_yesno(MSG_netok_ok))
 		goto again;
+
+	free_menu(menu_no);
+	free(net_menu);
 
 	run_program(0, "/sbin/ifconfig lo0 127.0.0.1");
 
@@ -793,7 +810,7 @@ done:
 			    net_dev, net_ip, net_srv_ip);
 			strcpy(sl_flags, "-s 115200 -l /dev/tty00");
 			msg_prompt_win(MSG_slattach, -1, 12, 70, 0,
-				sl_flags, sl_flags, 255);
+				sl_flags, sl_flags, sizeof sl_flags);
 
 			/* XXX: wtf isn't run_program() used here? */
 			pid = fork();
@@ -960,7 +977,7 @@ get_pkgsrc(void)
 	int rv = -1;
 
 	process_menu(MENU_pkgsrc, &rv);
-	
+
 	if (rv == SET_SKIP)
 		return SET_SKIP;
 
@@ -979,7 +996,7 @@ get_via_ftp(unsigned int xfer)
 	arg.rv = -1;
 	arg.arg = (void*)(uintptr_t)(xfer);
 	process_menu(MENU_ftpsource, &arg);
-	
+
 	if (arg.rv == SET_RETRY)
 		return SET_RETRY;
 
@@ -1011,7 +1028,7 @@ get_via_nfs(void)
 	/* Get server and filepath */
 	rv = -1;
 	process_menu(MENU_nfssource, &rv);
-	
+
 	if (rv == SET_RETRY)
 		return SET_RETRY;
 
@@ -1066,7 +1083,7 @@ mnt_net_config(void)
 		return;
 
 	/* Write hostname to /etc/rc.conf */
-	if ((net_dhcpconf & DHCPCONF_HOST) == 0) 
+	if ((net_dhcpconf & DHCPCONF_HOST) == 0)
 		if (del_rc_conf("hostname") == 0)
 			add_rc_conf("hostname=%s\n", recombine_host_domain());
 

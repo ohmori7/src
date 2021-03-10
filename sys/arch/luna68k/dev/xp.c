@@ -1,4 +1,4 @@
-/* $NetBSD: xp.c,v 1.4 2017/06/01 02:45:06 chs Exp $ */
+/* $NetBSD: xp.c,v 1.6 2020/12/29 17:17:14 tsutsui Exp $ */
 
 /*-
  * Copyright (c) 2016 Izumi Tsutsui.  All rights reserved.
@@ -29,7 +29,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: xp.c,v 1.4 2017/06/01 02:45:06 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: xp.c,v 1.6 2020/12/29 17:17:14 tsutsui Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -42,13 +42,16 @@ __KERNEL_RCSID(0, "$NetBSD: xp.c,v 1.4 2017/06/01 02:45:06 chs Exp $");
 #include <uvm/uvm_extern.h>
 
 #include <machine/autoconf.h>
+#include <machine/board.h>
 #include <machine/xpio.h>
 
 #include "ioconf.h"
 
-#define XP_SHM_BASE	0x71000000
+#define TRI_PORT_RAM_XP_OFFSET	0x00000
+
+#define XP_SHM_BASE	(TRI_PORT_RAM + TRI_PORT_RAM_XP_OFFSET)
 #define XP_SHM_SIZE	0x00010000	/* 64KB for XP; rest 64KB for lance */
-#define XP_TAS_ADDR	0x61000000
+#define XP_TAS_ADDR	OBIO_TAS
 
 struct xp_softc {
 	device_t	sc_dev;
@@ -63,12 +66,12 @@ struct xp_softc {
 static int xp_match(device_t, cfdata_t, void *);
 static void xp_attach(device_t, device_t, void *);
 
-dev_type_open(xp_open);
-dev_type_close(xp_close);
-dev_type_read(xp_read);
-dev_type_write(xp_write);
-dev_type_ioctl(xp_ioctl);
-dev_type_mmap(xp_mmap);
+static dev_type_open(xp_open);
+static dev_type_close(xp_close);
+static dev_type_read(xp_read);
+static dev_type_write(xp_write);
+static dev_type_ioctl(xp_ioctl);
+static dev_type_mmap(xp_mmap);
 
 const struct cdevsw xp_cdevsw = {
 	.d_open     = xp_open,
@@ -105,7 +108,7 @@ static bool xp_matched;
  *
  * XXX: PIO port functions should be shared with machdep.c for DIP SWs
  */
-#define PIO_ADDR	0x49000000
+#define PIO_ADDR	OBIO_PIO0_BASE
 #define PORT_A		0
 #define PORT_B		1
 #define PORT_C		2
@@ -167,7 +170,7 @@ xp_attach(device_t parent, device_t self, void *aux)
 	sc->sc_tas      = XP_TAS_ADDR;
 }
 
-int
+static int
 xp_open(dev_t dev, int flags, int devtype, struct lwp *l)
 {
 	struct xp_softc *sc;
@@ -187,7 +190,7 @@ xp_open(dev_t dev, int flags, int devtype, struct lwp *l)
 	return 0;
 }
 
-int
+static int
 xp_close(dev_t dev, int flags, int mode, struct lwp *l)
 {
 	struct xp_softc *sc;
@@ -202,7 +205,7 @@ xp_close(dev_t dev, int flags, int mode, struct lwp *l)
 	return 0;
 }
 
-int
+static int
 xp_ioctl(dev_t dev, u_long cmd, void *addr, int flags, struct lwp *l)
 {
 	struct xp_softc *sc;
@@ -247,7 +250,7 @@ xp_ioctl(dev_t dev, u_long cmd, void *addr, int flags, struct lwp *l)
 	panic("%s: cmd (%ld) is not handled", device_xname(sc->sc_dev), cmd);
 }
 
-paddr_t
+static paddr_t
 xp_mmap(dev_t dev, off_t offset, int prot)
 {
 	struct xp_softc *sc;
@@ -267,14 +270,14 @@ xp_mmap(dev_t dev, off_t offset, int prot)
 	return pa;
 }
 
-int
+static int
 xp_read(dev_t dev, struct uio *uio, int flags)
 {
 
 	return ENODEV;
 }
 
-int
+static int
 xp_write(dev_t dev, struct uio *uio, int flags)
 {
 

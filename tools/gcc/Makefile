@@ -1,14 +1,14 @@
-#	$NetBSD: Makefile,v 1.93 2019/03/19 05:55:00 mrg Exp $
+#	$NetBSD: Makefile,v 1.100 2020/09/06 02:24:38 mrg Exp $
 
 .include <bsd.hostinit.mk>
 
 GCC_LANGUAGES=c c++ objc
-MODULE=			gcc4
+MODULE=		${EXTERNAL_GCC_SUBDIR}
 
 GCCDIST=	${.CURDIR}/../../external/gpl3/${EXTERNAL_GCC_SUBDIR}/dist
 GNUHOSTDIST=	${GCCDIST}
 
-.if ${HAVE_GCC} == 6
+.if ${HAVE_GCC} == 7
 MKNATIVE=		${.CURDIR}/mknative-gcc.old
 .endif
 
@@ -32,7 +32,7 @@ SOFTFLOAT_ARGS=	-with-float=soft
 COMMON_CONFIGURE_ARGS=	--target=${MACHINE_GNU_PLATFORM} \
 			--enable-long-long \
 			--enable-threads \
-			--with-bugurl=http://www.NetBSD.org/Misc/send-pr.html \
+			--with-bugurl=http://www.NetBSD.org/support/send-pr.html \
 			--with-pkgversion="NetBSD ${NETBSD_GCC_VERSION}" \
 			--with-system-zlib \
 			--without-isl \
@@ -95,16 +95,19 @@ MKNATIVE_CONFIG_TARGET_LIBS=
 
 MKNATIVE_CONFIG_TARGET_LIBS+=	configure-target-libgcc
 MKNATIVE_CONFIG_TARGET_LIBS+=	configure-target-libgomp
-.if ${HAVE_GCC} == 7
-MKNATIVE_TARGET=	gcc7
-.elif ${HAVE_GCC} == 6
-MKNATIVE_TARGET=	gcc6
-.endif
 
 MKNATIVE_CONFIG_TARGET_LIBS+= \
 	configure-target-libstdc++-v3 \
 	configure-target-libbacktrace \
 	configure-target-libobjc
+
+.if ${HAVE_GCC} >= 9
+# XXX needs to build libstdc++ fully, which fails
+.if 0
+MKNATIVE_CONFIG_TARGET_LIBS+= \
+	configure-target-libsanitizer
+.endif
+.endif
 
 BINENV=		/usr/bin/env -i
 
@@ -138,25 +141,27 @@ CCADDFLAGS=	--sysroot=${DESTDIR} -L${DESTDIR}/lib -L${DESTDIR}/usr/lib -B${DESTD
 # in case the version being used is not.
 NEWCONFIGDIR?=	${.CURDIR}/../..
 
+GCC_MACHINE_ARCH=	${MACHINE_ARCH:S/earmv5/earm/}
+
 bootstrap-libgcc: .configure_done
 	@echo 'Creating files needed for libgcc by a native bootstrap build.'
 	(cd ${.OBJDIR}/build && ${BUILD_COMMAND} configure-target-libgcc)
-	@MAKE=${BUILD_MAKE:Q} ${HOST_SH} ${MKNATIVE} lib${MKNATIVE_TARGET}-bootstrap \
+	@MAKE=${BUILD_MAKE:Q} ${HOST_SH} ${MKNATIVE} libgcc-bootstrap \
 		${.OBJDIR}/build ${NEWCONFIGDIR} ${NETBSDSRCDIR} \
-		${MACHINE_GNU_PLATFORM} ${DESTDIR} ${TOOLDIR}
+		${MACHINE_GNU_PLATFORM} ${GCC_MACHINE_ARCH} ${DESTDIR} ${TOOLDIR}
 
 bootstrap-libstdc++: .configure_done
 	@echo 'Creating files needed for libstdc++ by a native bootstrap build.'
 	(cd ${.OBJDIR}/build && ${BUILD_COMMAND} configure-target-libstdc++-v3)
 	@MAKE=${BUILD_MAKE:Q} ${HOST_SH} ${MKNATIVE} libstdc++-bootstrap \
 		${.OBJDIR}/build ${NEWCONFIGDIR} ${NETBSDSRCDIR} \
-		${MACHINE_GNU_PLATFORM} ${DESTDIR} ${TOOLDIR}
+		${MACHINE_GNU_PLATFORM} ${GCC_MACHINE_ARCH} ${DESTDIR} ${TOOLDIR}
 
 native-gcc: .native/.configure_done
 	@echo 'Extracting GNU GCC configury for a native toolchain.'
-	@MAKE=${BUILD_MAKE:Q} ${HOST_SH} ${MKNATIVE} ${MKNATIVE_TARGET} \
+	@MAKE=${BUILD_MAKE:Q} ${HOST_SH} ${MKNATIVE} gcc \
 		${.OBJDIR}/.native ${NEWCONFIGDIR} ${NETBSDSRCDIR} \
-		${MACHINE_GNU_PLATFORM} ${DESTDIR} ${TOOLDIR}
+		${MACHINE_GNU_PLATFORM} ${GCC_MACHINE_ARCH} ${DESTDIR} ${TOOLDIR}
 
 NATIVE_CONFIGURE_ARGS=	${COMMON_CONFIGURE_ARGS}
 MPC=		${NETBSDSRCDIR}/external/lgpl3/mpc
@@ -189,6 +194,9 @@ NATIVE_CONFIGURE_ARGS+= --disable-shared
 
 .if ${MACHINE_ARCH} == "i386" || ${MACHINE_ARCH} == "x86_64"
 EXTRA_GCC_TARGETS=	i386-builtin-types.inc
+.endif
+.if !empty(MACHINE_ARCH:M*arm*)
+EXTRA_GCC_TARGETS=	arm-cpu-data.h arm-cpu-cdata.h
 .endif
 
 NATIVE_CONFIGURE_ARGS+=	\
@@ -250,6 +258,27 @@ MKENV_BUILD_MAKE=cd .native && ${MKNATIVE_ENV} ${BUILD_MAKE}
 			all-local) && \
 	true
 	@touch $@
+
+.if !defined(PREV_GCC)
+.  if exists(PREV_GCC)
+PREV_GCC!=	cat PREV_GCC
+.  else
+PREV_GCC=
+.  endif
+.endif
+
+CLEANFILES+=	PREV_GCC
+
+realall realdepend: .MAKE
+.if !empty(PREV_GCC) && "${PREV_GCC}" != "${EXTERNAL_GCC_SUBDIR}-${HAVE_GCC}"
+	@echo "*** WARNING: GCC has changed version?"
+	@echo "*** PREV_GCC '${PREV_GCC}'"
+	@echo "***     !=  EXTERNAL_GCC_SUBDIR-HAVE_GCC '${EXTERNAL_GCC_SUBDIR}-${HAVE_GCC}'"
+	@echo "*** Cleaning mis-matched tools/gcc"
+	rm -f PREV_GCC
+	(cd ${.CURDIR} && ${MAKE} cleandir)
+.endif
+	echo ${EXTERNAL_GCC_SUBDIR}-${HAVE_GCC} >PREV_GCC
 
 clean: clean.native
 clean.native:

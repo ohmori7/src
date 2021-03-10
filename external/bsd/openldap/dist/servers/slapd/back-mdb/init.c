@@ -1,10 +1,10 @@
-/*	$NetBSD: init.c,v 1.1.1.3 2018/02/06 01:53:17 christos Exp $	*/
+/*	$NetBSD: init.c,v 1.2 2020/08/11 13:15:40 christos Exp $	*/
 
 /* init.c - initialize mdb backend */
 /* $OpenLDAP$ */
 /* This work is part of OpenLDAP Software <http://www.openldap.org/>.
  *
- * Copyright 2000-2017 The OpenLDAP Foundation.
+ * Copyright 2000-2020 The OpenLDAP Foundation.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -17,7 +17,7 @@
  */
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: init.c,v 1.1.1.3 2018/02/06 01:53:17 christos Exp $");
+__RCSID("$NetBSD: init.c,v 1.2 2020/08/11 13:15:40 christos Exp $");
 
 #include "portable.h"
 
@@ -90,7 +90,7 @@ mdb_db_open( BackendDB *be, ConfigReply *cr )
 	int rc, i;
 	struct mdb_info *mdb = (struct mdb_info *) be->be_private;
 	struct stat stat1;
-	uint32_t flags;
+	unsigned flags;
 	char *dbhome;
 	MDB_txn *txn;
 
@@ -232,7 +232,6 @@ mdb_db_open( BackendDB *be, ConfigReply *cr )
 		else if ( i == MDB_DN2ID ) {
 			MDB_cursor *mc;
 			MDB_val key, data;
-			ID id;
 			mdb_set_dupsort( txn, mdb->mi_dbis[i], mdb_dup_compare );
 			/* check for old dn2id format */
 			rc = mdb_cursor_open( txn, mdb->mi_dbis[i], &mc );

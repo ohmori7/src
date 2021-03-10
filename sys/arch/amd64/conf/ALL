@@ -1,4 +1,4 @@
-# $NetBSD: ALL,v 1.119 2019/05/07 22:00:10 mrg Exp $
+# $NetBSD: ALL,v 1.166 2021/03/01 17:53:29 jakllsch Exp $
 # From NetBSD: GENERIC,v 1.787 2006/10/01 18:37:54 bouyer Exp
 #
 # ALL machine description file
@@ -17,25 +17,26 @@ include 	"arch/amd64/conf/std.amd64"
 
 options 	INCLUDE_CONFIG_FILE	# embed config file in kernel binary
 
-#ident		"ALL-$Revision: 1.119 $"
+#ident		"ALL-$Revision: 1.166 $"
 
 maxusers	64		# estimated number of users
 
 makeoptions	USE_SSP=yes
 
 # CPU-related options.
-#options 	USER_LDT	# user-settable LDT; used by WINE
+options 	USER_LDT	# User-settable LDT, used by Wine
 options 	X86EMU		# 386 Real Mode emulator
 #options 	PAE		# PAE mode (36 bits physical addressing)
 makeoptions	SPECTRE_V2_GCC_MITIGATION=1	# GCC Spectre variant 2
 						# migitation
+options 	PCPU_IDT	# Per CPU IDT
 
 # CPU features
 acpicpu*	at cpu?		# ACPI CPU (including frequency scaling)
 coretemp*	at cpu?		# Intel on-die thermal sensor
 est0		at cpu0		# Intel Enhanced SpeedStep (non-ACPI)
 odcm0		at cpu0		# On-demand clock modulation
-#padlock0	at cpu0		# VIA PadLock
+padlock0	at cpu0		# VIA PadLock
 powernow0	at cpu0		# AMD PowerNow! and Cool'n'Quiet (non-ACPI)
 viac7temp*	at cpu?		# VIA C7 temperature sensor
 vmt0		at cpu0		# VMware Tools
@@ -107,7 +108,7 @@ options 	BUFQ_READPRIO
 options 	BUFQ_PRIOCSCAN
 
 # Diagnostic/debugging support options
-options 	DIAGNOSTIC	# inexpensive kernel consistency checks
+#options 	DIAGNOSTIC	# inexpensive kernel consistency checks
 				# XXX to be commented out on release branch
 options 	DEBUG		# expensive debugging checks/support
 options 	LOCKDEBUG	# expensive locking checks/support
@@ -133,13 +134,12 @@ makeoptions	KASAN=1		# Kernel Address Sanitizer
 options		KASAN
 #no options     SVS
 
-# Kernel Info Leak Detector.
-#makeoptions	KLEAK=1
-#options		KLEAK
-
 # Kernel Code Coverage Driver.
 makeoptions	KCOV=1
 options		KCOV
+
+# Fault Injection Driver.
+options 	FAULT
 
 # Compatibility options
 options 	EXEC_AOUT	# required by binaries from before 1.5
@@ -177,7 +177,6 @@ file-system	PROCFS		# /proc
 file-system	UMAPFS		# NULLFS + uid and gid remapping
 file-system	UNION		# union file system
 file-system	CODA		# Coda File System; also needs vcoda (below)
-file-system	SMBFS		# experimental - CIFS; also needs nsmb (below)
 file-system	SYSVBFS		# System V boot file system
 file-system	PTYFS		# /dev/ptm support
 file-system	TMPFS		# Efficient memory file-system
@@ -378,6 +377,7 @@ aibs*		at acpi?		# ASUSTeK AI Booster hardware monitor
 applesmc*	at acpi?		# Apple System Management Controller
 asus*		at acpi?		# ASUS hotkeys
 attimer*	at acpi?		# AT Timer
+atppc*		at acpi?		# AT-style parallel port
 com*		at acpi?		# Serial communications interface
 fdc*		at acpi?		# Floppy disk controller
 fujbp*		at acpi?		# Fujitsu Brightness & Pointer
@@ -724,6 +724,9 @@ ihidev* at iic?
 ims*	at ihidev? reportid ?
 wsmouse* at ims? mux 0
 
+# I2C Displays
+ssdfb*	at iic?
+
 # I2O devices
 iop*	at pci? dev ? function ?	# I/O processor
 iopsp*	at iop? tid ?			# SCSI/FC-AL ports
@@ -829,9 +832,9 @@ amr*	at pci? dev ? function ?	# AMI/LSI Logic MegaRAID
 arcmsr* at pci? dev ? function ?	# Areca SATA RAID controllers
 cac*	at pci? dev ? function ?	# Compaq PCI array controllers
 ciss*	at pci? dev ? function ?	# HP Smart Array controllers
-options CISS_NO_INTERRUPT_HACK
 
 icp*	at pci? dev ? function ?	# ICP-Vortex GDT & Intel RAID
+ips*	at pci? dev ? function ?	# Adaptec/IBM ServeRAID
 mlx*	at pci? dev ? function ?	# Mylex DAC960 & DEC SWXCR family
 twa*	at pci? dev ? function ?	# 3ware Escalade 95xx RAID controllers
 twe*	at pci? dev ? function ?	# 3ware Escalade RAID controllers
@@ -957,6 +960,7 @@ age*	at pci? dev ? function ?	# Attansic/Atheros L1 Gigabit Ethernet
 alc*	at pci? dev ? function ?	# Attansic/Atheros L1C/L2C Ethernet
 ale*	at pci? dev ? function ?	# Attansic/Atheros L1E Ethernet
 an*	at pci? dev ? function ?	# Aironet PC4500/PC4800 (802.11)
+aq*	at pci? dev ? function ?	# Aquantia AQC 10 gigabit
 ath*	at pci? dev ? function ?	# Atheros 5210/5211/5212 802.11
 athn*	at pci? dev ? function ?	# Atheros AR9k (802.11a/g/n)
 atw*	at pci? dev ? function ?	# ADMtek ADM8211 (802.11)
@@ -964,30 +968,31 @@ bce*	at pci? dev ? function ?	# Broadcom 4401 10/100 Ethernet
 bge*	at pci? dev ? function ?	# Broadcom 570x gigabit Ethernet
 bnx*	at pci? dev ? function ?	# Broadcom NetXtremeII gigabit Ethernet
 bwi*	at pci? dev ? function ?	# Broadcom BCM43xx wireless
+bwfm*	at pci? dev ? function ?	# Broadcom FullMAC
 cas*	at pci? dev ? function ?	# Sun Cassini/Cassini+ Ethernet
 dge*	at pci? dev ? function ?	# Intel 82597 10GbE LR
 ena*	at pci? dev ? function ?	# Amazon Elastic Network Adapter
 ep*	at pci? dev ? function ?	# 3Com 3c59x
 epic*	at pci? dev ? function ?	# SMC EPIC/100 Ethernet
-esh*	at pci? dev ? function ?	# Essential HIPPI card
 et*	at pci? dev ? function ?	# Agere/LSI ET1310/ET1301 Gigabit
 ex*	at pci? dev ? function ?	# 3Com 3c90x[BC]
-fpa*	at pci? dev ? function ?	# DEC DEFPA FDDI
 fxp*	at pci? dev ? function ?	# Intel EtherExpress PRO 10+/100B
 gem*	at pci? dev ? function ?	# Apple GMAC and Sun ERI gigabit enet
 gsip*	at pci? dev ? function ?	# NS83820 Gigabit Ethernet
 hme*	at pci? dev ? function ?	# Sun Microelectronics STP2002-STQ
+iavf*	at pci? dev ? function ?	# Intel Adaptive Virtual Function
 ipw*	at pci? dev ? function ?	# Intel PRO/Wireless 2100
 iwi*	at pci? dev ? function ?	# Intel PRO/Wireless 2200BG
 iwm*	at pci? dev ? function ?	# Intel Wireless WiFi Link 7xxx
 iwn*	at pci? dev ? function ?	# Intel PRO/Wireless 4965AGN
 ixg*	at pci? dev ? function ?	# Intel 8259x 10 gigabit
+ixl*	at pci? dev ? function ?	# Intel Ethernet 700 Series
 ixv*	at pci? dev ? function ?	# Intel 8259x 10G virtual function
 jme*	at pci? dev ? function ?	# JMicron JMC2[56]0 ethernet
 hme*	at pci? dev ? function ?	# Sun Microelectronics STP2002-STQ
-le*	at pci? dev ? function ?	# PCnet-PCI Ethernet
 lii*	at pci? dev ? function ?	# Atheros L2 Fast-Ethernet
 malo*	at pci? dev ? function ?	# Marvell Libertas Wireless
+mcx*	at pci? dev ? function ?	# Mellanox 5th generation Ethernet
 mskc*	at pci? dev ? function ?	# Marvell Yukon 2 Gigabit Ethernet
 msk*	at mskc?			# Marvell Yukon 2 Gigabit Ethernet
 mtd*	at pci? dev ? function ?	# Myson MTD803 3-in-1 Ethernet
@@ -997,6 +1002,7 @@ ntwoc*	at pci? dev ? function ?	# Riscom/N2 PCI Sync Serial
 pcn*	at pci? dev ? function ?	# AMD PCnet-PCI Ethernet
 ral*	at pci? dev ? function ?	# Ralink Technology RT25x0 802.11a/b/g
 re*	at pci? dev ? function ?	# Realtek 8139C+/8169/8169S/8110S
+rge*	at pci? dev ? function ?	# Realtek 8125
 rtk*	at pci? dev ? function ?	# Realtek 8129/8139
 rtw*	at pci? dev ? function ?	# Realtek 8180L (802.11)
 rtwn*	at pci? dev ? function ?	# Realtek 8188CE/8192CE 802.11b/g/n
@@ -1018,6 +1024,8 @@ wi*	at pci? dev ? function ?	# Intersil Prism Mini-PCI (802.11b)
 wm*	at pci? dev ? function ?	# Intel 8254x gigabit
 wpi*	at pci? dev ? function ?	# Intel PRO/Wireless 3945ABG
 xge*	at pci? dev ? function ?	# Neterion (S2io) Xframe-I 10GbE
+wwanc*  at pci? dev ? function ?	# Intel XMM7360 LTE modem
+wwan*   at wwanc?			# Intel XMM7360 LTE modem
 
 # PCMCIA network interfaces
 an*	at pcmcia? function ?		# Aironet PC4500/PC4800 (802.11)
@@ -1030,8 +1038,6 @@ mbe*	at pcmcia? function ?		# MB8696x based Ethernet
 ne*	at pcmcia? function ?		# NE2000-compatible Ethernet
 ray*	at pcmcia? function ?		# Raytheon Raylink (802.11)
 sm*	at pcmcia? function ?		# Megahertz Ethernet
-# tr at pcmcia has problems with Cardbus bridges
-tr*	at pcmcia? function ?		# TROPIC based Token-Ring
 wi*	at pcmcia? function ?		# Lucent/Intersil WaveLAN/IEEE (802.11)
 xirc*	at pcmcia? function ?		# Xircom CreditCard Ethernet
 com*	at xirc?
@@ -1063,9 +1069,6 @@ le*	at bicc?
 ne0	at isa? port 0x280 irq 9		# NE[12]000 Ethernet cards
 ne1	at isa? port 0x300 irq 10
 sm0	at isa? port 0x300 irq 10		# SMC91C9x Ethernet
-tr0	at isa? port 0xa20 iomem 0xd8000 irq ?	# IBM TROPIC based Token-Ring
-tr1	at isa? port 0xa24 iomem 0xd0000 irq ?	# IBM TROPIC based Token-Ring
-tr*	at isa? port ? irq ?			# 3Com TROPIC based Token-Ring
 we0	at isa? port 0x280 iomem 0xd0000 irq 9	# WD/SMC Ethernet
 we1	at isa? port 0x300 iomem 0xcc000 irq 10
 
@@ -1101,6 +1104,8 @@ ihphy*	at mii? phy ?			# Intel 82577 PHYs
 ikphy*	at mii? phy ?			# Intel 82563 PHYs
 inphy*	at mii? phy ?			# Intel 82555 PHYs
 iophy*	at mii? phy ?			# Intel 82553 PHYs
+ipgphy* at mii? phy ?			# IC PLUS IP1000A/IP1001 PHYs
+jmphy*	at mii? phy ?			# Jmicron JMP202/211 PHYs
 lxtphy* at mii? phy ?			# Level One LXT-970 PHYs
 makphy* at mii? phy ?			# Marvell Semiconductor 88E1000 PHYs
 nsphy*	at mii? phy ?			# NS83840 PHYs
@@ -1110,6 +1115,7 @@ qsphy*	at mii? phy ?			# Quality Semiconductor QS6612 PHYs
 rdcphy* at mii? phy ?			# RDC R6040 internal PHY
 rgephy* at mii? phy ?			# Realtek 8169S/8110S internal PHYs
 rlphy*	at mii? phy ?			# Realtek 8139/8201L PHYs
+smscphy* at mii? phy ?			# SMSC LAN87xx PHYs
 sqphy*	at mii? phy ?			# Seeq 80220/80221/80223 PHYs
 tlphy*	at mii? phy ?			# ThunderLAN PHYs
 tqphy*	at mii? phy ?			# TDK Semiconductor PHYs
@@ -1119,9 +1125,11 @@ urlphy* at mii? phy ?			# Realtek RTL8150L internal PHYs
 
 # USB Controller and Devices
 
+# Virtual USB controller
+pseudo-device	vhci
+
 # PCI USB controllers
 xhci*	at pci?	dev ? function ?	# eXtensible Host Controller
-					# xhci is at best experimental
 ehci*	at pci?	dev ? function ?	# Enhanced Host Controller
 ohci*	at pci?	dev ? function ?	# Open Host Controller
 uhci*	at pci?	dev ? function ?	# Universal Host Controller (Intel)
@@ -1144,6 +1152,7 @@ usb*	at ehci?
 usb*	at ohci?
 usb*	at slhci?
 usb*	at uhci?
+usb*	at vhci?
 usb*	at xhci?
 
 # USB Hubs
@@ -1168,8 +1177,6 @@ wsmouse* at uep? mux 0
 # USB Apple trackpad
 uatp*	at uhidev? reportid ?
 wsmouse* at uatp? mux 0
-
-uyurex* at uhidev? reportid ?
 
 # USB Keyboards
 ukbd*	at uhidev? reportid ?
@@ -1200,7 +1207,6 @@ uhso*	at uhub? port ? configuration ?
 
 # USB Mass Storage
 umass*	at uhub? port ? configuration ? interface ?
-wd*	at umass?
 
 # USB audio
 uaudio* at uhub? port ? configuration ?
@@ -1292,6 +1298,9 @@ ucom*	at uark? portno ?
 umcs* at uhub? port ?		# Moschip MCS7xxx serial adapter
 ucom*	at umcs? portno ?
 
+uxrcom*	at uhub? port ?		# Exar XR21V141x serial adapter
+ucom*	at uxrcom? portno ?
+
 uhmodem* at uhub?
 ucom*	at uhmodem? portno ?
 
@@ -1300,9 +1309,6 @@ uberry* at uhub? port ?
 
 # Apple iPad
 uipad* at uhub? port ?
-
-# Diamond Multimedia Rio 500
-urio*	at uhub? port ?
 
 # USB Handspring Visor
 uvisor* at uhub? port ?
@@ -1320,9 +1326,6 @@ usscanner* at uhub? port ?
 
 # Topfield TF5000PVR range of DVB recorders
 utoppy* at uhub? port ?
-
-# Y@P firmware loader
-uyap* at uhub? port ?
 
 # D-Link DSB-R100 USB radio
 udsbr*	at uhub? port ?
@@ -1381,7 +1384,6 @@ auich*	at pci? dev ? function ?	# Intel ICH integrated AC'97 Audio
 auixp*	at pci? dev ? function ?	# ATI IXP AC'97 Audio
 autri*	at pci? dev ? function ?	# Trident 4DWAVE based AC'97 Audio
 auvia*	at pci? dev ? function ?	# VIA VT82C686A integrated AC'97 Audio
-azalia* at pci? dev ? function ?	# High Definition Audio
 clcs*	at pci? dev ? function ?	# Cirrus Logic CS4280
 clct*	at pci? dev ? function ?	# Cirrus Logic CS4281
 cmpci*	at pci? dev ? function ?	# C-Media CMI8338/8738
@@ -1542,16 +1544,13 @@ btsco* at bthub?
 # Cryptographic Devices
 
 # PCI cryptographic devices
+amdccp*	at pci? dev ? function ?	# AMD Cryptographic Coprocessor
 hifn*	at pci? dev ? function ?	# Hifn 7755/7811/795x
+qat*	at pci? dev ? function ?	# Intel QuickAssist
 ubsec*	at pci? dev ? function ?	# Broadcom 5501/5601/580x/582x
-
 
 # Trusted Platform Module
 tpm*	at isa? iomem 0xfed40000 irq 7
-#tpm*	at isa? port 0x02e
-#tpm*	at isa? port 0x04e
-#tpm*	at isa? port 0x07e
-#tpm*	at isa? port 0x0ee
 
 # Joysticks
 
@@ -1574,6 +1573,7 @@ ld*	at virtio?			# Virtio disk device
 vioif*	at virtio?			# Virtio network device
 viornd* at virtio?			# Virtio entropy device
 vioscsi* at virtio?			# Virtio SCSI device
+vio9p*	at virtio?			# Virtio 9P device
 
 # Flash subsystem
 flash* at flashbus?
@@ -1625,7 +1625,6 @@ pseudo-device	ppp			# Point-to-Point Protocol
 pseudo-device	pppoe			# PPP over Ethernet (RFC 2516)
 options 	PPPOE_SERVER		# Enable PPPoE server via link0
 pseudo-device	sl			# Serial Line IP
-pseudo-device	strip			# Starmode Radio IP (Metricom)
 pseudo-device	irframetty		# IrDA frame line discipline
 pseudo-device	tap			# virtual Ethernet
 pseudo-device	tun			# network tunneling over tty
@@ -1636,7 +1635,7 @@ pseudo-device	faith			# IPv[46] tcp relay translation i/f
 pseudo-device	stf			# 6to4 IPv6 over IPv4 encapsulation
 pseudo-device	vlan			# IEEE 802.1q encapsulation
 pseudo-device	bridge			# simple inter-network bridging
-options 	BRIDGE_IPF		# bridge uses IP/IPv6 pfil hooks too
+pseudo-device	vether			# Virtual Ethernet for bridge
 pseudo-device	agr			# IEEE 802.3ad link aggregation
 pseudo-device	l2tp			# L2TPv3 interface
 #pseudo-device	pf			# PF packet filter
@@ -1646,6 +1645,7 @@ pseudo-device	npf			# NPF packet filter
 pseudo-device	kttcp
 # srt is EXPERIMENTAL
 pseudo-device	srt			# source-address-based routing
+pseudo-device	wg			# VPN tunnel compatible with WireGuard
 
 pseudo-device	canloop			# CAN loopback interface
 
@@ -1666,13 +1666,8 @@ pseudo-device	bcsp			# BlueCore Serial Protocol
 pseudo-device	btuart			# Bluetooth HCI UART (H4)
 pseudo-device	gpiosim		1	# GPIO simulator
 
-pseudo-device	filemon			# process monitor for make(1)
-
 # a pseudo device needed for Coda	# also needs CODA (above)
 pseudo-device	vcoda			# coda minicache <-> venus comm.
-
-# a pseudo device needed for SMBFS
-pseudo-device	nsmb			# experimental - SMB requester
 
 # a pseudo device needed for AUTOFS
 pseudo-device	autofs			# experimental - AUTOFS
@@ -2023,6 +2018,7 @@ options LPT_DEBUG
 options MAGMA_DEBUG
 options MAPLE_DEBUG
 options MB8795_DEBUG
+options MBUFTRACE
 options MCDDEBUG
 options MCDEBUG
 options MCHAIN_DEBUG
@@ -2175,7 +2171,6 @@ options SMB_VNODE_DEBUG
 options SNAPPER_DEBUG
 options SNDEBUG
 options SOCKBUF_DEBUG
-options SOFTINT_INTR
 options SONIC_DEBUG
 options SPARC_PCI_DEBUG
 options SPC_DEBUG
@@ -2268,7 +2263,6 @@ options UPGT_DEBUG
 options UPLCOM_DEBUG
 options UPL_DEBUG
 options URAL_DEBUG
-options URIO_DEBUG
 options URLPHY_DEBUG
 options URL_DEBUG
 options URNDIS_DEBUG

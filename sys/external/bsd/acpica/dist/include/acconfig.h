@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2019, Intel Corp.
+ * Copyright (C) 2000 - 2020, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -131,9 +131,9 @@
 
 #define ACPI_DEFAULT_PAGE_SIZE          4096    /* Must be power of 2 */
 
-/* OwnerId tracking. 8 entries allows for 255 OwnerIds */
+/* OwnerId tracking. 128 entries allows for 4095 OwnerIds */
 
-#define ACPI_NUM_OWNERID_MASKS          8
+#define ACPI_NUM_OWNERID_MASKS          128
 
 /* Size of the root table array is increased by this increment */
 
@@ -158,7 +158,7 @@
  *
  *****************************************************************************/
 
-/* Method info (in WALK_STATE), containing local variables and argumetns */
+/* Method info (in WALK_STATE), containing local variables and arguments */
 
 #define ACPI_METHOD_NUM_LOCALS          8
 #define ACPI_METHOD_MAX_LOCAL           7

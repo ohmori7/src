@@ -1,4 +1,4 @@
-/* $NetBSD: tegra_drm_mode.c,v 1.17 2018/08/27 15:31:51 riastradh Exp $ */
+/* $NetBSD: tegra_drm_mode.c,v 1.20 2021/01/15 23:11:59 jmcneill Exp $ */
 
 /*-
  * Copyright (c) 2015 Jared D. McNeill <jmcneill@invisible.ca>
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: tegra_drm_mode.c,v 1.17 2018/08/27 15:31:51 riastradh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: tegra_drm_mode.c,v 1.20 2021/01/15 23:11:59 jmcneill Exp $");
 
 #include <drm/drmP.h>
 #include <drm/drm_crtc.h>
@@ -320,8 +320,8 @@ tegra_crtc_init(struct drm_device *ddev, int index)
 	}
 	crtc->size = size;
 	crtc->intr = intr;
-	crtc->ih = intr_establish(intr, IPL_VM, IST_LEVEL | IST_MPSAFE,
-	    tegra_crtc_intr, crtc);
+	crtc->ih = intr_establish_xname(intr, IPL_VM, IST_LEVEL | IST_MPSAFE,
+	    tegra_crtc_intr, crtc, device_xname(self)); /* XXX */
 	if (crtc->ih == NULL) {
 		DRM_ERROR("failed to establish interrupt for crtc %d\n", index);
 	}
@@ -699,7 +699,7 @@ tegra_crtc_mode_set_base(struct drm_crtc *crtc, int x, int y,
     struct drm_framebuffer *old_fb)
 {
 	struct tegra_crtc *tegra_crtc = to_tegra_crtc(crtc);
-	
+
 	tegra_crtc_do_set_base(crtc, old_fb, x, y, 0);
 
 	/* Commit settings */
@@ -1191,7 +1191,7 @@ tegra_connector_init(struct drm_device *ddev, struct drm_encoder *encoder)
 	if (!connector->ddc)
 		DRM_ERROR("failed to find ddc device for connector\n");
 
-	return 0;
+	return drm_connector_register(&connector->base);
 }
 
 static void

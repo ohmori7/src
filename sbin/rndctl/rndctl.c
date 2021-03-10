@@ -1,4 +1,4 @@
-/*	$NetBSD: rndctl.c,v 1.30 2015/04/13 22:18:50 riastradh Exp $	*/
+/*	$NetBSD: rndctl.c,v 1.37 2020/05/12 09:48:44 simonb Exp $	*/
 
 /*-
  * Copyright (c) 1997 Michael Graff.
@@ -28,28 +28,29 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-#include <sys/cdefs.h>
-#include <sys/types.h>
-#include <sha1.h>
 
+#include <sys/cdefs.h>
 #ifndef lint
-__RCSID("$NetBSD: rndctl.c,v 1.30 2015/04/13 22:18:50 riastradh Exp $");
+__RCSID("$NetBSD: rndctl.c,v 1.37 2020/05/12 09:48:44 simonb Exp $");
 #endif
 
-
-#include <sys/types.h>
-#include <sys/ioctl.h>
 #include <sys/param.h>
+#include <sys/types.h>
+#include <sys/endian.h>
+#include <sys/ioctl.h>
 #include <sys/rndio.h>
+#include <sys/sha3.h>
+#include <sys/sysctl.h>
 
+#include <err.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <paths.h>
+#include <sha1.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <err.h>
-#include <paths.h>
 #include <string.h>
+#include <unistd.h>
 
 typedef struct {
 	const char *a_name;
@@ -78,6 +79,7 @@ static char * strflags(u_int32_t);
 static void do_list(int, u_int32_t, char *);
 static void do_stats(void);
 
+static int iflag;
 static int vflag;
 
 static void
@@ -88,7 +90,8 @@ usage(void)
 	    getprogname());
 	fprintf(stderr, "       %s [-lsv] [-d devname | -t devtype]\n",
 	    getprogname());
-	fprintf(stderr, "	%s -[L|S] save-file\n", getprogname());
+	fprintf(stderr, "       %s [-i] -L save-file\n", getprogname());
+	fprintf(stderr, "       %s -S save-file\n", getprogname());
 	exit(1);
 }
 
@@ -126,112 +129,301 @@ find_name(u_int32_t type)
 	return ("???");
 }
 
-static void
-do_save(const char *const filename)
+static int
+update_seed(const char *filename, int fd_seed, const char *tmp,
+    const void *extra, size_t nextra, uint32_t extraentropy)
 {
-	int est1, est2;
-	rndpoolstat_t rp;
+	uint32_t systementropy;
+	uint8_t buf[32];
+	SHAKE128_CTX shake128;
 	rndsave_t rs;
 	SHA1_CTX s;
+	ssize_t nread, nwrit;
+	int fd_random;
 
-	int fd;
+	/* Paranoia: Avoid stack memory disclosure.  */
+	memset(&rs, 0, sizeof rs);
 
-	fd = open(_PATH_URANDOM, O_RDONLY, 0644);
-	if (fd < 0) {
-		err(1, "device open");
+	/* Open /dev/urandom to read data from the system.  */
+	if ((fd_random = open(_PATH_URANDOM, O_RDONLY)) == -1) {
+		warn("open /dev/urandom");
+		return -1;
 	}
 
-	if (ioctl(fd, RNDGETPOOLSTAT, &rp) < 0) {
-		err(1, "ioctl(RNDGETPOOLSTAT)");
+	/* Find how much entropy is in the pool.  */
+	if (ioctl(fd_random, RNDGETENTCNT, &systementropy) == -1) {
+		warn("ioctl(RNDGETENTCNT)");
+		systementropy = 0;
 	}
 
-	est1 = rp.curentropy;
-
-	if (read(fd, rs.data, sizeof(rs.data)) != sizeof(rs.data)) {
-		err(1, "entropy read");
+	/* Read some data from /dev/urandom.  */
+	if ((size_t)(nread = read(fd_random, buf, sizeof buf)) != sizeof buf) {
+		if (nread == -1)
+			warn("read");
+		else
+			warnx("truncated read");
+		return -1;
 	}
 
-	if (ioctl(fd, RNDGETPOOLSTAT, &rp) < 0) {
-		err(1, "ioctl(RNDGETPOOLSTAT)");
-	}
+	/* Close /dev/urandom; we're done with it.  */
+	if (close(fd_random) == -1)
+		warn("close");
+	fd_random = -1;		/* paranoia */
 
-	est2 = rp.curentropy;
+	/*
+	 * Hash what we read together with the extra input to generate
+	 * the seed data.
+	 */
+	SHAKE128_Init(&shake128);
+	SHAKE128_Update(&shake128, buf, sizeof buf);
+	SHAKE128_Update(&shake128, extra, nextra);
+	SHAKE128_Final(rs.data, sizeof(rs.data), &shake128);
+	explicit_memset(&shake128, 0, sizeof shake128); /* paranoia */
 
-	if (est1 - est2 < 0) {
-		rs.entropy = 0;
-	} else {
-		rs.entropy = est1 - est2;
-	}
+	/*
+	 * Report an upper bound on the min-entropy of the seed data.
+	 * We take the larger of the system entropy and the extra
+	 * entropy -- the system state and the extra input may or may
+	 * not be independent, so we can't add them -- and clamp to the
+	 * size of the data.
+	 */
+	systementropy = MIN(systementropy,
+	    MIN(sizeof(buf), UINT32_MAX/NBBY)*NBBY);
+	extraentropy = MIN(extraentropy, MIN(nextra, UINT32_MAX/NBBY)*NBBY);
+	rs.entropy = MIN(MAX(systementropy, extraentropy),
+	    MIN(sizeof(rs.data), UINT32_MAX/NBBY)*NBBY);
 
+	/*
+	 * Compute the checksum on the 32-bit entropy count, followed
+	 * by the seed data.
+	 */
 	SHA1Init(&s);
-	SHA1Update(&s, (uint8_t *)&rs.entropy, sizeof(rs.entropy));
+	SHA1Update(&s, (const uint8_t *)&rs.entropy, sizeof(rs.entropy));
 	SHA1Update(&s, rs.data, sizeof(rs.data));
 	SHA1Final(rs.digest, &s);
+	explicit_memset(&s, 0, sizeof s); /* paranoia */
 
-	close(fd);
-	unlink(filename);
-	fd = open(filename, O_CREAT|O_EXCL|O_WRONLY, 0600);
-	if (fd < 0) {
-		err(1, "output open");
+	/*
+	 * Write it to a temporary file and sync it before we commit.
+	 * This way either the old seed or the new seed is completely
+	 * written in the expected location on disk even if the system
+	 * crashes as long as the file system doesn't get corrupted too
+	 * badly.
+	 *
+	 * If interrupted after this point and the temporary file is
+	 * disclosed, no big deal -- either the pool was predictable to
+	 * begin with in which case we're hosed either way, or we've
+	 * just revealed some output which is not a problem.
+	 */
+	if ((size_t)(nwrit = write(fd_seed, &rs, sizeof rs)) != sizeof rs) {
+		int error = errno;
+		if (unlink(tmp) == -1)
+			warn("unlink");
+		if (nwrit == -1)
+			warnc(error, "write");
+		else
+			warnx("truncated write");
+		return -1;
+	}
+	explicit_memset(&rs, 0, sizeof rs); /* paranoia */
+	if (fsync_range(fd_seed, FDATASYNC|FDISKSYNC, 0, 0) == -1) {
+		int error = errno;
+		if (unlink(tmp) == -1)
+			warn("unlink");
+		warnc(error, "fsync_range");
+		return -1;
+	}
+	if (close(fd_seed) == -1)
+		warn("close");
+
+	/* Rename it over the original file to commit.  */
+	if (rename(tmp, filename) == -1) {
+		warn("rename");
+		return -1;
 	}
 
-	if (write(fd, &rs, sizeof(rs)) != sizeof(rs)) {
-		unlink(filename);
-		fsync_range(fd, FDATASYNC|FDISKSYNC, (off_t)0, (off_t)0);
-		err(1, "write");
-	}
-	fsync_range(fd, FDATASYNC|FDISKSYNC, (off_t)0, (off_t)0);
-	close(fd);
+	/* Success!  */
+	return 0;
 }
 
 static void
-do_load(const char *const filename)
+do_save(const char *filename)
 {
-	int fd;
-	rndsave_t rs, rszero;
+	char tmp[PATH_MAX];
+	int fd_seed;
+
+	/* Consolidate any pending samples.  */
+	if (sysctlbyname("kern.entropy.consolidate", NULL, NULL,
+		(const int[]){1}, sizeof(int)) == -1)
+		warn("consolidate entropy");
+
+	/* Format the temporary file name.  */
+	if (snprintf(tmp, sizeof tmp, "%s.tmp", filename) >= PATH_MAX)
+		errx(1, "path too long");
+
+	/* Create a temporary seed file.  */
+	if ((fd_seed = open(tmp, O_CREAT|O_TRUNC|O_WRONLY, 0600)) == -1)
+		err(1, "open seed file to save");
+
+	/* Update the seed.  Abort on failure.  */
+	if (update_seed(filename, fd_seed, tmp, NULL, 0, 0) == -1)
+		exit(1);
+}
+
+static void
+do_load(const char *filename)
+{
+	char tmp[PATH_MAX];
+	int fd_new, fd_old, fd_random;
+	rndsave_t rs;
 	rnddata_t rd;
+	ssize_t nread, nwrit;
 	SHA1_CTX s;
 	uint8_t digest[SHA1_DIGEST_LENGTH];
+	int ro = 0, fail = 0;
+	int error;
 
-	fd = open(filename, O_RDWR, 0600);
-	if (fd < 0) {
-		err(1, "input open");
+	/*
+	 * 1. Load the old seed.
+	 * 2. Feed the old seed into the kernel.
+	 * 3. Generate and write a new seed.
+	 * 4. Erase the old seed if we can.
+	 *
+	 * We follow the procedure in
+	 *
+	 *	Niels Ferguson, Bruce Schneier, and Tadayoshi Kohno,
+	 *	_Cryptography Engineering_, Wiley, 2010, Sec. 9.6.2
+	 *	`Update Seed File'.
+	 *
+	 * Additionally, we zero the seed's stored entropy estimate if
+	 * it appears to be on a read-only medium.
+	 */
+
+	/* Format the temporary file name.  */
+	if (snprintf(tmp, sizeof tmp, "%s.tmp", filename) >= PATH_MAX)
+		errx(1, "path too long");
+
+	/* Create a new seed file or determine the medium is read-only. */
+	if ((fd_new = open(tmp, O_CREAT|O_TRUNC|O_WRONLY, 0600)) == -1) {
+		warn("update seed file");
+		ro = 1;
 	}
 
-	unlink(filename);
-
-	if (read(fd, &rs, sizeof(rs)) != sizeof(rs)) {
-		err(1, "read");
+	/*
+	 * 1. Load the old seed.
+	 */
+	if ((fd_old = open(filename, O_RDWR)) == -1) {
+		error = errno;
+		if ((error != EPERM && error != EROFS) ||
+		    (fd_old = open(filename, O_RDONLY)) == -1)
+			err(1, "open seed file to load");
+		if (fd_new != -1)
+			warnc(error, "can't overwrite old seed file");
+		ro = 1;
+	}
+	if ((size_t)(nread = read(fd_old, &rs, sizeof rs)) != sizeof rs) {
+		if (nread == -1)
+			err(1, "read seed");
+		else
+			errx(1, "seed too short");
 	}
 
-	memset(&rszero, 0, sizeof(rszero));
-	if (pwrite(fd, &rszero, sizeof(rszero), (off_t)0) != sizeof(rszero))
-		err(1, "overwrite");
-	fsync_range(fd, FDATASYNC|FDISKSYNC, (off_t)0, (off_t)0);
-	close(fd);
-
+	/* Verify its checksum.  */
 	SHA1Init(&s);
-	SHA1Update(&s, (uint8_t *)&rs.entropy, sizeof(rs.entropy));
+	SHA1Update(&s, (const uint8_t *)&rs.entropy, sizeof(rs.entropy));
 	SHA1Update(&s, rs.data, sizeof(rs.data));
 	SHA1Final(digest, &s);
-
-	if (memcmp(digest, rs.digest, sizeof(digest))) {
-		errx(1, "bad digest");
+	if (!consttime_memequal(digest, rs.digest, sizeof(digest))) {
+		/*
+		 * If the checksum doesn't match, doesn't hurt to feed
+		 * the seed in anyway, but act as though it has zero
+		 * entropy in case it was corrupted with predictable
+		 * garbage.
+		 */
+		warnx("bad checksum");
+		rs.entropy = 0;
 	}
 
+	/*
+	 * If the entropy is insensibly large, try byte-swapping.
+	 * Otherwise assume the file is corrupted and act as though it
+	 * has zero entropy.
+	 */
+	if (howmany(rs.entropy, NBBY) > sizeof(rs.data)) {
+		rs.entropy = bswap32(rs.entropy);
+		if (howmany(rs.entropy, NBBY) > sizeof(rs.data)) {
+			warnx("bad entropy estimate");
+			rs.entropy = 0;
+		}
+	}
+
+	/* If the medium can't be updated, zero the entropy estimate.  */
+	if (ro)
+		rs.entropy = 0;
+
+	/* Fail later on if there's no entropy in the seed.  */
+	if (rs.entropy == 0) {
+		warnx("no entropy in seed");
+		fail = 1;
+	}
+
+	/* If the user asked, zero the entropy estimate, but succeed.  */
+	if (iflag)
+		rs.entropy = 0;
+
+	/*
+	 * 2. Feed the old seed into the kernel.
+	 *
+	 * This also has the effect of consolidating pending samples,
+	 * whether or not there are enough samples from sources deemed
+	 * to have full entropy, so that the updated seed will
+	 * incorporate them.
+	 */
 	rd.len = MIN(sizeof(rd.data), sizeof(rs.data));
 	rd.entropy = rs.entropy;
-	memcpy(rd.data, rs.data, MIN(sizeof(rd.data), sizeof(rs.data)));
+	memcpy(rd.data, rs.data, rd.len);
+	explicit_memset(&rs, 0, sizeof rs); /* paranoia */
+	if ((fd_random = open(_PATH_URANDOM, O_WRONLY)) == -1)
+		err(1, "open /dev/urandom");
+	if (ioctl(fd_random, RNDADDDATA, &rd) == -1)
+		err(1, "RNDADDDATA");
+	explicit_memset(&rd, 0, sizeof rd); /* paranoia */
+	if (close(fd_random) == -1)
+		warn("close /dev/urandom");
+	fd_random = -1;		/* paranoia */
 
-	fd = open(_PATH_URANDOM, O_RDWR, 0644);
-	if (fd < 0) {
-		err(1, "device open");
+	/*
+	 * 3. Generate and write a new seed.
+	 */
+	if (fd_new == -1 ||
+	    update_seed(filename, fd_new, tmp, rs.data, sizeof(rs.data),
+		rs.entropy) == -1)
+		fail = 1;
+
+	/*
+	 * 4. Erase the old seed.
+	 *
+	 * Only effective if we're on a fixed-address file system like
+	 * ffs -- doesn't help to erase the data on lfs, but doesn't
+	 * hurt either.  No need to unlink because update_seed will
+	 * have already renamed over it.
+	 */
+	if (!ro) {
+		memset(&rs, 0, sizeof rs);
+		if ((size_t)(nwrit = pwrite(fd_old, &rs, sizeof rs, 0)) !=
+		    sizeof rs) {
+			if (nwrit == -1)
+				err(1, "overwrite old seed");
+			else
+				errx(1, "truncated overwrite");
+		}
+		if (fsync_range(fd_old, FDATASYNC|FDISKSYNC, 0, 0) == -1)
+			err(1, "fsync_range");
 	}
 
-	if (ioctl(fd, RNDADDDATA, &rd) < 0) {
-		err(1, "ioctl");
-	}
-	close(fd);
+	/* Fail noisily if anything went wrong.  */
+	if (fail)
+		exit(1);
 }
 
 static void
@@ -397,6 +589,9 @@ main(int argc, char **argv)
 	char name[16];
 	const char *filename = NULL;
 
+	if (SHA3_Selftest() != 0)
+		errx(1, "SHA-3 self-test failed");
+
 	rctl.mask = 0;
 	rctl.flags = 0;
 
@@ -406,7 +601,7 @@ main(int argc, char **argv)
 	sflag = 0;
 	type = 0xff;
 
-	while ((ch = getopt(argc, argv, "CES:L:celt:d:sv")) != -1) {
+	while ((ch = getopt(argc, argv, "CES:L:celit:d:sv")) != -1) {
 		switch (ch) {
 		case 'C':
 			rctl.flags |= RND_FLAG_NO_COLLECT;
@@ -439,6 +634,9 @@ main(int argc, char **argv)
 			rctl.flags &= ~RND_FLAG_NO_ESTIMATE;
 			rctl.mask |= RND_FLAG_NO_ESTIMATE;
 			mflag++;
+			break;
+		case 'i':
+			iflag = 1;
 			break;
 		case 'l':
 			lflag++;
@@ -476,6 +674,12 @@ main(int argc, char **argv)
 	 * No leftover non-option arguments.
 	 */
 	if (argc > 0)
+		usage();
+
+	/*
+	 * -i makes sense only with -L.
+	 */
+	if (iflag && cmd != 'L')
 		usage();
 
 	/*

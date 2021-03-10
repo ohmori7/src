@@ -107,6 +107,15 @@
       <entry><literal>-fopenmp</literal></entry>
       <entry>For <link linkend="manual.ext.parallel_mode">parallel</link> mode.</entry>
     </row>
+    
+    <row>
+      <entry><literal>-ltbb</literal></entry>
+      <entry>Linking to tbb (Thread Building Blocks) is required for use of the
+        Parallel Standard Algorithms and execution policies in
+        <filename class="headerfile">&lt;execution&gt;</filename>.
+      </entry>
+    </row>
+    
   </tbody>
 
 </tgroup>
@@ -401,22 +410,92 @@ Unless specified otherwise below, they are also available in later modes
 <table frame="all" xml:id="table.cxx17_headers">
 <title>C++ 2017 Library Headers</title>
 
-<tgroup cols="4" align="left" colsep="1" rowsep="1">
+<tgroup cols="5" align="left" colsep="1" rowsep="1">
 <colspec colname="c1"/>
 <colspec colname="c2"/>
 <colspec colname="c3"/>
 <colspec colname="c4"/>
+<colspec colname="c5"/>
 <tbody>
 <row>
 <entry><filename class="headerfile">any</filename></entry>
+<entry><filename class="headerfile">charconv</filename></entry>
+<entry><filename class="headerfile">execution</filename></entry>
+<entry><filename class="headerfile">filesystem</filename></entry>
+<entry><filename class="headerfile">memory_resource</filename></entry>
+</row>
+<row>
 <entry><filename class="headerfile">optional</filename></entry>
 <entry><filename class="headerfile">string_view</filename></entry>
 <entry><filename class="headerfile">variant</filename></entry>
+<entry namest="c4" nameend="c5"/>
 </row>
 </tbody>
 </tgroup>
 </table>
 
+<para>
+<xref linkend="table.cxx20_headers"/>
+shows the C++2a include files.
+These are available in C++2a compilation
+mode, i.e. <literal>-std=c++2a</literal> or <literal>-std=gnu++2a</literal>.
+Including these headers in earlier modes will not result in
+compilation errors, but will not define anything.
+<!--
+Unless specified otherwise below, they are also available in later modes
+(C++23 etc).
+-->
+</para>
+
+<para/>
+<table frame="all" xml:id="table.cxx20_headers">
+<title>C++ 2020 Library Headers</title>
+
+<tgroup cols="2" align="left" colsep="1" rowsep="1">
+<colspec colname="c1"/>
+<colspec colname="c2"/>
+<!--
+<colspec colname="c3"/>
+<colspec colname="c4"/>
+<colspec colname="c5"/>
+-->
+<tbody>
+<row>
+<entry><filename class="headerfile">bit</filename></entry>
+<entry><filename class="headerfile">version</filename></entry>
+</row>
+<!-- TODO compare, concepts, contract, span, syncstream -->
+</tbody>
+</tgroup>
+</table>
+
+<para>
+  The following headers have been removed in the C++2a working draft.
+  They are still available when using this implementation, but in future
+  they might start to produce warnings or errors when included in C++2a mode.
+  Programs that intend to be portable should not include them.
+</para>
+
+<table frame="all" xml:id="table.cxx20_deprheaders">
+<title>C++ 2020 Obsolete Headers</title>
+
+<tgroup cols="5" align="left" colsep="1" rowsep="1">
+<colspec colname="c1"/>
+<colspec colname="c2"/>
+<colspec colname="c3"/>
+<colspec colname="c4"/>
+<colspec colname="c5"/>
+<tbody>
+<row>
+<entry><filename class="headerfile">ccomplex</filename></entry>
+<entry><filename class="headerfile">ciso646</filename></entry>
+<entry><filename class="headerfile">cstdalign</filename></entry>
+<entry><filename class="headerfile">cstdbool</filename></entry>
+<entry><filename class="headerfile">ctgmath</filename></entry>
+</row>
+</tbody>
+</tgroup>
+</table>
 
 <para>
 <xref linkend="table.filesystemts_headers"/>,
@@ -1111,6 +1190,24 @@ g++ -Winvalid-pch -I. -include stdc++.h -H -g -O2 hello.cc -o test.exe
 	enables support for ISO/IEC 29124 Special Math Functions.
       </para>
     </listitem></varlistentry>
+
+    <varlistentry><term><code>_GLIBCXX_SANITIZE_VECTOR</code></term>
+    <listitem>
+      <para>
+	Undefined by default. When defined, <classname>std::vector</classname>
+        operations will be annotated so that AddressSanitizer can detect
+        invalid accesses to the unused capacity of a
+        <classname>std::vector</classname>. These annotations are only
+        enabled for
+        <classname>std::vector&lt;T, std::allocator&lt;T&gt;&gt;</classname>
+        and only when <classname>std::allocator</classname> is derived from
+        <link linkend="allocator.ext"><classname>new_allocator</classname>
+        or <classname>malloc_allocator</classname></link>. The annotations
+        must be present on all vector operations or none, so this macro must
+        be defined to the same value for all translation units that create,
+        destroy or modify vectors.
+      </para>
+    </listitem></varlistentry>
     </variablelist>
 
   </section>
@@ -1638,7 +1735,7 @@ The standard places requirements on the library to ensure that no data
 races are caused by the library itself or by programs which use the
 library correctly (as described below).
 The C++11 memory model and library requirements are a more formal version
-of the <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://www.sgi.com/tech/stl/thread_safety.html">SGI STL</link> definition of thread safety, which the library used
+of the <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="https://web.archive.org/web/20171225062613/http://www.sgi.com/tech/stl/thread_safety.html">SGI STL</link> definition of thread safety, which the library used
 prior to the 2011 standard.
 </para>
 
@@ -1911,10 +2008,10 @@ gcc version 4.1.2 20070925 (Red Hat 4.1.2-33)
    </para>
    <para>Two excellent pages to read when working with the Standard C++
       containers and threads are
-      <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://www.sgi.com/tech/stl/thread_safety.html">SGI's
-      http://www.sgi.com/tech/stl/thread_safety.html</link> and
-      <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://www.sgi.com/tech/stl/Allocators.html">SGI's
-      http://www.sgi.com/tech/stl/Allocators.html</link>.
+      <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="https://web.archive.org/web/20171225062613/http://www.sgi.com/tech/stl/thread_safety.html">SGI's
+      https://web.archive.org/web/20171225062613/http://www.sgi.com/tech/stl/thread_safety.html</link> and
+      <link xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="https://web.archive.org/web/20171225062613/http://www.sgi.com/tech/stl/Allocators.html">SGI's
+      https://web.archive.org/web/20171225062613/http://www.sgi.com/tech/stl/Allocators.html</link>.
    </para>
    <para><emphasis>However, please ignore all discussions about the user-level
       configuration of the lock implementation inside the STL

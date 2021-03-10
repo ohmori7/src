@@ -1,4 +1,4 @@
-/*	$NetBSD: md.c,v 1.3 2019/06/12 06:20:23 martin Exp $	*/
+/*	$NetBSD: md.c,v 1.6 2020/10/12 16:14:36 martin Exp $	*/
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -74,7 +74,7 @@ md_get_info(struct install_partition_desc *install)
 /*
  * md back-end code for menu-driven BSD disklabel editor.
  */
-bool
+int
 md_make_bsd_partitions(struct install_partition_desc *install)
 {
 	return make_bsd_partitions(install);
@@ -155,7 +155,7 @@ static void
 install_bootblocks(void)
 {
 	/* Install boot blocks before mounting the target disk */
-	msg_display(MSG_dobootblks, pm->diskdev);
+	msg_fmt_display(MSG_dobootblks, "%s", pm->diskdev);
 	run_program(RUN_DISPLAY, "/sbin/disklabel -W %s", pm->diskdev);
 	run_program(RUN_DISPLAY, "/usr/sbin/installboot /dev/r%sc"
 	    " /usr/mdec/bootblk", pm->diskdev);
@@ -166,15 +166,16 @@ static void
 install_ofwboot(void)
 {
 	/* copy secondary bootstrap now that the target is mounted */
-	msg_display(MSG_doofwboot, targetroot_mnt);
+	msg_fmt_display(MSG_doofwboot, "%s", targetroot_mnt);
 	run_program(RUN_DISPLAY, "/bin/cp -p /usr/mdec/ofwboot %s",
 	    targetroot_mnt);
 }
 
 int
-md_pre_mount(struct install_partition_desc *install)
+md_pre_mount(struct install_partition_desc *install, size_t ndx)
 {
-	install_bootblocks();
+	if (ndx == 0)
+		install_bootblocks();
 	return 0;
 }
 

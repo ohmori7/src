@@ -1,5 +1,5 @@
-/*	$Id: at91spi.c,v 1.3 2011/07/01 19:31:17 dyoung Exp $	*/
-/*	$NetBSD: at91spi.c,v 1.3 2011/07/01 19:31:17 dyoung Exp $	*/
+/*	$Id: at91spi.c,v 1.5 2019/12/27 09:41:49 msaitoh Exp $	*/
+/*	$NetBSD: at91spi.c,v 1.5 2019/12/27 09:41:49 msaitoh Exp $	*/
 
 /*-
  * Copyright (c) 2007 Embedtronics Oy. All rights reserved.
@@ -46,7 +46,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: at91spi.c,v 1.3 2011/07/01 19:31:17 dyoung Exp $");
+__KERNEL_RCSID(0, "$NetBSD: at91spi.c,v 1.5 2019/12/27 09:41:49 msaitoh Exp $");
 
 #include "locators.h"
 
@@ -155,6 +155,7 @@ at91spi_attach_common(device_t parent, device_t self, void *aux,
 		aprint_error("%s: no slaves!\n", device_xname(sc->sc_dev));
 	}
 
+	memset(&sba, 0, sizeof(sba));
 	sba.sba_controller = &sc->sc_spi;
 
 	/* initialize the queue */
@@ -284,7 +285,7 @@ at91spi_xfer(struct at91spi_softc *sc, int start)
 	DPRINTFN(3, ("%s: sr=%"PRIX32"\n", __FUNCTION__, sr));
 
 	if (!start) {
-		// ok, something has been transfered, synchronize..
+		// ok, something has been transferred, synchronize..
 		int offs = sc->sc_dmaoffs ^ HALF_BUF_SIZE;
 		bus_dmamap_sync(sc->sc_dmat, sc->sc_dmamap, offs, HALF_BUF_SIZE,
 				BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);

@@ -1,4 +1,4 @@
-/*	$NetBSD: rtwnreg.h,v 1.1 2018/06/29 04:02:10 thorpej Exp $	*/
+/*	$NetBSD: rtwnreg.h,v 1.3 2020/04/16 17:18:27 nat Exp $	*/
 /*	$OpenBSD: r92creg.h,v 1.16 2017/09/22 13:41:56 kevlo Exp $	*/
 
 /*-
@@ -1031,7 +1031,8 @@
 
 /* Macros to access unaligned little-endian memory. */
 #define LE_READ_2(x)	((x)[0] | ((x)[1] << 8))
-#define LE_READ_4(x)	((x)[0] | ((x)[1] << 8) | ((x)[2] << 16) | ((x)[3] << 24))
+#define LE_READ_4(x)	((x)[0] | ((x)[1] << 8) | ((x)[2] << 16) | \
+	    ((uint32_t)((x)[3]) << 24))
 
 /*
  * Macros to access subfields in registers.
@@ -1340,6 +1341,8 @@ struct r92c_rx_desc_usb {
 
 #define R92C_RXDW2_PKTCNT_M	0x00ff0000
 #define R92C_RXDW2_PKTCNT_S	16
+#define R92E_RXDW2_PKTCNT_M	0x3fc00000
+#define R92E_RXDW2_PKTCNT_S	22
 
 #define R92C_RXDW3_RATE_M	0x0000003f
 #define R92C_RXDW3_RATE_S	0

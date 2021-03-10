@@ -1,16 +1,10 @@
-#	$NetBSD: bsd.lib.mk,v 1.379 2019/01/21 21:11:54 christos Exp $
+#	$NetBSD: bsd.lib.mk,v 1.384 2020/11/09 16:15:05 christos Exp $
 #	@(#)bsd.lib.mk	8.3 (Berkeley) 4/22/94
 
 .include <bsd.init.mk>
 .include <bsd.shlib.mk>
 .include <bsd.gcc.mk>
-
-# Rename the local function definitions to not conflict with libc/rt/pthread/m.
-.if ${MKSANITIZER:Uno} == "yes" && defined(SANITIZER_RENAME_SYMBOL)
-.	for _symbol in ${SANITIZER_RENAME_SYMBOL}
-CPPFLAGS+=	-D${_symbol}=__mksanitizer_${_symbol}
-.	endfor
-.endif
+.include <bsd.sanitizer.mk>
 
 # Pull in <bsd.sys.mk> here so we can override its .c.o rule
 .include <bsd.sys.mk>
@@ -36,7 +30,7 @@ MKLINT:=	no
 MKPICINSTALL:=	no
 . if defined(NOSTATICLIB) && ${MKPICLIB} != "no"
 MKSTATICLIB:=	no
-. else
+. elif ${LIBISPRIVATE} != "pic"
 MKPIC:=		no
 . endif
 MKPROFILE:=	no
@@ -124,6 +118,7 @@ print-shlib-teeny:
 	@false
 .endif
 
+.if ${LIBISPRIVATE} == "no"
 .if defined(SHLIB_MAJOR) && !empty(SHLIB_MAJOR)				# {
 .if defined(SHLIB_MINOR) && !empty(SHLIB_MINOR)
 .if defined(SHLIB_TEENY) && !empty(SHLIB_TEENY)
@@ -135,6 +130,7 @@ SHLIB_FULLVERSION=${SHLIB_MAJOR}.${SHLIB_MINOR}
 SHLIB_FULLVERSION=${SHLIB_MAJOR}
 .endif
 .endif									# }
+.endif
 
 # add additional suffixes not exported.
 # .po is used for profiling object files.
@@ -176,7 +172,7 @@ MKSHLIBOBJS= no
 # We only add -g to the shared library objects
 # because we don't currently split .a archives.
 CSHLIBFLAGS+=	-g
-.if ${LIBISPRIVATE} == "yes"
+.if ${LIBISPRIVATE} != "no"
 CFLAGS+=	-g
 .endif
 .endif
@@ -225,20 +221,16 @@ LIBSTRIPSHLIBOBJS=	yes
 
 .c.o:
 	${_MKTARGET_COMPILE}
-	${COMPILE.c} ${COPTS.${.IMPSRC:T}} ${CPUFLAGS.${.IMPSRC:T}} ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} -o ${.TARGET}
-.if defined(CTFCONVERT)
-	${CTFCONVERT} ${CTFFLAGS} ${.TARGET}
-.endif
+	${COMPILE.c} ${COPTS.${.IMPSRC:T}} ${CPUFLAGS.${.IMPSRC:T}} ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} ${OBJECT_TARGET}
+	${CTFCONVERT_RUN}
 .if defined(LIBSTRIPCOBJS)
 	${OBJCOPY} ${OBJCOPYLIBFLAGS} ${.TARGET}
 .endif
 
 .c.po:
 	${_MKTARGET_COMPILE}
-	${COMPILE.c} ${PROFFLAGS} ${COPTS.${.IMPSRC:T}} ${CPUFLAGS.${.IMPSRC:T}} ${CPPFLAGS.${.IMPSRC:T}} ${PGFLAGS} ${.IMPSRC} -o ${.TARGET}
-.if defined(CTFCONVERT)
-	${CTFCONVERT} ${CTFFLAGS} ${.TARGET}
-.endif
+	${COMPILE.c} ${PROFFLAGS} ${COPTS.${.IMPSRC:T}} ${CPUFLAGS.${.IMPSRC:T}} ${CPPFLAGS.${.IMPSRC:T}} ${PGFLAGS} ${.IMPSRC} ${OBJECT_TARGET}
+	${CTFCONVERT_RUN}
 .if defined(LIBSTRIPCOBJS)
 	${OBJCOPY} ${OBJCOPYLIBFLAGS} ${.TARGET}
 .endif
@@ -281,20 +273,16 @@ LIBSTRIPSHLIBOBJS=	yes
 
 .f.o:
 	${_MKTARGET_COMPILE}
-	${COMPILE.f} ${.IMPSRC} -o ${.TARGET}
-.if defined(CTFCONVERT)
-	${CTFCONVERT} ${CTFFLAGS} ${.TARGET}
-.endif
+	${COMPILE.f} ${.IMPSRC} ${OBJECT_TARGET}
+	${CTFCONVERT_RUN}
 .if defined(LIBSTRIPFOBJS)
 	${OBJCOPY} ${OBJCOPYLIBFLAGS} ${.TARGET}
 .endif
 
 .f.po:
 	${_MKTARGET_COMPILE}
-	${COMPILE.f} ${PROFFLAGS} ${PGFLAGS} ${.IMPSRC} -o ${.TARGET}
-.if defined(CTFCONVERT)
-	${CTFCONVERT} ${CTFFLAGS} ${.TARGET}
-.endif
+	${COMPILE.f} ${PROFFLAGS} ${PGFLAGS} ${.IMPSRC} ${OBJECT_TARGET}
+	${CTFCONVERT_RUN}
 .if defined(LIBSTRIPFOBJS)
 	${OBJCOPY} ${OBJCOPYLIBFLAGS} ${.TARGET}
 .endif
@@ -316,20 +304,16 @@ LIBSTRIPSHLIBOBJS=	yes
 
 .m.o:
 	${_MKTARGET_COMPILE}
-	${COMPILE.m} ${OBJCOPTS.${.IMPSRC:T}} ${.IMPSRC} -o ${.TARGET}
-.if defined(CTFCONVERT)
-	${CTFCONVERT} ${CTFFLAGS} ${.TARGET}
-.endif
+	${COMPILE.m} ${OBJCOPTS.${.IMPSRC:T}} ${.IMPSRC} ${OBJECT_TARGET}
+	${CTFCONVERT_RUN}
 .if defined(LIBSTRIPOBJCOBJS)
 	${OBJCOPY} ${OBJCOPYLIBFLAGS} ${.TARGET}
 .endif
 
 .m.po:
 	${_MKTARGET_COMPILE}
-	${COMPILE.m} ${PROFFLAGS} ${PGFLAGS} ${OBJCOPTS.${.IMPSRC:T}} ${.IMPSRC} -o ${.TARGET}
-.if defined(CTFCONVERT)
-	${CTFCONVERT} ${CTFFLAGS} ${.TARGET}
-.endif
+	${COMPILE.m} ${PROFFLAGS} ${PGFLAGS} ${OBJCOPTS.${.IMPSRC:T}} ${.IMPSRC} ${OBJECT_TARGET}
+	${CTFCONVERT_RUN}
 .if defined(LIBSTRIPOBJCOBJS)
 	${OBJCOPY} ${OBJCOPYLIBFLAGS} ${.TARGET}
 .endif
@@ -350,40 +334,32 @@ LIBSTRIPSHLIBOBJS=	yes
 
 .s.o:
 	${_MKTARGET_COMPILE}
-	${COMPILE.s} ${COPTS.${.IMPSRC:T}} ${CPUFLAGS.${.IMPSRC:T}} ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} -o ${.TARGET}
-.if defined(CTFCONVERT)
-	${CTFCONVERT} ${CTFFLAGS} ${.TARGET}
-.endif
+	${COMPILE.s} ${COPTS.${.IMPSRC:T}} ${CPUFLAGS.${.IMPSRC:T}} ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} ${OBJECT_TARGET}
+	${CTFCONVERT_RUN}
 .if defined(LIBSTRIPAOBJS)
 	${OBJCOPY} ${OBJCOPYLIBFLAGS} ${.TARGET}
 .endif
 
 .S.o:
 	${_MKTARGET_COMPILE}
-	${COMPILE.S} ${COPTS.${.IMPSRC:T}} ${CPUFLAGS.${.IMPSRC:T}} ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} -o ${.TARGET}
-.if defined(CTFCONVERT)
-	${CTFCONVERT} ${CTFFLAGS} ${.TARGET}
-.endif
+	${COMPILE.S} ${COPTS.${.IMPSRC:T}} ${CPUFLAGS.${.IMPSRC:T}} ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} ${OBJECT_TARGET}
+	${CTFCONVERT_RUN}
 .if defined(LIBSTRIPAOBJS)
 	${OBJCOPY} ${OBJCOPYLIBFLAGS} ${.TARGET}
 .endif
 
 .s.po:
 	${_MKTARGET_COMPILE}
-	${COMPILE.s} ${PROFFLAGS} ${COPTS.${.IMPSRC:T}} ${CPUFLAGS.${.IMPSRC:T}} ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} -o ${.TARGET}
-.if defined(CTFCONVERT)
-	${CTFCONVERT} ${CTFFLAGS} ${.TARGET}
-.endif
+	${COMPILE.s} ${PROFFLAGS} ${COPTS.${.IMPSRC:T}} ${CPUFLAGS.${.IMPSRC:T}} ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} ${OBJECT_TARGET}
+	${CTFCONVERT_RUN}
 .if defined(LIBSTRIPAOBJS)
 	${OBJCOPY} ${OBJCOPYLIBFLAGS} ${.TARGET}
 .endif
 
 .S.po:
 	${_MKTARGET_COMPILE}
-	${COMPILE.S} ${PROFFLAGS} ${COPTS.${.IMPSRC:T}} ${CPUFLAGS.${.IMPSRC:T}} ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} -o ${.TARGET}
-.if defined(CTFCONVERT)
-	${CTFCONVERT} ${CTFFLAGS} ${.TARGET}
-.endif
+	${COMPILE.S} ${PROFFLAGS} ${COPTS.${.IMPSRC:T}} ${CPUFLAGS.${.IMPSRC:T}} ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} ${OBJECT_TARGET}
+	${CTFCONVERT_RUN}
 .if defined(LIBSTRIPAOBJS)
 	${OBJCOPY} ${OBJCOPYLIBFLAGS} ${.TARGET}
 .endif
@@ -574,7 +550,7 @@ __archivesymlinkpic: .USE
 __buildstdlib: .USE
 	@echo building standard ${.TARGET:T:S/.o//:S/lib//} library
 	@rm -f ${.TARGET}
-	@${LINK.c:S/-nostdinc//} -nostdlib ${LDFLAGS} -r -o ${.TARGET} `NM=${NM} ${LORDER} ${.ALLSRC:M*o} | ${TSORT}`
+	@${LINK.c:S/-nostdinc//} -nostdlib ${LDFLAGS} -Wno-unused-command-line-argument -r -o ${.TARGET} `NM=${NM} ${LORDER} ${.ALLSRC:M*o} | ${TSORT}`
 .endif
 
 .if !target(__buildproflib)

@@ -1,4 +1,4 @@
-/*	$NetBSD: main.c,v 1.16 2019/06/12 06:20:17 martin Exp $	*/
+/*	$NetBSD: main.c,v 1.27 2021/01/31 22:45:46 rillig Exp $	*/
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -52,6 +52,45 @@
 #include "menu_defs.h"
 #include "txtwalk.h"
 
+int debug;
+char machine[SSTRSIZE];
+int ignorerror;
+int ttysig_ignore;
+pid_t ttysig_forward;
+uint sizemult;
+int partman_go;
+FILE *logfp;
+FILE *script;
+daddr_t root_limit;
+struct pm_head_t pm_head;
+struct pm_devs *pm;
+struct pm_devs *pm_new;
+char xfer_dir[STRSIZE];
+int  clean_xfer_dir;
+char ext_dir_bin[STRSIZE];
+char ext_dir_src[STRSIZE];
+char ext_dir_pkgsrc[STRSIZE];
+char set_dir_bin[STRSIZE];
+char set_dir_src[STRSIZE];
+char pkg_dir[STRSIZE];
+char pkgsrc_dir[STRSIZE];
+const char *ushell;
+struct ftpinfo ftp, pkg, pkgsrc;
+int (*fetch_fn)(const char *);
+char nfs_host[STRSIZE];
+char nfs_dir[STRSIZE];
+char cdrom_dev[SSTRSIZE];
+char fd_dev[SSTRSIZE];
+const char *fd_type;
+char localfs_dev[SSTRSIZE];
+char localfs_fs[SSTRSIZE];
+char localfs_dir[STRSIZE];
+char targetroot_mnt[SSTRSIZE];
+int  mnt2_mounted;
+char dist_postfix[SSTRSIZE];
+char dist_tgz_postfix[SSTRSIZE];
+WINDOW *mainwin;
+
 static void select_language(void);
 __dead static void usage(void);
 __dead static void miscsighandler(int);
@@ -87,7 +126,7 @@ struct f_arg {
 };
 
 static const struct f_arg fflagopts[] = {
-	{"release", REL, rel, sizeof rel},
+	{"release", REL, NULL, 0},
 	{"machine", MACH, machine, sizeof machine},
 	{"xfer dir", "/usr/INSTALL", xfer_dir, sizeof xfer_dir},
 	{"ext dir", "", ext_dir_bin, sizeof ext_dir_bin},
@@ -132,9 +171,8 @@ static void
 init(void)
 {
 	const struct f_arg *arg;
-	
+
 	sizemult = 1;
-	tmp_ramdisk_size = 0;
 	clean_xfer_dir = 0;
 	mnt2_mounted = 0;
 	fd_type = "msdos";
@@ -145,27 +183,26 @@ init(void)
 	memset(pm_new, 0, sizeof *pm_new);
 
 	for (arg = fflagopts; arg->name != NULL; arg++) {
+		if (arg->var == NULL)
+			continue;
 		if (arg->var == cdrom_dev)
 			get_default_cdrom(arg->var, arg->size);
 		else
 			strlcpy(arg->var, arg->dflt, arg->size);
 	}
 	pkg.xfer = pkgsrc.xfer = XFER_HTTP;
-	
+
 	clr_arg.bg=COLOR_BLUE;
 	clr_arg.fg=COLOR_WHITE;
 }
 
 static void
 init_lang(void)
-{	
+{
 	sizemult = 1;
 	err_outofmem = msg_string(MSG_out_of_memory);
 	multname = msg_string(MSG_secname);
 }
-
-__weakref_visible void prelim_menu(void)
-    __weak_reference(md_prelim_menu);
 
 int
 main(int argc, char **argv)
@@ -196,8 +233,7 @@ main(int argc, char **argv)
 			debug = 1;
 			break;
 		case 'r':
-			/* Release name other than compiled in release. */
-			strncpy(rel, optarg, sizeof rel);
+			/* Release name - ignore for compatibility with older versions */
 			break;
 		case 'f':
 			/* Definition file to read. */
@@ -258,17 +294,11 @@ main(int argc, char **argv)
 	refresh();
 
 	/* Ensure we have mountpoint for target filesystems */
-	mkdir(targetroot_mnt, S_IRWXU| S_IRGRP|S_IXGRP | S_IROTH|S_IXOTH);
+	mkdir(targetroot_mnt, S_IRWXU | S_IRGRP|S_IXGRP | S_IROTH|S_IXOTH);
 
 	select_language();
 	get_kb_encoding();
 	init_lang();
-
-#ifdef __weak_reference
-	/* if md wants to ask anything before we start, do it now */
-	if (prelim_menu != 0)
-		prelim_menu();
-#endif
 
 	/* Menu processing */
 	if (partman_go)
@@ -280,6 +310,8 @@ main(int argc, char **argv)
 	/* clean up internal storage */
 	pm_destroy_all();
 #endif
+
+	partitions_cleanup();
 
 	exit_cleanly = 1;
 	return 0;
@@ -368,8 +400,6 @@ select_language(void)
 
 	for (lang = 0; lang < num_lang; lang++) {
 		opt[lang].opt_name = lang_msg[lang];
-		opt[lang].opt_exp_name = NULL;
-		opt[lang].opt_menu = OPT_NOMENU;
 		opt[lang].opt_action = set_language;
 	}
 
@@ -420,6 +450,7 @@ toplevel(void)
 		if (chdir(home) != 0)
 			(void)chdir("/");
 	unwind_mounts();
+	clear_swap();
 
 	/* Display banner message in (english, francais, deutsch..) */
 	msg_display(MSG_hello);
@@ -479,7 +510,7 @@ ttysighandler(int signo)
 	 * This functionality is used when setting up and displaying child
 	 * output so that the child gets the signal and presumably dies,
 	 * but sysinst continues.  We use this rather than actually ignoring
-	 * the signals, because that will be be passed on to a child
+	 * the signals, because that will be passed on to a child
 	 * through fork/exec, whereas special handlers get reset on exec..
 	 */
 	if (ttysig_ignore)
@@ -510,6 +541,7 @@ cleanup(void)
 	chdir(getenv("HOME"));
 	unwind_mounts();
 	umount_mnt2();
+	clear_swap();
 
 	endwin();
 
@@ -560,6 +592,8 @@ process_f_flag(char *f_name)
 		for (arg = fflagopts; arg->name != NULL; arg++) {
 			len = strlen(arg->name);
 			if (memcmp(cp, arg->name, len) != 0)
+				continue;
+			if (arg->var == NULL || arg->size == 0)
 				continue;
 			cp1 = cp + len;
 			cp1 += strspn(cp1, " \t");

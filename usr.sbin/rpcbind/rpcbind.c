@@ -1,4 +1,4 @@
-/*	$NetBSD: rpcbind.c,v 1.28 2019/05/13 14:29:41 christos Exp $	*/
+/*	$NetBSD: rpcbind.c,v 1.30 2021/03/07 00:23:06 christos Exp $	*/
 
 /*-
  * Copyright (c) 2009, Sun Microsystems, Inc.
@@ -78,6 +78,7 @@ static	char sccsid[] = "@(#)rpcbind.c 1.35 89/04/21 Copyr 1984 Sun Micro";
 #include <semaphore.h>
 
 #include <rump/rump.h>
+#include <rump/rump_syscallshotgun.h>
 #include <rump/rump_syscalls.h>
 
 #include "svc_fdset.h"
@@ -301,14 +302,14 @@ init_transport(struct netconfig *nconf)
 		return 1;	/* not my type */
 #ifdef RPCBIND_DEBUG
 	if (debugging) {
-		int i;
+		unsigned int i;
 		char **s;
 
 		(void)fprintf(stderr, "%s: %ld lookup routines :\n",
 		    nconf->nc_netid, nconf->nc_nlookups);
 		for (i = 0, s = nconf->nc_lookups; i < nconf->nc_nlookups;
 		     i++, s++)
-			(void)fprintf(stderr, "[%d] - %s\n", i, *s);
+			(void)fprintf(stderr, "[%u] - %s\n", i, *s);
 	}
 #endif
 
@@ -898,7 +899,7 @@ parseargs(int argc, char *argv[])
 			break;		/* errors; for rpcbind developers */
 					/* only! */
 		case 'd':
-			debugging = 1;
+			debugging++;
 			break;
 		case 'h':
 			++nhosts;

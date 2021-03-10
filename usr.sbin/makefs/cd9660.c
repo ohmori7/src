@@ -1,4 +1,4 @@
-/*	$NetBSD: cd9660.c,v 1.55 2017/03/15 15:33:54 christos Exp $	*/
+/*	$NetBSD: cd9660.c,v 1.57 2020/11/10 20:48:29 reinoud Exp $	*/
 
 /*
  * Copyright (c) 2005 Daniel Watt, Walter Deignan, Ryan Gabrys, Alan
@@ -103,7 +103,7 @@
 
 #include <sys/cdefs.h>
 #if defined(__RCSID) && !defined(__lint)
-__RCSID("$NetBSD: cd9660.c,v 1.55 2017/03/15 15:33:54 christos Exp $");
+__RCSID("$NetBSD: cd9660.c,v 1.57 2020/11/10 20:48:29 reinoud Exp $");
 #endif  /* !__lint */
 
 #include <string.h>
@@ -178,7 +178,7 @@ static int  cd9660_add_generic_bootimage(iso9660_disk *, const char *);
 
 
 /*
- * Allocate and initalize a cd9660node
+ * Allocate and initialize a cd9660node
  * @returns struct cd9660node * Pointer to new node, or NULL on error
  */
 static cd9660node *
@@ -1295,7 +1295,7 @@ cd9660_rrip_move_directory(iso9660_disk *diskStructure, cd9660node *dir)
 		return NULL;
 
 	diskStructure->rock_ridge_move_count++;
-	snprintf(newname, sizeof(newname), "%08i",
+	snprintf(newname, sizeof(newname), "%08u",
 	    diskStructure->rock_ridge_move_count);
 
 	/* Point to old parent */

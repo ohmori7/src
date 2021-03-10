@@ -1,4 +1,4 @@
-/*	$NetBSD: if_mvgbe.c,v 1.57 2019/05/28 07:41:49 msaitoh Exp $	*/
+/*	$NetBSD: if_mvgbe.c,v 1.59 2020/02/03 07:47:53 skrll Exp $	*/
 /*
  * Copyright (c) 2007, 2008, 2013 KIYOHARA Takashi
  * All rights reserved.
@@ -25,7 +25,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_mvgbe.c,v 1.57 2019/05/28 07:41:49 msaitoh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_mvgbe.c,v 1.59 2020/02/03 07:47:53 skrll Exp $");
 
 #include "opt_multiprocessor.h"
 
@@ -234,7 +234,7 @@ struct mvgbe_softc {
 	struct mvgbe_chain_data sc_cdata;
 	struct mvgbe_ring_data *sc_rdata;
 	bus_dmamap_t sc_ring_map;
-	int sc_if_flags;
+	u_short sc_if_flags;
 	unsigned int sc_ipginttx;
 	unsigned int sc_ipgintrx;
 	int sc_wdogsoft;
@@ -1455,7 +1455,7 @@ mvgbe_watchdog(struct ifnet *ifp)
 		} else {
 			aprint_error_ifnet(ifp, "watchdog timeout\n");
 
-			ifp->if_oerrors++;
+			if_statinc(ifp, if_oerrors);
 
 			mvgbe_init(ifp);
 		}
@@ -1467,7 +1467,7 @@ mvgbe_ifflags_cb(struct ethercom *ec)
 {
 	struct ifnet *ifp = &ec->ec_if;
 	struct mvgbe_softc *sc = ifp->if_softc;
-	int change = ifp->if_flags ^ sc->sc_if_flags;
+	u_short change = ifp->if_flags ^ sc->sc_if_flags;
 
 	if (change != 0)
 		sc->sc_if_flags = ifp->if_flags;
@@ -1998,15 +1998,15 @@ mvgbe_rxeof(struct mvgbe_softc *sc)
 			int err = rxstat & MVGBE_RX_ERROR_CODE_MASK;
 
 			if (err == MVGBE_RX_CRC_ERROR)
-				ifp->if_ierrors++;
+				if_statinc(ifp, if_ierrors);
 			if (err == MVGBE_RX_OVERRUN_ERROR)
-				ifp->if_ierrors++;
+				if_statinc(ifp, if_ierrors);
 			if (err == MVGBE_RX_MAX_FRAME_LEN_ERROR)
-				ifp->if_ierrors++;
+				if_statinc(ifp, if_ierrors);
 			if (err == MVGBE_RX_RESOURCE_ERROR)
-				ifp->if_ierrors++;
+				if_statinc(ifp, if_ierrors);
 #else
-			ifp->if_ierrors++;
+			if_statinc(ifp, if_ierrors);
 #endif
 			mvgbe_newbuf(sc, cur, m, dmamap);
 			continue;
@@ -2059,7 +2059,7 @@ mvgbe_rxeof(struct mvgbe_softc *sc)
 				aprint_error_ifnet(ifp,
 				    "no receive buffers available --"
 				    " packet dropped!\n");
-				ifp->if_ierrors++;
+				if_statinc(ifp, if_ierrors);
 				continue;
 			}
 			m = m0;
@@ -2107,16 +2107,16 @@ mvgbe_txeof(struct mvgbe_softc *sc)
 			break;
 		}
 		if (cur_tx->cmdsts & MVGBE_TX_LAST_DESC)
-			ifp->if_opackets++;
+			if_statinc(ifp, if_opackets);
 		if (cur_tx->cmdsts & MVGBE_ERROR_SUMMARY) {
 			int err = cur_tx->cmdsts & MVGBE_TX_ERROR_CODE_MASK;
 
 			if (err == MVGBE_TX_LATE_COLLISION_ERROR)
-				ifp->if_collisions++;
+				if_statinc(ifp, if_collisions);
 			if (err == MVGBE_TX_UNDERRUN_ERROR)
-				ifp->if_oerrors++;
+				if_statinc(ifp, if_oerrors);
 			if (err == MVGBE_TX_EXCESSIVE_COLLISION_ERRO)
-				ifp->if_collisions++;
+				if_statinc(ifp, if_collisions);
 		}
 		if (cdata->mvgbe_tx_chain[idx].mvgbe_mbuf != NULL) {
 			entry = cdata->mvgbe_tx_map[idx];

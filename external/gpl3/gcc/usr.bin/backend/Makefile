@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.55 2019/02/09 21:03:24 maya Exp $
+#	$NetBSD: Makefile,v 1.63 2020/09/15 05:19:34 mrg Exp $
 
 LIBISPRIVATE=	yes
 
@@ -71,7 +71,8 @@ COPTS.varasm.c=			-Wno-error
 
 # Headers that host objects depend on (except gen*rtl*)
 HH_NORTL=	${G_tm_file_list} ${G_build_xm_include_list}
-HH=		${HH_NORTL} genrtl.h insn-modes.h
+HH=		${HH_NORTL} genrtl.h insn-modes.h insn-modes-inline.h \
+		gensupport.h read-md.h optabs.def
 
 #
 # Generate the various header files we need.
@@ -161,12 +162,15 @@ insn-modes.h-test: genmodes
 min-insn-modes.c: genmodes
 	${_MKTARGET_CREATE}
 	./genmodes -m >${.TARGET}
+insn-modes-inline.h: genmodes
+	${_MKTARGET_CREATE}
+	./genmodes -i >${.TARGET}
 genmodes.lo: ${HH_NORTL}
 genmodes: genmodes.lo build-errors.lo
 	${_MKTARGET_LINK}
 	${HOST_LINK.cc} -o ${.TARGET} ${.ALLSRC} ${NBCOMPATLIB} ${HOSTLIBIBERTY}
 
-CLEANFILES+=	genmodes insn-modes.c insn-modes.h-test min-insn-modes.c
+CLEANFILES+=	genmodes insn-modes.c insn-modes.h-test min-insn-modes.c insn-modes-inline.h
 
 gimple-match.c: genmatch cfn-operators.pd
 	./genmatch --gimple ${GNUHOSTDIST}/gcc/match.pd > gimple-match.c.tmp
@@ -174,8 +178,8 @@ gimple-match.c: genmatch cfn-operators.pd
 generic-match.c: genmatch cfn-operators.pd
 	./genmatch --generic ${GNUHOSTDIST}/gcc/match.pd > generic-match.c.tmp
 	mv generic-match.c.tmp generic-match.c
-genmatch.lo: ${HH_NORTL} ${G_GGC_H}
-genmatch: genmatch.lo build-errors.lo build-vec.lo build-hash-table.lo
+genmatch.lo: ${HH_NORTL} ${G_GGC_H} case-cfn-macros.h
+genmatch: genmatch.lo build-errors.lo build-vec.lo build-hash-table.lo build-sort.lo
 	${_MKTARGET_LINK}
 	${HOST_LINK.cc} -o ${.TARGET} ${.ALLSRC} ${NBCOMPATLIB} ${HOSTLIBCPP} ${HOSTLIBIBERTY}
 
@@ -257,7 +261,7 @@ build-print-rtl.c: print-rtl.c \
 		${GNUHOSTDIST}/gcc/print-rtl.c >${.TARGET}
 build-print-rtl.lo: ${HH}
 build-print-rtl.o: print-rtl.c $(BCONFIG_H) $(SYSTEM_H) coretypes.h     \
-  $(GTM_H) $(RTL_BASE_H)
+  ${GTM_H} ${G_RTL_BASE_H}
 CLEANFILES+=	build-print-rtl.c
 
 build-bitmap.c: bitmap.c \
@@ -294,26 +298,33 @@ build-ggc-none.c: ggc-none.c \
 build-ggc-none.lo: ${HH}
 CLEANFILES+=	build-ggc-none.c
 
-build-hash-table.c: hash-table.c hash-table.h ${G_GGC_H}
+build-hash-table.c: hash-table.c hash-table.h ${G_HASH_TABLE_H} ${HH}
 	${_MKTARGET_CREATE}
 	rm -f build-hash-table.c
 	cat ${GNUHOSTDIST}/gcc/hash-table.c >${.TARGET}
 build-hash-table.lo: ${HH_NORTL}
 CLEANFILES+=	build-hash-table.c
 
-build-vec.c: vec.c vec.h ${G_GGC_H}
+build-vec.c: vec.c vec.h ${G_HASH_TABLE_H} ${HH}
 	${_MKTARGET_CREATE}
 	rm -f build-vec.c
 	cat ${GNUHOSTDIST}/gcc/vec.c >${.TARGET}
 build-vec.lo: ${HH_NORTL}
 CLEANFILES+=	build-vec.c
 
+build-sort.cc: sort.cc sort.h ${G_GGC_H}
+	${_MKTARGET_CREATE}
+	rm -f build-sort.cc
+	cat ${GNUHOSTDIST}/gcc/sort.cc >${.TARGET}
+build-sort.lo: ${HH_NORTL}
+CLEANFILES+=	build-sort.cc
+
 build-genattrtab.o: ${G_GGC_H}
 
 #
 # The normal insn-foo generators
 #
-.for f in gensupport.c read-rtl.c dummy-conditions.c
+.for f in gensupport.c read-rtl.c dummy-conditions.c read-md.c
 ${f:R}.lo: ${HH}
 .endfor
 
@@ -333,10 +344,10 @@ GENPROG_RTL_DEPENDS=	${G_BUILD_RTL:.o=.lo} ${GENPROG_READER_DEPENDS} ${GENPROG_E
 .for f in attr attr-common attrtab automata codes conditions config emit \
 	  extract flags opinit output peep preds recog mddump condmd \
 	  target-def cfn-macros
-gen${f}.lo: ${HH} gen${f}.c ${G_RTL_BASE_H}
+gen${f}.lo: ${HH} gen${f}.c ${G_RTL_BASE_H} build-sort.lo
 gen${f}: gen${f}.lo ${GENPROG_RTL_DEPENDS} 
 	${_MKTARGET_LINK}
-	${HOST_LINK.cc} -o ${.TARGET} ${.ALLSRC} ${NBCOMPATLIB} ${HOSTLIBIBERTY} ${LDFLAGS.${.TARGET}}
+	${HOST_LINK.cc} -o ${.TARGET} ${.ALLSRC} ${NBCOMPATLIB} ${HOSTLIBIBERTY} ${LDFLAGS.${.TARGET}} build-sort.lo
 CLEANFILES+=	gen${f} gen${f}.lo
 .endfor
 
@@ -488,6 +499,8 @@ pass_manager.h passes.c: pass-instances.def
 context.d coverage.d lto-cgraph.d passes.d statistics.d toplev.d cgraphunit.d: pass_manager.h
 context.o coverage.o lto-cgraph.o passes.o statistics.o toplev.o cgraphunit.o: pass_manager.h
 insn-opinit.o insn-opinit.d: insn-flags.h
+gensupport.o: ${G_HASH_TABLE_H}
+vec.o: ${G_HASH_TABLE_H}
 .for _f in insn-attrtab insn-automata insn-dfatab insn-latencytab insn-output
 ${_f}.o ${_f}.d: insn-attr-common.h insn-attr.h
 .endfor
@@ -531,14 +544,17 @@ COPTS.builtins.c+=-O0
 COPTS.calls.c+=-O0
 COPTS.convert.c+=-O0
 COPTS.data-streamer-out.c+=-O0
-COPTS.dwarf2out.c+=-O0
 COPTS.dse.c+=-O0					# XXX port-vax/51967
+COPTS.dwarf2out.c+=-O0
 COPTS.expmed.c+=-O0
 COPTS.expr.c+=-O0 -Wno-error=tautological-compare
 COPTS.fixed-value.c+=-O0
 COPTS.fold-const.c+=-O0
+COPTS.generic-match.c+=-O0
 COPTS.gimple-fold.c+=-O0
+COPTS.gimple-match.c+=-O0
 COPTS.gimple-ssa-strength-reduction.c+=-O0
+COPTS.gimple-ssa-warn-restrict.c+=-O0
 COPTS.gimple.c+=-O0
 COPTS.internal-fn.c+=-O0
 COPTS.lto-streamer-out.c+=-O0
@@ -551,13 +567,13 @@ COPTS.stor-layout.c+=-O0
 COPTS.targhooks.c+=-O0
 COPTS.tree-affine.c+=-O0
 COPTS.tree-cfg.c+=-O0
+COPTS.tree-data-ref.c+=-O0
 COPTS.tree-eh.c+=-O0
 COPTS.tree-if-conv.c+=-O0
 COPTS.tree-object-size.c+=-O0
 COPTS.tree-parloops.c+=-O0
 COPTS.tree-predcom.c+=-O0
 COPTS.tree-pretty-print.c+=-O0
-COPTS.tree-ssa.c+=-O0
 COPTS.tree-ssa-alias.c+=-O0
 COPTS.tree-ssa-ccp.c+=-O0
 COPTS.tree-ssa-forwprop.c+=-O0
@@ -565,26 +581,33 @@ COPTS.tree-ssa-loop-ivopts.c+=-O0
 COPTS.tree-ssa-loop-manip.c+=-O0
 COPTS.tree-ssa-loop-niter.c+=-O0
 COPTS.tree-ssa-math-opts.c+=-O0
+COPTS.tree-ssa-phiopt.c+= -O0
 COPTS.tree-ssa-pre.c+=-O0
 COPTS.tree-ssa-reassoc.c+=-O0
+COPTS.tree-ssa-strlen.c+=-O0
 COPTS.tree-ssa-uninit.c+=-O0
+COPTS.tree-ssa.c+=-O0
 COPTS.tree-switch-conversion.c+=-O0
 COPTS.tree-vect-data-refs.c+=-O0
-COPTS.tree-vect-loop.c+=-O0
 COPTS.tree-vect-loop-manip.c+=-O0
+COPTS.tree-vect-loop.c+=-O0
 COPTS.tree-vect-patterns.c+=-O0
 COPTS.tree-vect-stmts.c+=-O0
 COPTS.tree-vrp.c+=-O0
 COPTS.tree.c+=-O0
 COPTS.ubsan.c+=-O0
-COPTS.web.c+=-O0
 COPTS.varasm.c+=-O0
+COPTS.vr-values.c+=-O0
+COPTS.web.c+=-O0
 COPTS.wide-int.cc+=-O0
+COPTS.wide-int-range.cc+=-O0
 .else
 COPTS.tree.c=	${${ACTIVE_CC} == "clang" :? -O0 :}
 .endif
 
 CFLAGS+=	-Wno-stack-protector
+
+COPTS.dwarf2out.c+=-Wno-error=maybe-uninitialized
 
 .if ${GCC_MACHINE_ARCH} == "m68000" || ${GCC_MACHINE_ARCH} == "m68k" || \
 	${GCC_MACHINE_ARCH} == "coldfire"
@@ -601,6 +624,6 @@ CFLAGS+= -fno-exceptions -fno-rtti -fasynchronous-unwind-tables
 
 .PATH: ${DIST}/gcc ${DIST}/libiberty ${GCCARCH} ${G_out_file:H} ${DIST}/include
 .PATH: ${DIST}/gcc/config
-.if ${MACHINE_ARCH} == "aarch64"
+.if ${MACHINE_CPU} == "aarch64"
 .PATH: ${DIST}/gcc/config/arm
 .endif

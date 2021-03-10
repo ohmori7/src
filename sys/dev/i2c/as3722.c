@@ -1,4 +1,4 @@
-/* $NetBSD: as3722.c,v 1.15 2018/06/26 06:03:57 thorpej Exp $ */
+/* $NetBSD: as3722.c,v 1.22 2021/01/27 02:29:48 thorpej Exp $ */
 
 /*-
  * Copyright (c) 2015 Jared D. McNeill <jmcneill@invisible.ca>
@@ -29,7 +29,7 @@
 #include "opt_fdt.h"
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: as3722.c,v 1.15 2018/06/26 06:03:57 thorpej Exp $");
+__KERNEL_RCSID(0, "$NetBSD: as3722.c,v 1.22 2021/01/27 02:29:48 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -223,8 +223,8 @@ CFATTACH_DECL_NEW(as3722reg, sizeof(struct as3722reg_softc),
 #endif
 
 static const struct device_compatible_entry compat_data[] = {
-	{ "ams,as3722",			0 },
-	{ NULL,				0 }
+	{ .compat = "ams,as3722" },
+	DEVICE_COMPAT_EOL
 };
 
 static int
@@ -240,11 +240,11 @@ as3722_match(device_t parent, cfdata_t match, void *aux)
 	if (ia->ia_addr != AS3722_I2C_ADDR)
 		return 0;
 	
-	iic_acquire_bus(ia->ia_tag, I2C_F_POLL);
+	iic_acquire_bus(ia->ia_tag, 0);
 	reg = AS3722_ASIC_ID1_REG;
 	error = iic_exec(ia->ia_tag, I2C_OP_READ_WITH_STOP, ia->ia_addr,
-	    &reg, 1, &id1, 1, I2C_F_POLL);
-	iic_release_bus(ia->ia_tag, I2C_F_POLL);
+	    &reg, 1, &id1, 1, 0);
+	iic_release_bus(ia->ia_tag, 0);
 
 	if (error == 0 && id1 == 0x0c)
 		return I2C_MATCH_ADDRESS_AND_PROBE;
@@ -281,16 +281,16 @@ as3722_wdt_attach(struct as3722_softc *sc)
 {
 	int error;
 
-	iic_acquire_bus(sc->sc_i2c, I2C_F_POLL);
+	iic_acquire_bus(sc->sc_i2c, 0);
 	error = as3722_write(sc, AS3722_GPIO0_CTRL_REG,
 	    __SHIFTIN(AS3722_GPIO0_CTRL_IOSF_GPIO,
 		      AS3722_GPIO0_CTRL_IOSF) |
 	    __SHIFTIN(AS3722_GPIO0_CTRL_MODE_PULLDOWN,
 		      AS3722_GPIO0_CTRL_MODE),
-	    I2C_F_POLL);
+	    0);
 	error += as3722_set_clear(sc, AS3722_WATCHDOG_CTRL_REG,
-	    __SHIFTIN(1, AS3722_WATCHDOG_CTRL_MODE), 0, I2C_F_POLL);
-	iic_release_bus(sc->sc_i2c, I2C_F_POLL);
+	    __SHIFTIN(1, AS3722_WATCHDOG_CTRL_MODE), 0, 0);
+	iic_release_bus(sc->sc_i2c, 0);
 
 	if (error) {
 		aprint_error_dev(sc->sc_dev, "couldn't setup watchdog\n");
@@ -315,10 +315,10 @@ as3722_rtc_attach(struct as3722_softc *sc)
 {
 	int error;
 
-	iic_acquire_bus(sc->sc_i2c, I2C_F_POLL);
+	iic_acquire_bus(sc->sc_i2c, 0);
 	error = as3722_set_clear(sc, AS3722_RTC_CONTROL_REG,
-	    AS3722_RTC_CONTROL_RTC_ON, 0, I2C_F_POLL);
-	iic_release_bus(sc->sc_i2c, I2C_F_POLL);
+	    AS3722_RTC_CONTROL_RTC_ON, 0, 0);
+	iic_release_bus(sc->sc_i2c, 0);
 
 	if (error) {
 		aprint_error_dev(sc->sc_dev, "couldn't setup RTC\n");
@@ -372,7 +372,7 @@ as3722_wdt_setmode(struct sysmon_wdog *smw)
 	struct as3722_softc * const sc = smw->smw_cookie;
 	int error;
 
-	const int flags = (cold ? I2C_F_POLL : 0);
+	const int flags = 0;
 
 	if ((smw->smw_mode & WDOG_MODE_MASK) == WDOG_MODE_DISARMED) {
 		iic_acquire_bus(sc->sc_i2c, flags);
@@ -409,7 +409,7 @@ as3722_wdt_tickle(struct sysmon_wdog *smw)
 	struct as3722_softc * const sc = smw->smw_cookie;
 	int error;
 
-	const int flags = (cold ? I2C_F_POLL : 0);
+	const int flags = 0;
 
 	iic_acquire_bus(sc->sc_i2c, flags);
 	error = as3722_set_clear(sc, AS3722_WATCHDOG_SIGNAL_REG,
@@ -426,7 +426,7 @@ as3722_rtc_gettime(todr_chip_handle_t tch, struct clock_ymdhms *dt)
 	uint8_t buf[6];
 	int error = 0;
 
-	const int flags = (cold ? I2C_F_POLL : 0);
+	const int flags = 0;
 
 	iic_acquire_bus(sc->sc_i2c, flags);
 	error += as3722_read(sc, AS3722_RTC_SECOND_REG, &buf[0], flags);
@@ -468,7 +468,7 @@ as3722_rtc_settime(todr_chip_handle_t tch, struct clock_ymdhms *dt)
 	buf[4] = bintobcd(dt->dt_mon + 1) & 0x1f;
 	buf[5] = bintobcd(dt->dt_year - AS3722_START_YEAR) & 0x7f;
 
-	const int flags = (cold ? I2C_F_POLL : 0);
+	const int flags = 0;
 
 	iic_acquire_bus(sc->sc_i2c, flags);
 	error += as3722_write(sc, AS3722_RTC_SECOND_REG, buf[0], flags);
@@ -489,7 +489,7 @@ as3722_regulator_attach(struct as3722_softc *sc)
 	struct as3722reg_attach_args raa;
 	int phandle, child;
 	int error;
-	const int flags = (cold ? I2C_F_POLL : 0);
+	const int flags = 0;
 	uint8_t tmp;
 
 	iic_acquire_bus(sc->sc_i2c, flags);
@@ -572,7 +572,7 @@ as3722reg_enable(device_t dev, bool enable)
 	struct as3722reg_softc *sc = device_private(dev);
 	struct as3722_softc *asc = device_private(device_parent(dev));
 	const struct as3722regdef *regdef = sc->sc_regdef;
-	const int flags = (cold ? I2C_F_POLL : 0);
+	const int flags = 0;
 	int error;
 
 	if (!regdef->enable_mask)
@@ -596,7 +596,7 @@ as3722reg_set_voltage_ldo(device_t dev, u_int min_uvol, u_int max_uvol)
 	struct as3722reg_softc *sc = device_private(dev);
 	struct as3722_softc *asc = device_private(device_parent(dev));
 	const struct as3722regdef *regdef = sc->sc_regdef;
-	const int flags = (cold ? I2C_F_POLL : 0);
+	const int flags = 0;
 	uint8_t set_v = 0x00;
 	u_int uvol;
 	int error;
@@ -633,7 +633,7 @@ as3722reg_get_voltage_ldo(device_t dev, u_int *puvol)
 	struct as3722reg_softc *sc = device_private(dev);
 	struct as3722_softc *asc = device_private(device_parent(dev));
 	const struct as3722regdef *regdef = sc->sc_regdef;
-	const int flags = (cold ? I2C_F_POLL : 0);
+	const int flags = 0;
 	uint8_t v;
 	int error;
 
@@ -663,7 +663,7 @@ as3722reg_set_voltage_sd0(device_t dev, u_int min_uvol, u_int max_uvol)
 	struct as3722reg_softc *sc = device_private(dev);
 	struct as3722_softc *asc = device_private(device_parent(dev));
 	const struct as3722regdef *regdef = sc->sc_regdef;
-	const int flags = (cold ? I2C_F_POLL : 0);
+	const int flags = 0;
 	uint8_t set_v = 0x00;
 	u_int uvol;
 	int error;
@@ -703,7 +703,7 @@ as3722reg_get_voltage_sd0(device_t dev, u_int *puvol)
 	struct as3722reg_softc *sc = device_private(dev);
 	struct as3722_softc *asc = device_private(device_parent(dev));
 	const struct as3722regdef *regdef = sc->sc_regdef;
-	const int flags = (cold ? I2C_F_POLL : 0);
+	const int flags = 0;
 	uint8_t v;
 	int error;
 
@@ -740,7 +740,7 @@ as3722reg_set_voltage_sd4(device_t dev, u_int min_uvol, u_int max_uvol)
 	struct as3722reg_softc *sc = device_private(dev);
 	struct as3722_softc *asc = device_private(device_parent(dev));
 	const struct as3722regdef *regdef = sc->sc_regdef;
-	const int flags = (cold ? I2C_F_POLL : 0);
+	const int flags = 0;
 	uint8_t set_v = 0x00;
 	u_int uvol;
 	int error;
@@ -785,7 +785,7 @@ as3722reg_get_voltage_sd4(device_t dev, u_int *puvol)
 	struct as3722reg_softc *sc = device_private(dev);
 	struct as3722_softc *asc = device_private(device_parent(dev));
 	const struct as3722regdef *regdef = sc->sc_regdef;
-	const int flags = (cold ? I2C_F_POLL : 0);
+	const int flags = 0;
 	uint8_t v;
 	int error;
 
@@ -850,12 +850,16 @@ as3722_poweroff(device_t dev)
 	struct as3722_softc * const sc = device_private(dev);
 	int error;
 
-	const int flags = I2C_F_POLL;
-
-	iic_acquire_bus(sc->sc_i2c, flags);
-	error = as3722_write(sc, AS3722_RESET_CTRL_REG,
-	    AS3722_RESET_CTRL_POWER_OFF, flags);
-	iic_release_bus(sc->sc_i2c, flags);
+	error = iic_acquire_bus(sc->sc_i2c, 0);
+	if (error == 0) {
+		error = as3722_write(sc, AS3722_RESET_CTRL_REG,
+		    AS3722_RESET_CTRL_POWER_OFF, 0);
+		iic_release_bus(sc->sc_i2c, 0);
+	}
+	if (error) {
+		device_printf(dev, "WARNING: unable to power off, error %d\n",
+		    error);
+	}
 
 	return error;
 }
@@ -866,12 +870,16 @@ as3722_reboot(device_t dev)
 	struct as3722_softc * const sc = device_private(dev);
 	int error;
 
-	const int flags = I2C_F_POLL;
-
-	iic_acquire_bus(sc->sc_i2c, flags);
-	error = as3722_write(sc, AS3722_RESET_CTRL_REG,
-	    AS3722_RESET_CTRL_FORCE_RESET, flags);
-	iic_release_bus(sc->sc_i2c, flags);
+	error = iic_acquire_bus(sc->sc_i2c, 0);
+	if (error == 0) {
+		error = as3722_write(sc, AS3722_RESET_CTRL_REG,
+		    AS3722_RESET_CTRL_FORCE_RESET, 0);
+		iic_release_bus(sc->sc_i2c, 0);
+	}
+	if (error) {
+		device_printf(dev, "WARNING: unable to reboot, error %d\n",
+		    error);
+	}
 
 	return error;
 }

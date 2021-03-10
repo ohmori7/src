@@ -1,4 +1,4 @@
-/* $NetBSD: gic_v2m.h,v 1.1 2018/10/21 00:42:05 jmcneill Exp $ */
+/* $NetBSD: gic_v2m.h,v 1.3 2020/05/07 16:20:40 jmcneill Exp $ */
 
 /*-
  * Copyright (c) 2018 The NetBSD Foundation, Inc.
@@ -40,8 +40,10 @@ struct gic_v2m_frame {
 	struct pic_softc	*frame_pic;
 	uint16_t		frame_base;
 	uint16_t		frame_count;
+	uint32_t		frame_flags;
+#define	GIC_V2M_FLAG_GRAVITON		0x01	/* Amazon Graviton quirk */
 
-	const struct pci_attach_args *frame_pa[GICC_IAR_IRQ];
+	struct pci_attach_args *frame_pa[GICC_IAR_IRQ];
 
 	struct arm_pci_msi	frame_msi;
 };

@@ -1,4 +1,4 @@
-/*	$NetBSD: bcm2835_gpio.c,v 1.12 2019/05/10 08:28:50 skrll Exp $	*/
+/*	$NetBSD: bcm2835_gpio.c,v 1.19 2021/01/29 14:11:14 skrll Exp $	*/
 
 /*-
  * Copyright (c) 2013, 2014, 2017 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: bcm2835_gpio.c,v 1.12 2019/05/10 08:28:50 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: bcm2835_gpio.c,v 1.19 2021/01/29 14:11:14 skrll Exp $");
 
 /*
  * Driver for BCM2835 GPIO
@@ -65,7 +65,9 @@ int bcm2835gpiodebug = 3;
 #define DPRINTF(l, x)
 #endif
 
-#define	BCMGPIO_MAXPINS	54
+#define BCM2835_GPIO_MAXPINS 54
+#define BCM2838_GPIO_MAXPINS 58
+#define	BCMGPIO_MAXPINS	BCM2838_GPIO_MAXPINS
 
 struct bcmgpio_eint {
 	 int			(*eint_func)(void *);
@@ -101,6 +103,9 @@ struct bcmgpio_softc {
 
 	/* For interrupt support. */
 	struct bcmgpio_bank	sc_banks[BCMGPIO_NBANKS];
+
+	bool			sc_is2835;	/* for pullup on 2711 */
+	u_int			sc_maxpins;
 };
 
 struct bcmgpio_pin {
@@ -145,7 +150,7 @@ static struct fdtbus_gpio_controller_func bcmgpio_funcs = {
 };
 
 static void *	bcmgpio_fdt_intr_establish(device_t, u_int *, int, int,
-		    int (*func)(void *), void *);
+		    int (*func)(void *), void *, const char *);
 static void	bcmgpio_fdt_intr_disestablish(device_t, void *);
 static bool	bcmgpio_fdt_intrstr(device_t, u_int *, char *, size_t);
 
@@ -216,7 +221,7 @@ bcm283x_pinctrl_set_config(device_t dev, const void *data, size_t len)
 	for (int i = 0; i < npins; i++) {
 		const u_int pin = be32toh(pins[i]);
 
-		if (pin > BCMGPIO_MAXPINS)
+		if (pin >= sc->sc_maxpins)
 			continue;
 		if (pull) {
 			const int value = be32toh(pull[npull == 1 ? 0 : i]);
@@ -233,13 +238,19 @@ bcm283x_pinctrl_set_config(device_t dev, const void *data, size_t len)
 	return 0;
 }
 
+static const struct device_compatible_entry compat_data[] = {
+	{ .compat = "brcm,bcm2835-gpio" },
+	{ .compat = "brcm,bcm2838-gpio" },
+	{ .compat = "brcm,bcm2711-gpio" },
+	DEVICE_COMPAT_EOL
+};
+
 static int
 bcmgpio_match(device_t parent, cfdata_t cf, void *aux)
 {
-	const char * const compatible[] = { "brcm,bcm2835-gpio", NULL };
 	struct fdt_attach_args * const faa = aux;
 
-	return of_match_compatible(faa->faa_phandle, compatible);
+	return of_compatible_match(faa->faa_phandle, compat_data);
 }
 
 static void
@@ -254,6 +265,7 @@ bcmgpio_attach(device_t parent, device_t self, void *aux)
 	int error;
 	int pin;
 	int bank;
+	uint32_t reg;
 
 	const int phandle = faa->faa_phandle;
 	if (fdtbus_get_reg(phandle, 0, &addr, &size) != 0) {
@@ -263,19 +275,25 @@ bcmgpio_attach(device_t parent, device_t self, void *aux)
 
 	sc->sc_dev = self;
 
-	aprint_naive("\n");
-	aprint_normal(": GPIO controller\n");
-
 	sc->sc_iot = faa->faa_bst;
 	error = bus_space_map(sc->sc_iot, addr, size, 0, &sc->sc_ioh);
 	if (error) {
-		aprint_error_dev(self, "couldn't map registers\n");
+		aprint_error_dev(self, ": couldn't map registers\n");
 		return;
 	}
 
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_VM);
 
-	for (pin = 0; pin < BCMGPIO_MAXPINS; pin++) {
+	/* BCM2835, BCM2836, BCM2837 return 'gpio' in this unused register */
+	reg = bus_space_read_4(sc->sc_iot, sc->sc_ioh, BCM2838_GPIO_GPPUPPDN(3));
+	sc->sc_is2835 = reg == 0x6770696f;
+	sc->sc_maxpins = sc->sc_is2835 ? BCM2835_GPIO_MAXPINS
+	                               : BCM2838_GPIO_MAXPINS;
+
+	aprint_naive("\n");
+	aprint_normal(": GPIO controller %s\n", sc->sc_is2835 ? "2835" : "2838");
+
+	for (pin = 0; pin < sc->sc_maxpins; pin++) {
 		sc->sc_gpio_pins[pin].pin_num = pin;
 		/*
 		 * find out pins still available for GPIO
@@ -319,23 +337,25 @@ bcmgpio_attach(device_t parent, device_t self, void *aux)
 			continue;
 		}
 
+		char xname[16];
+		snprintf(xname, sizeof(xname), "%s #%u", device_xname(self),
+		    bank);
 		sc->sc_banks[bank].sc_bankno = bank;
 		sc->sc_banks[bank].sc_bcm = sc;
-		sc->sc_banks[bank].sc_ih =
-		    fdtbus_intr_establish(phandle, bank, IPL_VM,
-		    			  FDT_INTR_MPSAFE,
-					  bcmgpio_intr, &sc->sc_banks[bank]);
+		sc->sc_banks[bank].sc_ih = fdtbus_intr_establish_xname(phandle,
+		    bank, IPL_VM, FDT_INTR_MPSAFE, bcmgpio_intr,
+		    &sc->sc_banks[bank], xname);
 		if (sc->sc_banks[bank].sc_ih) {
 			aprint_normal_dev(self,
 			    "pins %d..%d interrupting on %s\n",
 			    bank * 32,
-			    MIN((bank * 32) + 31, BCMGPIO_MAXPINS),
+			    MIN((bank * 32) + 31, sc->sc_maxpins),
 			    intrstr);
 		} else {
 			aprint_error_dev(self,
 			    "failed to establish interrupt for pins %d..%d\n",
 			    bank * 32,
-			    MIN((bank * 32) + 31, BCMGPIO_MAXPINS));
+			    MIN((bank * 32) + 31, sc->sc_maxpins));
 		}
 	}
 
@@ -347,8 +367,6 @@ bcmgpio_attach(device_t parent, device_t self, void *aux)
 		fdtbus_register_pinctrl_config(self, child,
 		    &bcm283x_pinctrl_funcs);
 	}
-
-	fdtbus_pinctrl_configure();
 
 	fdtbus_register_interrupt_controller(self, phandle,
 	    &bcmgpio_fdt_intrfuncs);
@@ -364,7 +382,7 @@ bcmgpio_attach(device_t parent, device_t self, void *aux)
 
 	gba.gba_gc = &sc->sc_gpio_gc;
 	gba.gba_pins = &sc->sc_gpio_pins[0];
-	gba.gba_npins = BCMGPIO_MAXPINS;
+	gba.gba_npins = sc->sc_maxpins;
 	(void) config_found_ia(self, "gpiobus", &gba, gpiobus_print);
 }
 
@@ -552,7 +570,7 @@ bcmgpio_intr_disable(struct bcmgpio_softc *sc, struct bcmgpio_eint *eint)
 
 static void *
 bcmgpio_fdt_intr_establish(device_t dev, u_int *specifier, int ipl, int flags,
-    int (*func)(void *), void *arg)
+    int (*func)(void *), void *arg, const char *xname)
 {
 	struct bcmgpio_softc * const sc = device_private(dev);
 	int eint_flags = (flags & FDT_INTR_MPSAFE) ? BCMGPIO_INTR_MPSAFE : 0;
@@ -657,8 +675,9 @@ bcmgpio_gpio_intr_disestablish(void *vsc, void *ih)
 static bool
 bcmgpio_gpio_intrstr(void *vsc, int pin, int irqmode, char *buf, size_t buflen)
 {
+	struct bcmgpio_softc * const sc = vsc;
 
-	if (pin < 0 || pin >= BCMGPIO_MAXPINS)
+	if (pin < 0 || pin >= sc->sc_maxpins)
 		return (false);
 
 	snprintf(buf, buflen, "GPIO %d", pin);
@@ -797,15 +816,46 @@ bcm283x_pin_setpull(const struct bcmgpio_softc * const sc, u_int pin, u_int pud)
 
 	KASSERT(mutex_owned(&sc->sc_lock));
 
-	const u_int mask = 1 << (pin % BCM2835_GPIO_GPPUD_PINS_PER_REGISTER);
-	const u_int regid = (pin / BCM2835_GPIO_GPPUD_PINS_PER_REGISTER);
+	u_int mask, regid;
+	uint32_t reg;
 
-	bus_space_write_4(sc->sc_iot, sc->sc_ioh, BCM2835_GPIO_GPPUD, pud);
-	delay(1);
-	bus_space_write_4(sc->sc_iot, sc->sc_ioh, BCM2835_GPIO_GPPUDCLK(regid), mask);
-	delay(1);
-	bus_space_write_4(sc->sc_iot, sc->sc_ioh, BCM2835_GPIO_GPPUD, 0);
-	bus_space_write_4(sc->sc_iot, sc->sc_ioh, BCM2835_GPIO_GPPUDCLK(regid), 0);
+	if (sc->sc_is2835) {
+		mask = 1 << (pin % BCM2835_GPIO_GPPUD_PINS_PER_REGISTER);
+		regid = (pin / BCM2835_GPIO_GPPUD_PINS_PER_REGISTER);
+
+		bus_space_write_4(sc->sc_iot, sc->sc_ioh,
+		    BCM2835_GPIO_GPPUD, pud);
+		delay(1);
+		bus_space_write_4(sc->sc_iot, sc->sc_ioh,
+		    BCM2835_GPIO_GPPUDCLK(regid), mask);
+		delay(1);
+		bus_space_write_4(sc->sc_iot, sc->sc_ioh,
+		    BCM2835_GPIO_GPPUD, 0);
+		bus_space_write_4(sc->sc_iot, sc->sc_ioh,
+		    BCM2835_GPIO_GPPUDCLK(regid), 0);
+	} else {
+		mask = BCM2838_GPIO_GPPUD_MASK(pin);
+		regid = BCM2838_GPIO_GPPUD_REGID(pin);
+
+		switch (pud) {
+		case BCM2835_GPIO_GPPUD_PULLUP:
+			pud = BCM2838_GPIO_GPPUD_PULLUP;
+			break;
+		case BCM2835_GPIO_GPPUD_PULLDOWN:
+			pud = BCM2838_GPIO_GPPUD_PULLDOWN;
+			break;
+		default:
+			pud = BCM2838_GPIO_GPPUD_PULLOFF;
+			break;
+		}
+
+		reg = bus_space_read_4(sc->sc_iot, sc->sc_ioh,
+		    BCM2838_GPIO_GPPUPPDN(regid));
+		reg &= ~mask;
+		reg |= __SHIFTIN(pud, mask);
+		bus_space_write_4(sc->sc_iot, sc->sc_ioh,
+		    BCM2838_GPIO_GPPUPPDN(regid), reg);
+	}
 }
 
 
@@ -866,20 +916,7 @@ bcm2835gpio_gpio_pin_ctl(void *arg, int pin, int flags)
 		cmd = BCM2835_GPIO_GPPUD_PULLOFF;
 	}
 
-	/* set up control signal */
-	bus_space_write_4(sc->sc_iot, sc->sc_ioh, BCM2835_GPIO_GPPUD, cmd);
-	delay(1); /* wait 150 cycles */
-	/* set clock signal */
-	bus_space_write_4(sc->sc_iot, sc->sc_ioh,
-	    BCM2835_GPIO_GPPUDCLK(pin / BCM2835_GPIO_GPLEV_PINS_PER_REGISTER),
-	    1 << (pin % BCM2835_GPIO_GPPUD_PINS_PER_REGISTER));
-	delay(1); /* wait 150 cycles */
-	/* reset control signal and clock */
-	bus_space_write_4(sc->sc_iot, sc->sc_ioh,
-	    BCM2835_GPIO_GPPUD, BCM2835_GPIO_GPPUD_PULLOFF);
-	bus_space_write_4(sc->sc_iot, sc->sc_ioh,
-	    BCM2835_GPIO_GPPUDCLK(pin / BCM2835_GPIO_GPLEV_PINS_PER_REGISTER),
-	    0);
+	bcm283x_pin_setpull(sc, pin, cmd);
 	mutex_exit(&sc->sc_lock);
 }
 
@@ -896,7 +933,7 @@ bcmgpio_fdt_acquire(device_t dev, const void *data, size_t len, int flags)
 	const u_int pin = be32toh(gpio[1]);
 	const bool actlo = be32toh(gpio[2]) & 1;
 
-	if (pin >= BCMGPIO_MAXPINS)
+	if (pin >= sc->sc_maxpins)
 		return NULL;
 
 	gpin = kmem_alloc(sizeof(*gpin), KM_SLEEP);

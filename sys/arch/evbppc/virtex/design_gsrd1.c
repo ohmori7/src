@@ -1,4 +1,4 @@
-/* 	$NetBSD: design_gsrd1.c,v 1.3 2011/06/18 06:44:27 matt Exp $ */
+/* 	$NetBSD: design_gsrd1.c,v 1.5 2020/11/21 15:42:20 thorpej Exp $ */
 
 /*
  * Copyright (c) 2006 Jachym Holecek
@@ -30,13 +30,13 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: design_gsrd1.c,v 1.3 2011/06/18 06:44:27 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: design_gsrd1.c,v 1.5 2020/11/21 15:42:20 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/device.h>
 #include <sys/kernel.h>
-#include <sys/malloc.h>
+#include <sys/kmem.h>
 #include <sys/cpu.h>
 #include <sys/bus.h>
 #include <sys/intr.h>
@@ -373,11 +373,7 @@ ll_dmac_intr_establish(int chan, void (*func)(void *), void *arg)
 	if (cdmac_intrs[chan] != NULL)
 		return (NULL);
 
-	ih = malloc(sizeof(struct cdmac_intr_handle), M_DEVBUF,
-	    cold ? M_NOWAIT : M_WAITOK);
-	if (ih == NULL)
-		return (NULL);
-
+	ih = kmem_alloc(sizeof(*ih), KM_SLEEP);
 	ih->cih_func = func;
 	ih->cih_arg = arg;
 
@@ -387,6 +383,7 @@ ll_dmac_intr_establish(int chan, void (*func)(void *), void *arg)
 void
 ll_dmac_intr_disestablish(int chan, void *handle)
 {
+	struct cdmac_intr_handle *ih = handle;
 	int 			s;
 
 	KASSERT(chan > 0 && chan < CDMAC_NCHAN);
@@ -396,7 +393,7 @@ ll_dmac_intr_disestablish(int chan, void *handle)
 	cdmac_intrs[chan] = NULL;
 	splx(s);
 
-	free(handle, M_DEVBUF);
+	kmem_free(ih, sizeof(*ih));
 }
 
 int

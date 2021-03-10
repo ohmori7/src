@@ -1,4 +1,4 @@
-/*	$NetBSD: bsddisklabel.c,v 1.12 2019/06/15 08:20:33 martin Exp $	*/
+/*	$NetBSD: bsddisklabel.c,v 1.58 2021/02/13 15:31:35 martin Exp $	*/
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -72,11 +72,11 @@ default_parts_init[] =
 	  .mount = PART_BOOT_MOUNT,
 	  .instflags = PUIINST_MOUNT|PUIINST_BOOT,
 #else
-	  .instflags = PUIINST_MOUNT|PUIINST_BOOT,
+	  .instflags = PUIINST_BOOT,
 #endif
 #ifdef PART_BOOT_TYPE
 	  .fs_type = PART_BOOT_TYPE,
-#if PART_BOOT_TYPE == FS_MSDOS
+#if (PART_BOOT_TYPE == FS_MSDOS) || (PART_BOOT_TYPE == FS_EX2FS)
 	  .flags = PUIFLAG_ADD_OUTER,
 #endif
 #endif
@@ -100,7 +100,7 @@ default_parts_init[] =
 #endif
 #ifdef PART_BOOT1_TYPE
 	  .fs_type = PART_BOOT1_TYPE,
-#if PART_BOOT1_TYPE == FS_MSDOS
+#if (PART_BOOT1_TYPE == FS_MSDOS) || (PART_BOOT1_TYPE == FS_EX2FS)
 	  .flags = PUIFLAG_ADD_OUTER,
 #endif
 #endif
@@ -119,7 +119,7 @@ default_parts_init[] =
 #endif
 #ifdef PART_BOOT2_TYPE
 	  .fs_type = PART_BOOT2_TYPE,
-#if PART_BOOT2_TYPE == FS_MSDOS
+#if (PART_BOOT2_TYPE == FS_MSDOS) || (PART_BOOT2_TYPE == FS_EX2FS)
 	  .flags = PUIFLAG_ADD_OUTER,
 #endif
 #endif
@@ -143,76 +143,11 @@ default_parts_init[] =
 	{ .type = PT_root, .mount = "/tmp", .fs_type = FS_MFS,
 	  .flags = PUIFLG_JUST_MOUNTPOINT },
 #endif
-	{ .def_size = DEFUSRSIZE*(MEG/512), .mount = "/usr", .type = PT_root },
-	{ .def_size = DEFVARSIZE*(MEG/512), .mount = "/var", .type = PT_root },
+	{ .def_size = DEFUSRSIZE*(MEG/512), .mount = "/usr", .type = PT_root,
+	  .fs_type = FS_BSDFFS, .fs_version = 2 },
+	{ .def_size = DEFVARSIZE*(MEG/512), .mount = "/var", .type = PT_root,
+	  .fs_type = FS_BSDFFS, .fs_version = 2 },
 };
-
-#if 0 // XXX
-static int
-save_ptn(int ptn, daddr_t start, daddr_t size, int fstype, const char *mountpt)
-{
-	static int maxptn;
-	partinfo *p;
-	int pp;
-	char *buf;
-
-	if (maxptn == 0)
-		maxptn = getmaxpartitions();
-
-	if (ptn < 0 || PI_FSTYPE(&pm->bsdlabel[ptn]) != FS_UNUSED) {
-		ptn = getrawpartition() + 1;
-#ifdef PART_FIRST_FREE
-		if (ptn < PART_FIRST_FREE)
-			ptn = PART_FIRST_FREE;
-#endif
-		for (;; ptn++) {
-			if (ptn >= maxptn)
-				return -1;
-// XXX			if (ptn == PART_USR)
-//				continue;
-			if (PI_FSTYPE(&pm->bsdlabel[ptn]) == FS_UNUSED)
-				break;
-		}
-	}
-
-	if (fstype == FS_UNUSED)
-		return ptn;
-
-	p = pm->bsdlabel + ptn;
-	PI_SET_OFFSET(p, start);
-	PI_SET_SIZE(p, size);
-	set_ptype(p, fstype, mountpt ? PIF_NEWFS : 0);
-
-	/* Hack because we does not have something like FS_LVMPV */
-	p->lvmpv = 0;
-	if (mountpt != NULL && strcmp(mountpt, "lvm") == 0)
-		p->lvmpv = 1;
-	else if (mountpt != NULL) {
-		for (pp = 0; pp < maxptn; pp++) {
-			if (strcmp(pm->bsdlabel[pp].pi_mount, mountpt) == 0)
-				pm->bsdlabel[pp].pi_flags &= ~PIF_MOUNT;
-		}
-		if (mountpt[0] != '/')
-			asprintf(&buf, "/%s", mountpt);
-		else
-			asprintf(&buf, "%s", mountpt);
-		strlcpy(p->pi_mount, buf, sizeof p->pi_mount);
-		p->pi_flags |= PIF_MOUNT;
-		/* Default to UFS2. */
-		if (PI_FSTYPE(p) == FS_BSDFFS) {
-#ifdef DEFAULT_UFS2
-#ifndef HAVE_UFS2_BOOT
-			if (strcmp(mountpt, "/") != 0)
-#endif
-				p->pi_flags |= PIF_FFSv2;
-#endif
-		}
-		free(buf);
-	}
-	return ptn;
-}
-#endif
-
 
 static const char size_separator[] =
     "----------------------------------- - --------------------";
@@ -303,8 +238,16 @@ draw_size_menu_line(menudesc *m, int opt, void *arg)
 		    size / sizemult);
 	}
 	size = pset->infos[opt].size;
-	snprintf(psize, sizeof psize, "%" PRIu64 "%s",
-	    size / sizemult, inc_free);
+	if (pset->infos[opt].fs_type == FS_TMPFS) {
+		if (pset->infos[opt].size < 0)
+			snprintf(psize, sizeof psize, "%" PRIu64 "%%", -size);
+		else
+			snprintf(psize, sizeof psize, "%" PRIu64 " %s", size,
+			    msg_string(MSG_megname));
+	} else {
+		snprintf(psize, sizeof psize, "%" PRIu64 "%s",
+		    size / sizemult, inc_free);
+	}
 
 	if (pset->infos[opt].type == PT_swap) {
 		snprintf(swap, sizeof swap, "<%s>",
@@ -316,11 +259,36 @@ draw_size_menu_line(menudesc *m, int opt, void *arg)
 		    getfslabelname(pset->infos[opt].fs_type,
 		    pset->infos[opt].fs_version));
 		mount = swap;
-	} else if (pset->infos[opt].mount && pset->infos[opt].mount[0]) {
-		mount = pset->infos[opt].mount;
+	} else if (pset->infos[opt].mount[0]) {
+		if (pset->infos[opt].instflags & PUIINST_BOOT) {
+			snprintf(swap, sizeof swap, "%s <%s>",
+			    pset->infos[opt].mount, msg_string(MSG_ptn_boot));
+			mount = swap;
+		} else {
+			mount = pset->infos[opt].mount;
+		}
+#ifndef NO_CLONES
+	} else if (pset->infos[opt].flags & PUIFLG_CLONE_PARTS) {
+		snprintf(swap, sizeof swap, "%zu %s",
+		    pset->infos[opt].clone_src->num_sel,
+		    msg_string(MSG_clone_target_disp));
+		mount = swap;
+#endif
 	} else {
-		mount = getfslabelname(pset->infos[opt].fs_type,
-		    pset->infos[opt].fs_version);
+		mount = NULL;
+		if (pset->infos[opt].parts->pscheme->other_partition_identifier
+		    && pset->infos[opt].cur_part_id != NO_PART)
+			mount = pset->infos[opt].parts->pscheme->
+			    other_partition_identifier(pset->infos[opt].parts,
+			    pset->infos[opt].cur_part_id);
+		if (mount == NULL)
+			mount = getfslabelname(pset->infos[opt].fs_type,
+			    pset->infos[opt].fs_version);
+		if (pset->infos[opt].instflags & PUIINST_BOOT) {
+			snprintf(swap, sizeof swap, "%s <%s>",
+			    mount, msg_string(MSG_ptn_boot));
+			mount = swap;
+		}
 		mount = str_arg_subst(msg_string(MSG_size_ptn_not_mounted),
 		    1, &mount);
 		free_mount = true;
@@ -358,27 +326,28 @@ add_other_ptn_size(menudesc *menu, void *arg)
 			/* we need absolute mount paths */
 			memmove(new_mp+1, new_mp, sizeof(new_mp)-1);
 			new_mp[0] = '/';
-			/* duplicates? */
-			bool duplicate = false;
-			for (size_t i = 0; i < pset->num; i++) {
-				if (strcmp(pset->infos[i].mount,
-				    new_mp) == 0) {
-				    	args = new_mp;
-					err = str_arg_subst(
-					    msg_string(MSG_mp_already_exists),
-					    1, &args);
-					err_msg_win(err);
-					free(err);
-					duplicate = true;
-					break;
-				}
-			}
-			if (!duplicate)
-				break;
 		}
+
+		/* duplicates? */
+		bool duplicate = false;
+		for (size_t i = 0; i < pset->num; i++) {
+			if (strcmp(pset->infos[i].mount,
+			    new_mp) == 0) {
+			    	args = new_mp;
+				err = str_arg_subst(
+				    msg_string(MSG_mp_already_exists),
+				    1, &args);
+				err_msg_win(err);
+				free(err);
+				duplicate = true;
+				break;
+			}
+		}
+		if (!duplicate)
+			break;
 	}
 
-	m = realloc(pset->menu_opts, (pset->num+4)*sizeof(*pset->menu_opts));
+	m = realloc(pset->menu_opts, (pset->num+5)*sizeof(*pset->menu_opts));
 	if (m == NULL)
 		return 0;
 	p = realloc(pset->infos, (pset->num+1)*sizeof(*pset->infos));
@@ -393,6 +362,11 @@ add_other_ptn_size(menudesc *menu, void *arg)
 	p += pset->num;
 	memset(m, 0, sizeof(*m));
 	memset(p, 0, sizeof(*p));
+	p->parts = pset->parts;
+	p->cur_part_id = NO_PART;
+	p->type = PT_root;
+	p->fs_type = FS_BSDFFS;
+	p->fs_version = 2;
 	strncpy(p->mount, new_mp, sizeof(p->mount));
 
 	menu->cursel = pset->num;
@@ -401,6 +375,86 @@ add_other_ptn_size(menudesc *menu, void *arg)
 
 	return -1;
 }
+
+#ifndef NO_CLONES
+static int
+inst_ext_clone(menudesc *menu, void *arg)
+{
+	struct selected_partitions selected;
+	struct clone_target_menu_data data;
+	struct partition_usage_set *pset = arg;
+	struct part_usage_info *p;
+	menu_ent *men;
+	int num_men, i;
+
+	if (!select_partitions(&selected, pm->parts))
+		return 0;
+
+	num_men = pset->num+1;
+	men = calloc(num_men, sizeof *men);
+	if (men == NULL)
+		return 0;
+	for (i = 0; i < num_men; i++)
+		men[i].opt_action = clone_target_select;
+	men[num_men-1].opt_name = MSG_clone_target_end;
+
+	memset(&data, 0, sizeof data);
+	data.usage = *pset;
+	data.res = -1;
+
+	data.usage.menu = new_menu(MSG_clone_target_hdr,
+	    men, num_men, 3, 2, 0, 65, MC_SCROLL,
+	    NULL, draw_size_menu_line, NULL, NULL, MSG_cancel);
+	process_menu(data.usage.menu, &data);
+	free_menu(data.usage.menu);
+	free(men);
+
+	if (data.res < 0)
+		goto err;
+
+	/* insert clone record */
+	men = realloc(pset->menu_opts, (pset->num+5)*sizeof(*pset->menu_opts));
+	if (men == NULL)
+		goto err;
+	pset->menu_opts = men;
+	menu->opts = men;
+	menu->numopts = pset->num+4;
+
+	p = realloc(pset->infos, (pset->num+1)*sizeof(*pset->infos));
+	if (p == NULL)
+		goto err;
+	pset->infos = p;
+
+	men += data.res;
+	p += data.res;
+	memmove(men+1, men, sizeof(*men)*((pset->num+4)-data.res));
+	memmove(p+1, p, sizeof(*p)*((pset->num)-data.res));
+	memset(men, 0, sizeof(*men));
+	memset(p, 0, sizeof(*p));
+	p->flags = PUIFLG_CLONE_PARTS;
+	p->cur_part_id = NO_PART;
+	p->clone_src = malloc(sizeof(selected));
+	if (p->clone_src != NULL) {
+		*p->clone_src = selected;
+		p->clone_ndx = ~0U;
+		p->size = selected_parts_size(&selected);
+		p->parts = pset->parts;
+	} else {
+		p->clone_ndx = 0;
+		free_selected_partitions(&selected);
+	}
+
+	menu->cursel = data.res == 0 ? 1 : 0;
+	pset->num++;
+	fill_ptn_menu(pset);
+
+	return -1;
+
+err:
+	free_selected_partitions(&selected);
+	return 0;
+}
+#endif
 
 static size_t
 fill_ptn_menu(struct partition_usage_set *pset)
@@ -411,22 +465,35 @@ fill_ptn_menu(struct partition_usage_set *pset)
 	size_t i;
 	daddr_t free_space;
 
-	memset(pset->menu_opts, 0, (pset->num+3)*sizeof(*pset->menu_opts));
+#ifdef NO_CLONES
+#define	ADD_ITEMS	3
+#else
+#define	ADD_ITEMS	4
+#endif
+
+	memset(pset->menu_opts, 0, (pset->num+ADD_ITEMS)
+	    *sizeof(*pset->menu_opts));
 	for (m = pset->menu_opts, p = pset->infos, i = 0; i < pset->num;
 	    m++, p++, i++) {
-		m->opt_menu = OPT_NOMENU;
+		if (p->flags & PUIFLG_CLONE_PARTS)
+			m->opt_flags = OPT_IGNORE|OPT_NOSHORT;
+		else
 		m->opt_action = set_ptn_size;
 	}
 
 	m->opt_name = size_separator;
-	m->opt_menu = OPT_NOMENU;
 	m->opt_flags = OPT_IGNORE|OPT_NOSHORT;
 	m++;
 
 	m->opt_name = MSG_add_another_ptn;
-	m->opt_menu = OPT_NOMENU;
 	m->opt_action = add_other_ptn_size;
 	m++;
+
+#ifndef NO_CLONES
+	m->opt_name = MSG_clone_from_elsewhere;
+	m->opt_action = inst_ext_clone;
+	m++;
+#endif
 
 	m->opt_name = MSG_askunits;
 	m->opt_menu = MENU_sizechoice;
@@ -434,7 +501,7 @@ fill_ptn_menu(struct partition_usage_set *pset)
 	m++;
 
 	/* calculate free space */
-	free_space = pset->parts->free_space;
+	free_space = pset->parts->free_space - pset->reserved_space;
 	for (i = 0; i < pset->parts->num_part; i++) {
 		if (!pset->parts->pscheme->get_part_info(pset->parts, i,
 		    &info))
@@ -475,6 +542,20 @@ find_part_at(struct disk_partitions *parts, daddr_t start)
 	return NO_PART;
 }
 
+static daddr_t
+parse_ram_size(const char *str, bool *is_percent)
+{
+	daddr_t val;
+	char *cp;
+
+	val = strtoull(str, &cp, 10);
+	while (*cp && isspace((unsigned char)*cp))
+		cp++;
+
+	*is_percent = *cp == '%';
+	return val;
+}
+
 int
 set_ptn_size(menudesc *m, void *arg)
 {
@@ -485,7 +566,7 @@ set_ptn_size(menudesc *m, void *arg)
 	size_t i, root = ~0U;
 	daddr_t size, old_size, new_size_val, mult;
 	int rv;
-	bool non_zero, extend;
+	bool non_zero, extend, is_ram_size, is_percent = false;
 
 	if (pset->cur_free_space == 0 && p->size == 0 &&
 	    !(p->flags & PUIFLG_JUST_MOUNTPOINT))
@@ -515,23 +596,47 @@ set_ptn_size(menudesc *m, void *arg)
 		}
 	}
 
+	is_ram_size = (p->flags & PUIFLG_JUST_MOUNTPOINT)
+	    && p->fs_type == FS_TMPFS;
+
 	size = p->size;
+	if (is_ram_size && size < 0) {
+		is_percent = true;
+		size = -size;
+	}
 	old_size = size;
 	if (size == 0)
 		size = p->def_size;
-	size /= sizemult;
-	snprintf(dflt, sizeof dflt, "%" PRIu64 "%s",
-	    size, p->flags & PUIFLAG_EXTEND ? "+" : "");
+	if (!is_ram_size)
+		size /= sizemult;
+
+	if (is_ram_size) {
+		snprintf(dflt, sizeof dflt, "%" PRIu64 "%s",
+		    size, is_percent ? "%" : "");
+	} else {
+		snprintf(dflt, sizeof dflt, "%" PRIu64 "%s",
+		    size, p->flags & PUIFLAG_EXTEND ? "+" : "");
+	}
 
 	for (;;) {
-		msg_prompt_win(MSG_askfssize, -1, 18, 0, 0,
-			dflt, answer, sizeof answer,
-			p->mount, multname);
+		msg_fmt_prompt_win(MSG_askfssize, -1, 18, 0, 0,
+		    dflt, answer, sizeof answer, "%s%s", p->mount,
+		    is_ram_size ? msg_string(MSG_megname) : multname);
 
-		/* cp will be checked below */
+		if (is_ram_size) {
+			new_size_val = parse_ram_size(answer, &is_percent);
+			if (is_percent &&
+			    (new_size_val < 0 || new_size_val > 100))
+				continue;
+			if (!is_percent && new_size_val < 0)
+				continue;
+			size = new_size_val;
+			extend = false;
+			break;
+		}
 		mult = sizemult;
-		new_size_val = parse_disk_pos(answer, &mult, pm->dlcylsize,
-		    &extend);
+		new_size_val = parse_disk_pos(answer, &mult, pm->sectorsize,
+		    pm->dlcylsize, &extend);
 
 		if (strcmp(answer, dflt) == 0)
 			non_zero = p->def_size > 0;
@@ -568,10 +673,14 @@ set_ptn_size(menudesc *m, void *arg)
 	}
 
 	daddr_t align = pset->parts->pscheme->get_part_alignment(pset->parts);
-	size = NUMSEC(size, mult, align);
+	if (!is_ram_size) {
+		size = NUMSEC(size, mult, align);
+	}
 	if (p->flags & PUIFLAG_EXTEND)
 		p->flags &= ~PUIFLAG_EXTEND;
 	if (extend && (p->limit == 0 || p->limit > p->size)) {
+		for (size_t k = 0; k < pset->num; k++)
+			pset->infos[k].flags &= ~PUIFLAG_EXTEND;
 		p->flags |= PUIFLAG_EXTEND;
 		if (size == 0)
 			size = align;
@@ -581,7 +690,7 @@ set_ptn_size(menudesc *m, void *arg)
     adjust_free:
 	if ((p->flags & (PUIFLG_IS_OUTER|PUIFLG_JUST_MOUNTPOINT)) == 0)
 		pset->cur_free_space += p->size - size;
-	p->size = size;
+	p->size = is_percent ? -size : size;
 	set_pset_exit_str(pset);
 
 	return 0;
@@ -610,7 +719,7 @@ get_ptn_sizes(struct partition_usage_set *pset)
 	wrefresh(stdscr);
 
 	if (pset->menu_opts == NULL)
-		pset->menu_opts = calloc(pset->num+3, sizeof(*pset->menu_opts));
+		pset->menu_opts = calloc(pset->num+4, sizeof(*pset->menu_opts));
 
 	pset->menu = -1;
 	num = fill_ptn_menu(pset);
@@ -635,183 +744,20 @@ get_ptn_sizes(struct partition_usage_set *pset)
 	pset->menu = -1;
 	pset->menu_opts = NULL;
 
-	if (!pset->ok)
-		return false;
-
-#if 0
-	if (cur_ptns.menu_no < 0) {
-		/* If there is a swap partition elsewhere, don't add one here.*/
-		if (no_swap || (swap_created && partman_go)) {
-			cur_ptns.ptn_sizes[PI_SWAP].size = 0;
-		} else {
-#if DEFSWAPSIZE == -1
-			/* Dynamic swap size. */
-			cur_ptns.ptn_sizes[PI_SWAP].dflt_size = get_ramsize();
-			cur_ptns.ptn_sizes[PI_SWAP].size =
-			    cur_ptns.ptn_sizes[PI_SWAP].dflt_size;
-#endif
-		}
-
-		/* If installing X increase default size of /usr */
-		if (set_X11_selected())
-			cur_ptns.ptn_sizes[PI_USR].dflt_size += XNEEDMB;
-
-		/* Start of planning to give free space to / */
-		cur_ptns.pool_part = &cur_ptns.ptn_sizes[PI_ROOT];
-		/* Make size of root include default size of /usr */
-		cur_ptns.ptn_sizes[PI_ROOT].size += cur_ptns.ptn_sizes[PI_USR].dflt_size;
-
-		sm = MEG / pm->sectorsize;
-
-		if (root_limit != 0) {
-			/* Bah - bios can not read all the disk, limit root */
-			cur_ptns.ptn_sizes[PI_ROOT].limit = root_limit -
-			    part_start;
-			/* Allocate a /usr partition if bios can't read
-			 * everything except swap.
-			 */
-			if (cur_ptns.ptn_sizes[PI_ROOT].limit
-			    < sectors - cur_ptns.ptn_sizes[PI_SWAP].size * sm) {
-				/* Root won't be able to access all the space */
-				/* Claw back space for /usr */
-				cur_ptns.ptn_sizes[PI_USR].size =
-						cur_ptns.ptn_sizes[PI_USR].dflt_size;
-				cur_ptns.ptn_sizes[PI_ROOT].size -=
-						cur_ptns.ptn_sizes[PI_USR].dflt_size;
-				cur_ptns.ptn_sizes[PI_ROOT].changed = 1;
-				/* Give free space to /usr */
-				cur_ptns.pool_part = &cur_ptns.ptn_sizes[PI_USR];
-			}
-		}
-
-		/* Change preset sizes from MB to sectors */
-		cur_ptns.free_space = sectors;
-		for (p = cur_ptns.ptn_sizes; p->mount[0]; p++) {
-			p->size = NUMSEC(p->size, sm, pm->dlcylsize);
-			p->dflt_size = NUMSEC(p->dflt_size, sm, pm->dlcylsize);
-			cur_ptns.free_space -= p->size;
-		}
-
-		/* Steal space from swap to make things fit.. */
-		if (cur_ptns.free_space < 0) {
-			i = roundup(-cur_ptns.free_space, pm->dlcylsize);
-			if (i > cur_ptns.ptn_sizes[PI_SWAP].size)
-				i = cur_ptns.ptn_sizes[PI_SWAP].size;
-			cur_ptns.ptn_sizes[PI_SWAP].size -= i;
-			cur_ptns.free_space += i;
-		}
-
-		/* Add space for 2 system dumps to / (traditional) */
-		i = get_ramsize() * sm;
-		i = roundup(i, pm->dlcylsize);
-		if (cur_ptns.free_space > i * 2)
-			i *= 2;
-		if (cur_ptns.free_space > i) {
-			cur_ptns.ptn_sizes[PI_ROOT].size += i;
-			cur_ptns.free_space -= i;
-		}
-
-		if (root_created && partman_go) {
-			cur_ptns.ptn_sizes[PI_ROOT].size = 0;
-			cur_ptns.pool_part = 0;
-		}
-
-		/* Ensure all of / is readable by the system boot code */
-		i = cur_ptns.ptn_sizes[PI_ROOT].limit;
-		if (i != 0 && (i -= cur_ptns.ptn_sizes[PI_ROOT].size) < 0) {
-			cur_ptns.ptn_sizes[PI_ROOT].size += i;
-			cur_ptns.free_space -= i;
-		}
-
-		/* Count free partition slots */
-		cur_ptns.free_parts = 0;
-#if 0 // XXX
-		for (i = 0; i < maxpart; i++) {
-			if (pm->bsdlabel[i].pi_size == 0)
-				cur_ptns.free_parts++;
-		}
-#endif
-		for (i = 0; i < MAXPARTITIONS; i++) {
-			p = &cur_ptns.ptn_sizes[i];
-			if (i != 0 && p->use == 0)
-				p->use = PART_EXTRA;
-			if (p->size != 0)
-				cur_ptns.free_parts--;
-		}
-
-		cur_ptns.menu_no = new_menu(0, cur_ptns.ptn_menus,
-			__arraycount(cur_ptns.ptn_menus),
-			3, -1, 12, 70,
-			MC_ALWAYS_SCROLL | MC_NOBOX | MC_NOCLEAR,
-			NULL, set_ptn_titles, NULL,
-			"help", cur_ptns.exit_msg);
-
-		if (cur_ptns.menu_no < 0)
-			return;
-	}
-
-	do {
-		set_ptn_menu(&cur_ptns);
-		pm->current_cylsize = pm->dlcylsize;
-		process_menu(cur_ptns.menu_no, &cur_ptns);
-	} while (cur_ptns.free_space < 0 || cur_ptns.free_parts < 0);
-
-	/* Give any cylinder fragment to last partition */
-	if (cur_ptns.pool_part != NULL || cur_ptns.free_space < pm->dlcylsize) {
-		for (p = cur_ptns.ptn_sizes + __arraycount(cur_ptns.ptn_sizes) - 1; ;p--) {
-			if (p->size == 0) {
-				if (p == cur_ptns.ptn_sizes)
-					break;
-				continue;
-			}
-			if (p->use == PART_TMP_RAMDISK)
-				continue;
-			p->size += cur_ptns.free_space % pm->dlcylsize;
-			cur_ptns.free_space -= cur_ptns.free_space % pm->dlcylsize;
-			break;
-		}
-	}
-
-	for (p = cur_ptns.ptn_sizes; p->mount[0]; p++, part_start += size) {
-		size = p->size;
-		if (p == cur_ptns.pool_part) {
-			size += rounddown(cur_ptns.free_space, pm->dlcylsize);
-			if (p->limit != 0 && size > p->limit)
-				size = p->limit;
-		}
-		i = p->use;
-		if (i == PART_TMP_RAMDISK) {
-			tmp_ramdisk_size = size;
-			size = 0;
-			continue;
-		}
-		if (size == 0)
-			continue;
-		if (i == PART_ROOT && size > 0)
-			root_created = 1;
-		if (i == PART_SWAP) {
-			if (size > 0)
-				swap_created = 1;
-			save_ptn(i, part_start, size, FS_SWAP, NULL);
-			continue;
-		}
-		if (!strcmp(p->mount, "raid")) {
-			save_ptn(i, part_start, size, FS_RAID, NULL);
-			continue;			
-		} else if (!strcmp(p->mount, "cgd")) {
-			save_ptn(i, part_start, size, FS_CGD, NULL);
-			continue;
-		}
-		save_ptn(i, part_start, size, FS_BSDFFS, p->mount);
-	}
-#endif
-	return true;
+	return pset->ok;
 }
 
 static int
 set_keep_existing(menudesc *m, void *arg)
 {
 	((arg_rep_int*)arg)->rv = LY_KEEPEXISTING;
+	return 0;
+}
+
+static int
+set_switch_scheme(menudesc *m, void *arg)
+{
+	((arg_rep_int*)arg)->rv = LY_OTHERSCHEME;
 	return 0;
 }
 
@@ -833,7 +779,6 @@ set_use_default_sizes(menudesc *m, void *arg)
  * Check if there is a reasonable pre-existing partition for
  * NetBSD.
  */
-
 static bool
 check_existing_netbsd(struct disk_partitions *parts)
 {
@@ -842,8 +787,11 @@ check_existing_netbsd(struct disk_partitions *parts)
 
 	nbsd_parts = 0;
 	for (part_id p = 0; p < parts->num_part; p++) {
-		if (parts->pscheme->get_part_info(parts, p, &info) &&
-		    info.nat_type && info.nat_type->generic_ptype == PT_root)
+		if (!parts->pscheme->get_part_info(parts, p, &info))
+			continue;
+		if (info.flags & (PTI_PSCHEME_INTERNAL|PTI_RAW_PART))
+			continue;
+		if (info.nat_type && info.nat_type->generic_ptype == PT_root)
 			nbsd_parts++;
 	}
 
@@ -861,45 +809,48 @@ ask_layout(struct disk_partitions *parts, bool have_existing)
 	const char *args[2];
 	int menu;
 	size_t num_opts;
-	menu_ent options[3], *opt;
+	menu_ent options[4], *opt;
 
 	args[0] = msg_string(parts->pscheme->name);
 	args[1] = msg_string(parts->pscheme->short_name);
 	ai.args.argv = args;
 	ai.args.argc = 2;
-	ai.rv = LY_SETSIZES;
-	        
+	ai.rv = LY_ERROR;
+
 	memset(options, 0, sizeof(options));
 	num_opts = 0;
 	opt = &options[0];
 
 	if (have_existing) {
 		opt->opt_name = MSG_Keep_existing_partitions;
-		opt->opt_exp_name = NULL;
-		opt->opt_menu = OPT_NOMENU;
 		opt->opt_flags = OPT_EXIT;
 		opt->opt_action = set_keep_existing;
 		opt++;
 		num_opts++;
 	}
 	opt->opt_name = MSG_Set_Sizes;
-	opt->opt_exp_name = NULL;
-	opt->opt_menu = OPT_NOMENU;
 	opt->opt_flags = OPT_EXIT;
 	opt->opt_action = set_edit_part_sizes;
 	opt++;
 	num_opts++;
 
 	opt->opt_name = MSG_Use_Default_Parts;
-	opt->opt_exp_name = NULL;
-	opt->opt_menu = OPT_NOMENU;
 	opt->opt_flags = OPT_EXIT;
 	opt->opt_action = set_use_default_sizes;
 	opt++;
 	num_opts++;
 
+	if (num_available_part_schemes > 1 &&
+	    parts->parent == NULL) {
+		opt->opt_name = MSG_Use_Different_Part_Scheme;
+		opt->opt_flags = OPT_EXIT;
+		opt->opt_action = set_switch_scheme;
+		opt++;
+		num_opts++;
+	}
+
 	menu = new_menu(MSG_Select_your_choice, options, num_opts,
-	    -1, -10, 0, 0, MC_NOEXITOPT, NULL, NULL, NULL, NULL, NULL);
+	    -1, -10, 0, 0, 0, NULL, NULL, NULL, NULL, MSG_cancel);
 	if (menu != -1) {
 		get_menudesc(menu)->expand_act = expand_all_option_texts;
 		process_menu(menu, &ai);
@@ -912,17 +863,18 @@ ask_layout(struct disk_partitions *parts, bool have_existing)
 static void
 merge_part_with_wanted(struct disk_partitions *parts, part_id pno,
     const struct disk_part_info *info, struct partition_usage_set *wanted,
-    bool is_outer)
+    size_t wanted_num, bool is_outer)
 {
 	struct part_usage_info *infos;
 
 	/*
 	 * does this partition match something in the wanted set?
 	 */
-	for (size_t i = 0; i < wanted->num; i++) {
+	for (size_t i = 0; i < wanted_num; i++) {
 		if (wanted->infos[i].type != info->nat_type->generic_ptype)
 			continue;
-		if (info->last_mounted != NULL && info->last_mounted[0] != 0 &&
+		if (wanted->infos[i].type == PT_root &&
+		    info->last_mounted != NULL && info->last_mounted[0] != 0 &&
 		    strcmp(info->last_mounted, wanted->infos[i].mount) != 0)
 			continue;
 		if (wanted->infos[i].cur_part_id != NO_PART)
@@ -933,10 +885,14 @@ merge_part_with_wanted(struct disk_partitions *parts, part_id pno,
 		wanted->infos[i].cur_start = info->start;
 		wanted->infos[i].flags &= ~PUIFLAG_EXTEND;
 		if (wanted->infos[i].fs_type != FS_UNUSED &&
-		    wanted->infos[i].type != PT_swap)
+		    wanted->infos[i].type != PT_swap &&
+		    info->last_mounted != NULL &&
+		    info->last_mounted[0] != 0)
 			wanted->infos[i].instflags |= PUIINST_MOUNT;
 		if (is_outer)
 			wanted->infos[i].flags |= PUIFLG_IS_OUTER;
+		else
+			wanted->infos[i].flags &= ~PUIFLG_IS_OUTER;
 		return;
 	}
 
@@ -988,14 +944,20 @@ static void
 fill_defaults(struct partition_usage_set *wanted, struct disk_partitions *parts,
     daddr_t ptstart, daddr_t ptsize)
 {
-	size_t i, root = ~0U, usr = ~0U, swap = ~0U;
-	daddr_t free_space, dump_space;
+	size_t i, root = ~0U, usr = ~0U, swap = ~0U, def_usr = ~0U;
+	daddr_t free_space, dump_space, required;
 #if defined(DEFAULT_UFS2) && !defined(HAVE_UFS2_BOOT)
 	size_t boot = ~0U;
 #endif
 
 	memset(wanted, 0, sizeof(*wanted));
 	wanted->parts = parts;
+	if (ptstart > parts->disk_start)
+		wanted->reserved_space = ptstart - parts->disk_start;
+	if ((ptstart + ptsize) < (parts->disk_start+parts->disk_size))
+		wanted->reserved_space +=
+		    (parts->disk_start+parts->disk_size) -
+		    (ptstart + ptsize);
 	wanted->num = __arraycount(default_parts_init);
 	wanted->infos = calloc(wanted->num, sizeof(*wanted->infos));
 	if (wanted->infos == NULL) {
@@ -1004,13 +966,51 @@ fill_defaults(struct partition_usage_set *wanted, struct disk_partitions *parts,
 	}
 
 	memcpy(wanted->infos, default_parts_init, sizeof(default_parts_init));
+
+#ifdef HAVE_TMPFS
+	if (get_ramsize() >= SMALL_RAM_SIZE) {
+		for (i = 0; i < wanted->num; i++) {
+			if (wanted->infos[i].type != PT_root ||
+			    wanted->infos[i].fs_type != FS_TMPFS)
+				continue;
+			/* default tmpfs to 1/4 RAM */
+			wanted->infos[i].size = -25;
+			wanted->infos[i].def_size = -25;
+			break;
+		}
+	}
+#endif
+
+#ifdef MD_PART_DEFAULTS
+	MD_PART_DEFAULTS(pm, wanted->infos, wanted->num);
+#endif
+
 	for (i = 0; i < wanted->num; i++) {
 		wanted->infos[i].parts = parts;
 		wanted->infos[i].cur_part_id = NO_PART;
+		if (wanted->infos[i].type == PT_undef &&
+		    wanted->infos[i].fs_type != FS_UNUSED) {
+			const struct part_type_desc *pt =
+			    parts->pscheme->get_fs_part_type(PT_undef,
+			    wanted->infos[i].fs_type,
+			    wanted->infos[i].fs_version);
+			if (pt != NULL)
+				wanted->infos[i].type = pt->generic_ptype;
+		}
+		if (wanted->parts->parent != NULL &&
+		    (wanted->infos[i].fs_type == FS_MSDOS ||
+		     wanted->infos[i].fs_type == FS_EX2FS))
+			wanted->infos[i].flags |=
+			    PUIFLG_ADD_INNER|PUIFLAG_ADD_OUTER;
 
 #if DEFSWAPSIZE == -1
-		if (wanted->infos[i].type == PT_swap)
-			wanted->infos[i].size = get_ramsize() * (MEG / 512);
+		if (wanted->infos[i].type == PT_swap) {
+#ifdef	MD_MAY_SWAP_TO
+			if (MD_MAY_SWAP_TO(wanted->parts->disk))
+#endif
+				wanted->infos[i].size =
+				    get_ramsize() * (MEG / 512);
+		}
 #endif
 		if (wanted->infos[i].type == PT_swap && swap > wanted->num)
 			swap = i;
@@ -1018,38 +1018,38 @@ fill_defaults(struct partition_usage_set *wanted, struct disk_partitions *parts,
 		if (wanted->infos[i].instflags & PUIINST_BOOT)
 			boot = i;
 #endif
-		if (wanted->infos[i].type == PT_root
-		    && wanted->infos[i].size > 0) {
-			if (strcmp(wanted->infos[i].mount, "/") == 0)
+		if (wanted->infos[i].type == PT_root) {
+			if (strcmp(wanted->infos[i].mount, "/") == 0) {
 				root = i;
-			else if (strcmp(wanted->infos[i].mount, "/usr") == 0)
-				usr = i;
-			wanted->infos[i].fs_type = FS_BSDFFS;
+			} else if (
+			    strcmp(wanted->infos[i].mount, "/usr") == 0) {
+				if (wanted->infos[i].size > 0)
+					usr = i;
+				else
+					def_usr = i;
+			}
+			if (wanted->infos[i].fs_type == FS_UNUSED)
+				wanted->infos[i].fs_type = FS_BSDFFS;
+			if (wanted->infos[i].fs_type == FS_BSDFFS) {
 #ifdef DEFAULT_UFS2
 #ifndef HAVE_UFS2_BOOT
-			if (boot < wanted->num || i != root)
+				if (boot < wanted->num || i != root)
 #endif
-				wanted->infos[i].fs_version = 2;
+					wanted->infos[i].fs_version = 2;
 #endif
+			}
 		}
-		if ((wanted->infos[i].flags & PUIFLG_JUST_MOUNTPOINT) &&
-		    wanted->infos[i].size == 0)
-			/* default tmpfs to 1/4 RAM */
-			wanted->infos[i].def_size =
-			    get_ramsize() * (MEG/512/4);
 	}
-
-#ifdef MD_PART_DEFAULTS
-	MD_PART_DEFAULTS(pm, wanted->infos[i].parts, wanted->num);
-#endif
 
 	/*
 	 * Now we have the defaults as if we were installing to an
 	 * empty disk. Merge the partitions in target range that are already
 	 * there (match with wanted) or are there additionaly.
 	 * The only thing outside of target range that we care for
-	 * is a potential swap partition - we assume one is enough.
+	 * are FAT partitions, EXT2FS partitions, and a potential
+	 * swap partition - we assume one is enough.
 	 */
+	size_t num = wanted->num;
 	if (parts->parent) {
 		for (part_id pno = 0; pno < parts->parent->num_part; pno++) {
 			struct disk_part_info info;
@@ -1057,10 +1057,12 @@ fill_defaults(struct partition_usage_set *wanted, struct disk_partitions *parts,
 			if (!parts->parent->pscheme->get_part_info(
 			    parts->parent, pno, &info))
 				continue;
-			if (info.nat_type->generic_ptype != PT_swap)
+			if (info.nat_type->generic_ptype != PT_swap &&
+			    info.fs_type != FS_MSDOS &&
+			    info.fs_type != FS_EX2FS)
 				continue;
 			merge_part_with_wanted(parts->parent, pno, &info,
-			    wanted, true);
+			    wanted, num, true);
 			break;
 		}
 	}
@@ -1079,7 +1081,7 @@ fill_defaults(struct partition_usage_set *wanted, struct disk_partitions *parts,
 			continue;
 
 		merge_part_with_wanted(parts, pno, &info,
-		    wanted, false);
+		    wanted, num, false);
 	}
 
 	daddr_t align = parts->pscheme->get_part_alignment(parts);
@@ -1130,9 +1132,21 @@ fill_defaults(struct partition_usage_set *wanted, struct disk_partitions *parts,
 	 * adjustments, so we don't present the user inherently
 	 * impossible defaults.
 	 */
-	free_space = parts->free_space;
+	free_space = parts->free_space - wanted->reserved_space;
+	required = 0;
+	if (root < wanted->num)
+		required += wanted->infos[root].size;
+	if (usr < wanted->num)
+		required += wanted->infos[usr].size;
+	else if (def_usr < wanted->num)
+		required += wanted->infos[def_usr].def_size;
+	free_space -= required;
 	for (i = 0; i < wanted->num; i++) {
+		if (i == root || i == usr)
+			continue;	/* already accounted above */
 		if (wanted->infos[i].cur_part_id != NO_PART)
+			continue;
+		if (wanted->infos[i].size == 0)
 			continue;
 		if (wanted->infos[i].flags
 		    & (PUIFLG_IS_OUTER|PUIFLG_JUST_MOUNTPOINT))
@@ -1148,15 +1162,48 @@ fill_defaults(struct partition_usage_set *wanted, struct disk_partitions *parts,
 		free_space += inc;
 		wanted->infos[swap].size -= inc;
 	}
-
 	if (root < wanted->num) {
 		/* Add space for 2 system dumps to / (traditional) */
 		dump_space = get_ramsize() * (MEG/512);
 		dump_space = roundup(dump_space, align);
 		if (free_space > dump_space*2)
 			dump_space *= 2;
-		if (free_space > dump_space)
+		if (free_space > dump_space) {
 			wanted->infos[root].size += dump_space;
+			free_space -= dump_space;
+		}
+	}
+	if (wanted->infos[root].limit > 0 &&
+	    (wanted->infos[root].cur_start + wanted->infos[root].size >
+		wanted->infos[root].limit ||
+	    (wanted->infos[root].flags & PUIFLAG_EXTEND &&
+	    (wanted->infos[root].cur_start + wanted->infos[root].size
+	     + free_space > wanted->infos[root].limit)))) {
+		if (usr >= wanted->num && def_usr < wanted->num) {
+			usr = def_usr;
+			wanted->infos[usr].size = wanted->infos[root].size
+			    - wanted->infos[root].limit;
+			if (wanted->infos[usr].size <= 0)
+				wanted->infos[usr].size = max(1,
+				    wanted->infos[usr].def_size);
+			wanted->infos[root].size =
+			    wanted->infos[root].limit;
+			if (wanted->infos[root].flags & PUIFLAG_EXTEND) {
+				wanted->infos[root].flags &= ~PUIFLAG_EXTEND;
+				wanted->infos[usr].flags |= PUIFLAG_EXTEND;
+			}
+		} else if (usr < wanted->num) {
+			/* move space from root to usr */
+			daddr_t spill = wanted->infos[root].size -
+			    wanted->infos[root].limit;
+			spill = roundup(spill, align);
+			wanted->infos[root].size =
+			    wanted->infos[root].limit;
+			wanted->infos[usr].size = spill;
+		} else {
+			wanted->infos[root].size =
+			    wanted->infos[root].limit;
+		}
 	}
 }
 
@@ -1175,7 +1222,7 @@ sort_and_sync_parts(struct partition_usage_set *pset)
 	size_t i, j, no;
 	part_id pno;
 
-	pset->cur_free_space = pset->parts->free_space;
+	pset->cur_free_space = pset->parts->free_space - pset->reserved_space;
 
 	/* count non-empty entries that are not in pset->parts */
 	no = pset->parts->num_part;
@@ -1207,8 +1254,10 @@ sort_and_sync_parts(struct partition_usage_set *pset)
 			continue;
 		if (pset->parts != pset->infos[i].parts)
 			continue;
-		if (pset->infos[i].flags &
-		    (PUIFLG_IS_OUTER|PUIFLG_JUST_MOUNTPOINT))
+		if (pset->infos[i].flags & PUIFLG_JUST_MOUNTPOINT)
+			continue;
+		if ((pset->infos[i].flags & (PUIFLG_IS_OUTER|PUIFLG_ADD_INNER))
+		    == PUIFLG_IS_OUTER)
 			continue;
 		if (pno >= pset->parts->num_part)
 			continue;
@@ -1235,7 +1284,7 @@ sort_and_sync_parts(struct partition_usage_set *pset)
 		infos[pno].fs_version = info.fs_sub_type;
 	}
 	/* Add the non-partition entires after that */
-	j = pset->num;
+	j = pset->parts->num_part;
 	for (i = 0; i < pset->num; i++) {
 		if (j >= no)
 			break;
@@ -1253,16 +1302,79 @@ sort_and_sync_parts(struct partition_usage_set *pset)
 	pset->infos = infos;
 }
 
+#ifndef NO_CLONES
+/*
+ * Convert clone entries with more than one source into
+ * several entries with a single source each.
+ */
 static void
-apply_settings_to_partitions(struct pm_devs *p, struct disk_partitions *parts,
-    struct partition_usage_set *wanted, daddr_t start, daddr_t size)
+normalize_clones(struct part_usage_info **infos, size_t *num)
+{
+	size_t i, j, add_clones;
+	struct part_usage_info *ui, *src, *target;
+	struct disk_part_info info;
+	struct selected_partition *clone;
+
+	for (add_clones = 0, i = 0; i < *num; i++) {
+		if ((*infos)[i].clone_src != NULL &&
+		    (*infos)[i].flags & PUIFLG_CLONE_PARTS &&
+		    (*infos)[i].cur_part_id == NO_PART)
+			add_clones += (*infos)[i].clone_src->num_sel-1;
+	}
+	if (add_clones == 0)
+		return;
+
+	ui = calloc(*num+add_clones, sizeof(**infos));
+	if (ui == NULL)
+		return;	/* can not handle this well here, drop some clones */
+
+	/* walk the list and dedup clones */
+	for (src = *infos, target = ui, i = 0; i < *num; i++) {
+		if (src != target)
+			*target = *src;
+		if (target->clone_src != NULL &&
+		    (target->flags & PUIFLG_CLONE_PARTS) &&
+		    target->cur_part_id == NO_PART) {
+			for (j = 0; j < src->clone_src->num_sel; j++) {
+				if (j > 0) {
+					target++;
+					*target = *src;
+				}
+				target->clone_ndx = j;
+				clone = &target->clone_src->selection[j];
+				clone->parts->pscheme->get_part_info(
+				    clone->parts, clone->id, &info);
+				target->size = info.size;
+			}
+		}
+		target++;
+		src++;
+	}
+	*num += add_clones;
+	assert((target-ui) >= 0 && (size_t)(target-ui) == *num);
+	free(*infos);
+	*infos = ui;
+}
+#endif
+
+static void
+apply_settings_to_partitions(struct disk_partitions *parts,
+    struct partition_usage_set *wanted, daddr_t start, daddr_t xsize)
 {
 	size_t i, exp_ndx = ~0U;
 	daddr_t planned_space = 0, nsp, from, align;
 	struct disk_part_info *infos;
+#ifndef NO_CLONES
+	struct disk_part_info cinfo, srcinfo;
+	struct selected_partition *sp;
+#endif
 	struct disk_part_free_space space;
 	struct disk_partitions *ps = NULL;
 	part_id pno, new_part_id;
+
+#ifndef NO_CLONES
+	normalize_clones(&wanted->infos, &wanted->num);
+#endif
 
 	infos = calloc(wanted->num, sizeof(*infos));
 	if (infos == NULL) {
@@ -1271,11 +1383,12 @@ apply_settings_to_partitions(struct pm_devs *p, struct disk_partitions *parts,
 	}
 
 	align = wanted->parts->pscheme->get_part_alignment(wanted->parts);
-
 	/*
 	 * Pass one: calculate space available for expanding
 	 * the marked partition.
 	 */
+	if (parts->free_space != parts->disk_size)
+		planned_space = align;	/* align first part */
 	for (i = 0; i < wanted->num; i++) {
 		if ((wanted->infos[i].flags & PUIFLAG_EXTEND) &&
 		    exp_ndx == ~0U)
@@ -1287,20 +1400,36 @@ apply_settings_to_partitions(struct pm_devs *p, struct disk_partitions *parts,
 			ps = wanted->infos[i].flags & PUIFLG_IS_OUTER ?
 			    parts->parent : parts;
 
-			if (ps->pscheme->get_part_info(ps,
-			     wanted->infos[i].cur_part_id, &infos[i]))
+			ps->pscheme->get_part_info(ps,
+			     wanted->infos[i].cur_part_id, &infos[i]);
+			if (!(wanted->infos[i].flags & PUIFLG_IS_OUTER))
 				nsp -= infos[i].size;
 		}
-		if (nsp > 0)
-			planned_space += roundup(nsp, align);
+		if (nsp <= 0)
+			continue;
+		planned_space += roundup(nsp, align);
 	}
 
 	/*
 	 * Expand the pool partition (or shrink, if we overran),
+	 * but check size limits.
 	 */
-	if (exp_ndx < wanted->num)
-		wanted->infos[exp_ndx].size +=
-		    parts->free_space - planned_space;
+	if (exp_ndx < wanted->num) {
+		daddr_t free_space = parts->free_space - planned_space;
+		daddr_t new_size = wanted->infos[exp_ndx].size;
+		if (free_space > 0)
+			new_size += roundup(free_space,align);
+
+		if (wanted->infos[exp_ndx].limit > 0 &&
+		    (new_size + wanted->infos[exp_ndx].cur_start)
+		     > wanted->infos[exp_ndx].limit) {
+			wanted->infos[exp_ndx].size =
+			    wanted->infos[exp_ndx].limit
+			    - wanted->infos[exp_ndx].cur_start;
+		} else {
+			wanted->infos[exp_ndx].size = new_size;
+		}
+	}
 
 	/*
 	 * Now it gets tricky: we want the wanted partitions in order
@@ -1325,47 +1454,223 @@ apply_settings_to_partitions(struct pm_devs *p, struct disk_partitions *parts,
 		    infos[i].start);
 		if (free_size < wanted->infos[i].size)
 			continue;
-		infos[i].size = wanted->infos[i].size;
-		ps->pscheme->set_part_info(ps, want->cur_part_id,
-		    &infos[i], NULL);
+		if (infos[i].size != wanted->infos[i].size) {
+			infos[i].size = wanted->infos[i].size;
+			ps->pscheme->set_part_info(ps, want->cur_part_id,
+			    &infos[i], NULL);
+		}
 	}
-	/* Now add new partitions */
-	from = -1;
-	for (i = 0; i < wanted->num && from < wanted->parts->disk_size; i++) {
+
+	from = start > 0 ? start : -1;
+	/*
+	 * First add all outer partitions - we need to align those exactly
+	 * with the inner counterpart later.
+	 */
+	if (parts->parent) {
+		ps = parts->parent;
+		daddr_t outer_align = ps->pscheme->get_part_alignment(ps);
+
+		for (i = 0; i < wanted->num; i++) {
+			struct part_usage_info *want = &wanted->infos[i];
+
+			if (want->cur_part_id != NO_PART)
+				continue;
+			if (!(want->flags & PUIFLAG_ADD_OUTER))
+				continue;
+			if (want->size <= 0)
+				continue;
+
+			size_t cnt = ps->pscheme->get_free_spaces(ps,
+			    &space, 1, want->size-2*outer_align,
+			    outer_align, from, -1);
+
+			if (cnt == 0)	/* no free space for this partition */
+				continue;
+
+			infos[i].start = space.start;
+			infos[i].size = min(want->size, space.size);
+			infos[i].nat_type =
+			    ps->pscheme->get_fs_part_type(
+			        want->type, want->fs_type, want->fs_version);
+			infos[i].last_mounted = want->mount;
+			infos[i].fs_type = want->fs_type;
+			infos[i].fs_sub_type = want->fs_version;
+			infos[i].fs_opt1 = want->fs_opt1;
+			infos[i].fs_opt2 = want->fs_opt2;
+			infos[i].fs_opt3 = want->fs_opt3;
+			new_part_id = ps->pscheme->add_partition(ps,
+			    &infos[i], NULL);
+			if (new_part_id == NO_PART)
+				continue;	/* failed to add, skip */
+
+			ps->pscheme->get_part_info(ps,
+			    new_part_id, &infos[i]);
+			want->cur_part_id = new_part_id;
+
+			want->flags |= PUIFLG_ADD_INNER|PUIFLG_IS_OUTER;
+			from = roundup(infos[i].start +
+			    infos[i].size, outer_align);
+		}
+	}
+
+	/*
+	 * Now add new inner partitions (and cloned partitions)
+	 */
+	for (i = 0; i < wanted->num; i++) {
+
+		daddr_t limit = wanted->parts->disk_size + wanted->parts->disk_start;
+		if (from >= limit)
+			break;
+
 		struct part_usage_info *want = &wanted->infos[i];
 
 		if (want->cur_part_id != NO_PART)
+			continue;
+		if (want->flags & (PUIFLG_JUST_MOUNTPOINT|PUIFLG_IS_OUTER))
+			continue;
+#ifndef NO_CLONES
+		if ((want->flags & PUIFLG_CLONE_PARTS) &&
+		    want->clone_src != NULL &&
+		    want->clone_ndx < want->clone_src->num_sel) {
+			sp = &want->clone_src->selection[want->clone_ndx];
+			if (!sp->parts->pscheme->get_part_info(
+			    sp->parts, sp->id, &srcinfo))
+				continue;
+			if (!wanted->parts->pscheme->
+			    adapt_foreign_part_info(wanted->parts,
+			    &cinfo, sp->parts->pscheme, &srcinfo))
+				continue;
+
+			/* find space for cinfo and add a partition */
+			size_t cnt = wanted->parts->pscheme->get_free_spaces(
+			    wanted->parts, &space, 1, want->size-align, align,
+			    from, -1);
+			if (cnt == 0)
+				cnt = wanted->parts->pscheme->get_free_spaces(
+				    wanted->parts, &space, 1,
+				    want->size-5*align, align, from, -1);
+
+			if (cnt == 0)
+				continue; /* no free space for this clone */
+
+			infos[i] = cinfo;
+			infos[i].start = space.start;
+			new_part_id = wanted->parts->pscheme->add_partition(
+			    wanted->parts, &infos[i], NULL);
+		} else {
+#else
+		{
+#endif
+			if (want->size <= 0)
+				continue;
+			size_t cnt = wanted->parts->pscheme->get_free_spaces(
+			    wanted->parts, &space, 1, want->size-align, align,
+			    from, -1);
+			if (cnt == 0)
+				cnt = wanted->parts->pscheme->get_free_spaces(
+				    wanted->parts, &space, 1,
+				    want->size-5*align, align, from, -1);
+
+			if (cnt == 0)
+				continue; /* no free space for this partition */
+
+			infos[i].start = space.start;
+			infos[i].size = min(want->size, space.size);
+			infos[i].nat_type =
+			    wanted->parts->pscheme->get_fs_part_type(
+			    want->type, want->fs_type, want->fs_version);
+			infos[i].last_mounted = want->mount;
+			infos[i].fs_type = want->fs_type;
+			infos[i].fs_sub_type = want->fs_version;
+			infos[i].fs_opt1 = want->fs_opt1;
+			infos[i].fs_opt2 = want->fs_opt2;
+			infos[i].fs_opt3 = want->fs_opt3;
+			if (want->fs_type != FS_UNUSED &&
+			    want->type != PT_swap) {
+				want->instflags |= PUIINST_NEWFS;
+				if (want->mount[0] != 0)
+					want->instflags |= PUIINST_MOUNT;
+			}
+			new_part_id = wanted->parts->pscheme->add_partition(
+			    wanted->parts, &infos[i], NULL);
+		}
+
+		if (new_part_id == NO_PART)
+			continue;	/* failed to add, skip */
+
+		wanted->parts->pscheme->get_part_info(
+		    wanted->parts, new_part_id, &infos[i]);
+		from = roundup(infos[i].start+infos[i].size, align);
+	}
+
+
+	/*
+	* If there are any outer partitions that we need as inner ones
+	 * too, add them to the inner partitioning scheme.
+	 */
+	for (i = 0; i < wanted->num; i++) {
+		struct part_usage_info *want = &wanted->infos[i];
+
+		if (want->cur_part_id == NO_PART)
 			continue;
 		if (want->flags & PUIFLG_JUST_MOUNTPOINT)
 			continue;
 		if (want->size <= 0)
 			continue;
 
-		size_t cnt = wanted->parts->pscheme->get_free_spaces(
-		    wanted->parts, &space, 1, want->size-2*align, align, from,
-		    -1);
+		if ((want->flags & (PUIFLG_ADD_INNER|PUIFLG_IS_OUTER)) !=
+		    (PUIFLG_ADD_INNER|PUIFLG_IS_OUTER))
+			continue;
 
-		if (cnt == 0)
-			continue;	/* no free space for this partition */
+		new_part_id = NO_PART;
+		for (part_id j = 0; new_part_id == NO_PART &&
+		    j < wanted->parts->num_part; j++) {
+			struct disk_part_info test;
 
-		infos[i].start = space.start;
-		infos[i].size = min(want->size, space.size);
-		infos[i].nat_type =
-		    wanted->parts->pscheme->get_fs_part_type(want->fs_type,
-		    want->fs_version);
-		infos[i].last_mounted = want->mount;
-		infos[i].fs_type = want->fs_type;
-		infos[i].fs_sub_type = want->fs_version;
-		if (want->fs_type != FS_UNUSED && want->type != PT_swap)
-			want->instflags |= PUIINST_NEWFS|PUIINST_MOUNT;
-		new_part_id = wanted->parts->pscheme->add_partition(
-		    wanted->parts, &infos[i], NULL);
-		if (new_part_id == NO_PART)
-			continue;	/* failed to add, skip */
+			if (!wanted->parts->pscheme->get_part_info(
+			    wanted->parts, j, &test))
+				continue;
+			if (test.start == want->cur_start &&
+			    test.size == want->size)
+				new_part_id = j;
+		}
+
+		if (new_part_id == NO_PART) {
+			infos[i].start = want->cur_start;
+			infos[i].size = want->size;
+			infos[i].nat_type = wanted->parts->pscheme->
+			    get_fs_part_type(want->type, want->fs_type,
+			    want->fs_version);
+			infos[i].last_mounted = want->mount;
+			infos[i].fs_type = want->fs_type;
+			infos[i].fs_sub_type = want->fs_version;
+			infos[i].fs_opt1 = want->fs_opt1;
+			infos[i].fs_opt2 = want->fs_opt2;
+			infos[i].fs_opt3 = want->fs_opt3;
+
+			if (wanted->parts->pscheme->add_outer_partition
+			    != NULL)
+				new_part_id = wanted->parts->pscheme->
+				    add_outer_partition(
+				    wanted->parts, &infos[i], NULL);
+			else
+				new_part_id = wanted->parts->pscheme->
+				    add_partition(
+				    wanted->parts, &infos[i], NULL);
+
+			if (new_part_id == NO_PART)
+				continue;	/* failed to add, skip */
+		}
 
 		wanted->parts->pscheme->get_part_info(
 		    wanted->parts, new_part_id, &infos[i]);
-		from = rounddown(infos[i].start+infos[i].size+align, align);
+		want->parts = wanted->parts;
+		if (want->fs_type != FS_UNUSED &&
+		    want->type != PT_swap) {
+			want->instflags |= PUIINST_NEWFS;
+			if (want->mount[0] != 0)
+				want->instflags |= PUIINST_MOUNT;
+		}
 	}
 
 	/*
@@ -1373,14 +1678,16 @@ apply_settings_to_partitions(struct pm_devs *p, struct disk_partitions *parts,
 	 */
 	for (i = 0; i < wanted->num; i++)
 		wanted->infos[i].cur_part_id = NO_PART;
-	for (pno = 0; pno < ps->num_part; pno++) {
+	for (pno = 0; pno < parts->num_part; pno++) {
 		struct disk_part_info t;
 
-		if (!ps->pscheme->get_part_info(ps, pno, &t))
+		if (!parts->pscheme->get_part_info(parts, pno, &t))
 			continue;
 
 		for (i = 0; i < wanted->num; i++) {
 			if (wanted->infos[i].cur_part_id != NO_PART)
+				continue;
+			if (wanted->infos[i].size <= 0)
 				continue;
 			if (t.start == infos[i].start) {
 				wanted->infos[i].cur_part_id = pno;
@@ -1397,7 +1704,7 @@ apply_settings_to_partitions(struct pm_devs *p, struct disk_partitions *parts,
 }
 
 static void
-replace_by_default(struct pm_devs *p, struct disk_partitions *parts,
+replace_by_default(struct disk_partitions *parts,
     daddr_t start, daddr_t size, struct partition_usage_set *wanted)
 {
 
@@ -1409,11 +1716,11 @@ replace_by_default(struct pm_devs *p, struct disk_partitions *parts,
 		assert(parts->num_part == 0);
 
 	fill_defaults(wanted, parts, start, size);
-	apply_settings_to_partitions(p, parts, wanted, start, size);
+	apply_settings_to_partitions(parts, wanted, start, size);
 }
 
 static bool
-edit_with_defaults(struct pm_devs *p, struct disk_partitions *parts,
+edit_with_defaults(struct disk_partitions *parts,
     daddr_t start, daddr_t size, struct partition_usage_set *wanted)
 {
 	bool ok;
@@ -1421,35 +1728,35 @@ edit_with_defaults(struct pm_devs *p, struct disk_partitions *parts,
 	fill_defaults(wanted, parts, start, size);
 	ok = get_ptn_sizes(wanted);
 	if (ok)
-		apply_settings_to_partitions(p, parts, wanted, start, size);
+		apply_settings_to_partitions(parts, wanted, start, size);
 	return ok;
 }
 
 /*
  * md back-end code for menu-driven BSD disklabel editor.
- * returns 0 on failure, 1 on success.
+ * returns 0 on failure, 1 on success, -1 for restart.
  * fills the install target with a list for newfs/fstab.
  */
-bool
+int
 make_bsd_partitions(struct install_partition_desc *install)
 {
 	struct disk_partitions *parts = pm->parts;
 	const struct disk_partitioning_scheme *pscheme;
 	struct partition_usage_set wanted;
+	daddr_t p_start, p_size;
 	enum layout_type layoutkind = LY_SETSIZES;
 	bool have_existing;
 
 	if (pm && pm->no_part && parts == NULL)
-		return true;
-
+		return 1;
 	if (parts == NULL) {
-		pscheme = select_part_scheme(pm, NULL, true, NULL);
+		pscheme = select_part_scheme(pm, NULL, !pm->no_mbr, NULL);
 		if (pscheme == NULL)
-			return false;
+			return 0;
 		parts = pscheme->create_new_for_disk(pm->diskdev,
-		    0, pm->dlsize, pm->dlsize, true);
+		    0, pm->dlsize, true, NULL);
 		if (parts == NULL)
-			return false;
+			return 0;
 		pm->parts = parts;
 	} else {
 		pscheme = parts->pscheme;
@@ -1468,19 +1775,13 @@ make_bsd_partitions(struct install_partition_desc *install)
 	have_existing = check_existing_netbsd(parts);
 
 	/*
-	 * Initialize global variables that track space used on this disk.
+	 * Make sure the cylinder size multiplier/divisor and disk sieze are
+	 * valid
 	 */
-	if (pm->ptsize == 0)
-		pm->ptsize = pm->dlsize - pm->ptstart;
-	if (pm->dlsize == 0)
-		pm->dlsize = pm->ptstart + pm->ptsize;
-
-	if (logfp) fprintf(logfp, "dlsize=%" PRId64 " ptsize=%" PRId64
-	    " ptstart=%" PRId64 "\n",
-	    pm->dlsize, pm->ptsize, pm->ptstart);
-
 	if (pm->current_cylsize == 0)
 		pm->current_cylsize = pm->dlcylsize;
+	if (pm->ptsize == 0)
+		pm->ptsize = pm->dlsize;
 
 	/* Ask for layout type -- standard or special */
 	if (partman_go == 0) {
@@ -1510,35 +1811,131 @@ make_bsd_partitions(struct install_partition_desc *install)
 		    bsd_size, min_size, x_size);
 		msg_display_add("\n\n");
 		layoutkind = ask_layout(parts, have_existing);
+		if (layoutkind == LY_ERROR)
+			return 0;
 	}
 
-	if (layoutkind == LY_USEDEFAULT) {
-		replace_by_default(pm, parts, pm->ptstart, pm->ptsize,
+	if (layoutkind == LY_USEDEFAULT || layoutkind == LY_SETSIZES) {
+		/* calc available disk area for the NetBSD partitions */
+		p_start = pm->ptstart;
+		p_size = pm->ptsize;
+		if (parts->parent != NULL &&
+		    parts->parent->pscheme->guess_install_target != NULL)
+			parts->parent->pscheme->guess_install_target(
+			    parts->parent, &p_start, &p_size);
+	}
+	if (layoutkind == LY_OTHERSCHEME) {
+		parts->pscheme->destroy_part_scheme(parts);
+		return -1;
+	} else if (layoutkind == LY_USEDEFAULT) {
+		replace_by_default(parts, p_start, p_size,
 		    &wanted);
 	} else if (layoutkind == LY_SETSIZES) {
-		if (!edit_with_defaults(pm, parts, pm->ptstart, pm->ptsize,
+		if (!edit_with_defaults(parts, p_start, p_size,
 		    &wanted)) {
 			free_usage_set(&wanted);
-			return false;
+			return 0;
 		}
 	} else {
 		usage_set_from_parts(&wanted, parts);
 	}
 
 	/*
+	 * Make sure the target root partition is properly marked,
+	 * check for existing EFI boot partition.
+	 */
+	bool have_inst_target = false;
+#ifdef HAVE_EFI_BOOT
+	daddr_t target_start = -1;
+#endif
+	for (size_t i = 0; i < wanted.num; i++) {
+		if (wanted.infos[i].cur_flags & PTI_INSTALL_TARGET) {
+			have_inst_target = true;
+#ifdef HAVE_EFI_BOOT
+			target_start = wanted.infos[i].cur_start;
+#endif
+			break;
+		 }
+	}
+	if (!have_inst_target) {
+		for (size_t i = 0; i < wanted.num; i++) {
+			struct disk_part_info info;
+
+			if (wanted.infos[i].type != PT_root ||
+			    strcmp(wanted.infos[i].mount, "/") != 0)
+				continue;
+			wanted.infos[i].cur_flags |= PTI_INSTALL_TARGET;
+
+			if (!wanted.parts->pscheme->get_part_info(wanted.parts,
+			    wanted.infos[i].cur_part_id, &info))
+				break;
+			info.flags |= PTI_INSTALL_TARGET;
+			wanted.parts->pscheme->set_part_info(wanted.parts,
+			    wanted.infos[i].cur_part_id, &info, NULL);
+#ifdef HAVE_EFI_BOOT
+			target_start = wanted.infos[i].cur_start;
+#endif
+			break;
+		}
+	}
+#ifdef HAVE_EFI_BOOT
+	size_t boot_part = ~0U;
+	for (part_id i = 0; i < wanted.num; i++) {
+		if ((wanted.infos[i].cur_flags & PTI_BOOT) != 0 ||
+		    wanted.infos[i].type ==  PT_EFI_SYSTEM) {
+			boot_part = i;
+			break;
+		}
+	}
+	if (boot_part == ~0U) {
+		for (part_id i = 0; i < wanted.num; i++) {
+			/*
+			 * heuristic to recognize existing MBR FAT
+			 * partitions as EFI without looking for
+			 * details
+			 */
+			if ((wanted.infos[i].type != PT_FAT &&
+			    wanted.infos[i].type != PT_EFI_SYSTEM) ||
+			    wanted.infos[i].fs_type != FS_MSDOS)
+				continue;
+			daddr_t ps = wanted.infos[i].cur_start;
+			daddr_t pe = ps + wanted.infos[i].size;
+			if (target_start >= 0 &&
+			   (ps >= target_start || pe >= target_start))
+				continue;
+			boot_part = i;
+			break;
+		}
+	}
+	if (boot_part != ~0U) {
+		struct disk_part_info info;
+
+		if (wanted.parts->pscheme->get_part_info(wanted.parts,
+		    wanted.infos[boot_part].cur_part_id, &info)) {
+			info.flags |= PTI_BOOT;
+			wanted.parts->pscheme->set_part_info(wanted.parts,
+			    wanted.infos[boot_part].cur_part_id, &info, NULL);
+		}
+		wanted.infos[boot_part].instflags |= PUIINST_BOOT;
+	}
+#endif
+
+	/*
 	 * OK, we have a partition table. Give the user the chance to
 	 * edit it and verify it's OK, or abort altogether.
 	 */
  	for (;;) {
-		int rv = edit_and_check_label(pm, &wanted);
+		int rv = edit_and_check_label(pm, &wanted, true);
 		if (rv == 0) {
 			msg_display(MSG_abort_part);
 			free_usage_set(&wanted);
-			return false;
+			return 0;
 		}
 		/* update install infos */
 		install->num = wanted.num;
 		install->infos = wanted.infos;
+		install->write_back = wanted.write_back;
+		install->num_write_back = wanted.num_write_back;
 		/* and check them */
 		if (check_partitions(install))
 			break;
@@ -1546,11 +1943,16 @@ make_bsd_partitions(struct install_partition_desc *install)
 
 	/* we moved infos from wanted to install target */
 	wanted.infos = NULL;
+	wanted.write_back = NULL;
 	free_usage_set(&wanted);
 
 	/* Everything looks OK. */
-	return true;
+	return 1;
 }
+
+#ifndef MD_NEED_BOOTBLOCK
+#define MD_NEED_BOOTBLOCK(A)	true
+#endif
 
 /*
  * check that there is at least a / somewhere.
@@ -1567,30 +1969,34 @@ check_partitions(struct install_partition_desc *install)
 #endif
 
 #ifdef HAVE_BOOTXX_xFS
-	/* check if we have boot code for the root partition type */
-	bootxx = bootxx_name(install);
-	if (bootxx != NULL) {
-		rv = access(bootxx, R_OK);
-		free(bootxx);
-	} else
-		rv = -1;
-	if (rv != 0) {
-		hit_enter_to_continue(NULL, MSG_No_Bootcode);
-		return false;
+	if (MD_NEED_BOOTBLOCK(install)) {
+		/* check if we have boot code for the root partition type */
+		bootxx = bootxx_name(install);
+		if (bootxx != NULL) {
+			rv = access(bootxx, R_OK);
+			free(bootxx);
+		} else
+			rv = -1;
+		if (rv != 0) {
+			hit_enter_to_continue(NULL, MSG_No_Bootcode);
+			return false;
+		}
 	}
 #endif
 #ifndef HAVE_UFS2_BOOT
-	for (i = 0; i < install->num; i++) {
-		if (install->infos[i].type != PT_root)
-			continue;
-		if (strcmp(install->infos[i].mount, "/") != 0)
-			continue;
-		if (install->infos[i].fs_type != FS_BSDFFS)
-			continue;
-		if (install->infos[i].fs_version != 2)
-			continue;
-		hit_enter_to_continue(NULL, MSG_cannot_ufs2_root);
-		return false;
+	if (MD_NEED_BOOTBLOCK(install)) {
+		for (i = 0; i < install->num; i++) {
+			if (install->infos[i].type != PT_root)
+				continue;
+			if (strcmp(install->infos[i].mount, "/") != 0)
+				continue;
+			if (install->infos[i].fs_type != FS_BSDFFS)
+				continue;
+			if (install->infos[i].fs_version != 2)
+				continue;
+			hit_enter_to_continue(NULL, MSG_cannot_ufs2_root);
+			return false;
+		}
 	}
 #endif
 

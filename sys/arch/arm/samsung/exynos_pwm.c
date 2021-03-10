@@ -1,4 +1,4 @@
-/* $NetBSD: exynos_pwm.c,v 1.1 2018/07/04 23:06:54 jmcneill Exp $ */
+/* $NetBSD: exynos_pwm.c,v 1.3 2021/01/27 03:10:19 thorpej Exp $ */
 
 /*-
  * Copyright (c) 2018 Jared McNeill <jmcneill@invisible.ca>
@@ -28,7 +28,7 @@
 
 #include <sys/cdefs.h>
 
-__KERNEL_RCSID(1, "$NetBSD: exynos_pwm.c,v 1.1 2018/07/04 23:06:54 jmcneill Exp $");
+__KERNEL_RCSID(1, "$NetBSD: exynos_pwm.c,v 1.3 2021/01/27 03:10:19 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -57,9 +57,9 @@ __KERNEL_RCSID(1, "$NetBSD: exynos_pwm.c,v 1.1 2018/07/04 23:06:54 jmcneill Exp 
 
 #define	PWM_NTIMERS		5
 
-static const char * const compatible[] = {
-	"samsung,exynos4210-pwm",
-	NULL
+static const struct device_compatible_entry compat_data[] = {
+	{ .compat = "samsung,exynos4210-pwm" },
+	DEVICE_COMPAT_EOL
 };
 
 struct exynos_pwm_softc;
@@ -200,7 +200,7 @@ exynos_pwm_match(device_t parent, cfdata_t cf, void *aux)
 {
 	struct fdt_attach_args * const faa = aux;
 
-	return of_match_compatible(faa->faa_phandle, compatible);
+	return of_compatible_match(faa->faa_phandle, compat_data);
 }
 
 static void
@@ -231,7 +231,7 @@ exynos_pwm_attach(device_t parent, device_t self, void *aux)
 	sc->sc_bst = faa->faa_bst;
 	error = bus_space_map(sc->sc_bst, addr, size, 0, &sc->sc_bsh);
 	if (error) {
-		aprint_error(": couldn't map %#llx: %d", (uint64_t)addr, error);
+		aprint_error(": couldn't map %#" PRIxBUSADDR ": %d", addr, error);
 		return;
 	}
 	for (n = 0; n < PWM_NTIMERS; n++) {

@@ -1,4 +1,4 @@
-/*	$NetBSD: fdisk.c,v 1.156 2018/11/14 12:05:29 mlelstv Exp $ */
+/*	$NetBSD: fdisk.c,v 1.159 2020/05/24 21:02:12 wiz Exp $ */
 
 /*
  * Mach Operating System
@@ -39,7 +39,7 @@
 #include <sys/cdefs.h>
 
 #ifndef lint
-__RCSID("$NetBSD: fdisk.c,v 1.156 2018/11/14 12:05:29 mlelstv Exp $");
+__RCSID("$NetBSD: fdisk.c,v 1.159 2020/05/24 21:02:12 wiz Exp $");
 #endif /* not lint */
 
 #define MBRPTYPENAMES
@@ -141,7 +141,7 @@ static char *boot_path = NULL;			/* name of file we actually opened */
 #define BOOTSEL_OPTIONS	
 #define change_part(e, p, id, st, sz, bm) change__part(e, p, id, st, sz)
 #endif
-#define OPTIONS	BOOTSEL_OPTIONS "0123FSafiIluvA:b:c:E:r:s:w:z:"
+#define OPTIONS	BOOTSEL_OPTIONS "0123FSafgiIluvA:b:c:E:r:s:w:z:"
 
 /*
  * Disk geometry and partition alignment.
@@ -215,6 +215,7 @@ static int u_flag;		/* update partition data */
 static int v_flag;		/* more verbose */
 static int sh_flag;		/* Output data as shell defines */
 static int f_flag;		/* force --not interactive */
+static int g_flag;		/* preserve GPT headers */
 static int s_flag;		/* set id,offset,size */
 static int b_flag;		/* Set cyl, heads, secs (as c/h/s) */
 static int B_flag;		/* Edit/install bootselect code */
@@ -429,6 +430,9 @@ main(int argc, char *argv[])
 			break;
 		case 'f':	/* Non interactive */
 			f_flag = 1;
+			break;
+		case 'g':	/* Preserve GPT headers */
+			g_flag = 1;
 			break;
 		case 'i':	/* Always update bootcode */
 			i_flag = 1;
@@ -661,7 +665,7 @@ usage(void)
 {
 	int indent = 7 + (int)strlen(getprogname()) + 1;
 
-	(void)fprintf(stderr, "usage: %s [-aBFfIilSuv] "
+	(void)fprintf(stderr, "usage: %s [-aBFfgIilSuv] "
 		"[-A ptn_alignment[/ptn_0_offset]] \\\n"
 		"%*s[-b cylinders/heads/sectors] \\\n"
 		"%*s[-0123 | -E num "
@@ -671,6 +675,7 @@ usage(void)
 		"[-r|-w file] [-z sectorsize] [device]\n"
 		"\t-a change active partition\n"
 		"\t-f force - not interactive\n"
+		"\t-g preserve existing GPT headers\n"
 		"\t-i initialise MBR code\n"
 		"\t-I ignore errors about no space or overlapping partitions\n"
 		"\t-l list partition types\n"
@@ -2620,19 +2625,19 @@ get_params(void)
 		struct disklabel *tmplabel;
 
 		if ((tmplabel = getdiskbyname(disk_type)) == NULL) {
-			warn("bad disktype");
+			warn("%s: bad disktype", disk);
 			return (-1);
 		}
 		disklabel = *tmplabel;
 	} else if (F_flag) {
 		struct stat st;
 		if (fstat(fd, &st) == -1) {
-			warn("fstat");
+			warn("%s: fstat", disk);
 			return (-1);
 		}
 		if (st.st_size % 512 != 0) {
-			warnx("%s size (%lld) is not divisible "
-			    "by sector size (%d)", disk, (long long)st.st_size,
+			warnx("%s size (%ju) is not divisible "
+			    "by sector size (%d)", disk, (uintmax_t)st.st_size,
 			    512);
 		}
 		disklabel.d_secperunit = st.st_size / 512;
@@ -2644,9 +2649,9 @@ get_params(void)
 	}
 #if !HAVE_NBTOOL_CONFIG_H
 	else if (ioctl(fd, DIOCGDEFLABEL, &disklabel) == -1) {
-		warn("DIOCGDEFLABEL");
+		warn("%s: DIOCGDEFLABEL", disk);
 		if (ioctl(fd, DIOCGDINFO, &disklabel) == -1) {
-			warn("DIOCGDINFO");
+			warn("%s: DIOCGDINFO", disk);
 			return (-1);
 		}
 	}
@@ -3057,6 +3062,9 @@ delete_gpt(struct gpt_hdr *gptp)
 {
 	char buf[512];
 	struct gpt_hdr *hdr = (void *)buf;
+
+	if (g_flag)
+		return 0;	/* preserve existing GPT headers */
 
 	if (gptp->hdr_size == 0)
 		return 0;

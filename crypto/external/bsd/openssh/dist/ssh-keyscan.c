@@ -1,5 +1,6 @@
-/*	$NetBSD: ssh-keyscan.c,v 1.24 2019/04/20 17:16:40 christos Exp $	*/
-/* $OpenBSD: ssh-keyscan.c,v 1.126 2019/01/26 22:35:01 djm Exp $ */
+/*	$NetBSD: ssh-keyscan.c,v 1.28 2021/03/05 17:47:16 christos Exp $	*/
+/* $OpenBSD: ssh-keyscan.c,v 1.139 2021/01/27 09:26:54 djm Exp $ */
+
 /*
  * Copyright 1995, 1996 by David Mazieres <dm@lcs.mit.edu>.
  *
@@ -9,7 +10,7 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: ssh-keyscan.c,v 1.24 2019/04/20 17:16:40 christos Exp $");
+__RCSID("$NetBSD: ssh-keyscan.c,v 1.28 2021/03/05 17:47:16 christos Exp $");
 
 #include <sys/param.h>
 #include <sys/types.h>
@@ -18,7 +19,9 @@ __RCSID("$NetBSD: ssh-keyscan.c,v 1.24 2019/04/20 17:16:40 christos Exp $");
 #include <sys/time.h>
 #include <sys/resource.h>
 
+#ifdef WITH_OPENSSL
 #include <openssl/bn.h>
+#endif
 
 #include <errno.h>
 #include <netdb.h>
@@ -58,12 +61,14 @@ int ssh_port = SSH_DEFAULT_PORT;
 #define KT_ECDSA	(1<<2)
 #define KT_ED25519	(1<<3)
 #define KT_XMSS		(1<<4)
+#define KT_ECDSA_SK	(1<<5)
+#define KT_ED25519_SK	(1<<6)
 
 #define KT_MIN		KT_DSA
-#define KT_MAX		KT_XMSS
+#define KT_MAX		KT_ED25519_SK
 
 int get_cert = 0;
-int get_keytypes = KT_RSA|KT_ECDSA|KT_ED25519;
+int get_keytypes = KT_RSA|KT_ECDSA|KT_ED25519|KT_ECDSA_SK|KT_ED25519_SK;
 
 int hash_hosts = 0;		/* Hash hostname on output */
 
@@ -120,7 +125,7 @@ fdlim_get(int hard)
 {
 	struct rlimit rlfd;
 
-	if (getrlimit(RLIMIT_NOFILE, &rlfd) < 0)
+	if (getrlimit(RLIMIT_NOFILE, &rlfd) == -1)
 		return (-1);
 	if ((hard ? rlfd.rlim_max : rlfd.rlim_cur) == RLIM_INFINITY)
 		return sysconf(_SC_OPEN_MAX);
@@ -135,10 +140,10 @@ fdlim_set(int lim)
 
 	if (lim <= 0)
 		return (-1);
-	if (getrlimit(RLIMIT_NOFILE, &rlfd) < 0)
+	if (getrlimit(RLIMIT_NOFILE, &rlfd) == -1)
 		return (-1);
 	rlfd.rlim_cur = lim;
-	if (setrlimit(RLIMIT_NOFILE, &rlfd) < 0)
+	if (setrlimit(RLIMIT_NOFILE, &rlfd) == -1)
 		return (-1);
 	return (0);
 }
@@ -222,7 +227,12 @@ keygrab_ssh2(con *c)
 		break;
 	case KT_RSA:
 		myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS] = get_cert ?
-		    "ssh-rsa-cert-v01@openssh.com" : "ssh-rsa";
+		    "rsa-sha2-512-cert-v01@openssh.com,"
+		    "rsa-sha2-256-cert-v01@openssh.com,"
+		    "ssh-rsa-cert-v01@openssh.com" :
+		    "rsa-sha2-512,"
+		    "rsa-sha2-256,"
+		    "ssh-rsa";
 		break;
 	case KT_ED25519:
 		myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS] = get_cert ?
@@ -240,6 +250,16 @@ keygrab_ssh2(con *c)
 		    "ecdsa-sha2-nistp256,"
 		    "ecdsa-sha2-nistp384,"
 		    "ecdsa-sha2-nistp521";
+		break;
+	case KT_ECDSA_SK:
+		myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS] = get_cert ?
+		    "sk-ecdsa-sha2-nistp256-cert-v01@openssh.com" :
+		    "sk-ecdsa-sha2-nistp256@openssh.com";
+		break;
+	case KT_ED25519_SK:
+		myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS] = get_cert ?
+		    "sk-ssh-ed25519-cert-v01@openssh.com" :
+		    "sk-ssh-ed25519@openssh.com";
 		break;
 	default:
 		fatal("unknown key type %d", c->c_keytype);
@@ -261,7 +281,7 @@ keygrab_ssh2(con *c)
 	c->c_ssh->kex->kex[KEX_ECDH_SHA2] = kex_gen_client;
 #endif
 	c->c_ssh->kex->kex[KEX_C25519_SHA256] = kex_gen_client;
-	c->c_ssh->kex->kex[KEX_KEM_SNTRUP4591761X25519_SHA512] = kex_gen_client;
+	c->c_ssh->kex->kex[KEX_KEM_SNTRUP761X25519_SHA512] = kex_gen_client;
 	ssh_set_verify_host_key_callback(c->c_ssh, key_print_wrapper);
 	/*
 	 * do the key-exchange until an error occurs or until
@@ -330,13 +350,13 @@ tcpconnect(char *host)
 	}
 	for (ai = aitop; ai; ai = ai->ai_next) {
 		s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-		if (s < 0) {
+		if (s == -1) {
 			error("socket: %s", strerror(errno));
 			continue;
 		}
 		if (set_nonblock(s) == -1)
-			fatal("%s: set_nonblock(%d)", __func__, s);
-		if (connect(s, ai->ai_addr, ai->ai_addrlen) < 0 &&
+			fatal_f("set_nonblock(%d)", s);
+		if (connect(s, ai->ai_addr, ai->ai_addrlen) == -1 &&
 		    errno != EINPROGRESS)
 			error("connect (`%s'): %s", host, strerror(errno));
 		else
@@ -369,7 +389,7 @@ conalloc(char *iname, char *oname, int keytype)
 	if (fdcon[s].c_status)
 		fatal("conalloc: attempt to reuse fdno %d", s);
 
-	debug3("%s: oname %s kt %d", __func__, oname, keytype);
+	debug3_f("oname %s kt %d", oname, keytype);
 	fdcon[s].c_fd = s;
 	fdcon[s].c_status = CS_CON;
 	fdcon[s].c_namebase = namebase;
@@ -490,11 +510,10 @@ congreet(int s)
 		fatal("ssh_packet_set_connection failed");
 	ssh_packet_set_timeout(c->c_ssh, timeout, 1);
 	ssh_set_app_data(c->c_ssh, c);	/* back link */
+	c->c_ssh->compat = 0;
 	if (sscanf(buf, "SSH-%d.%d-%[^\n]\n",
 	    &remote_major, &remote_minor, remote_version) == 3)
-		c->c_ssh->compat = compat_datafellows(remote_version);
-	else
-		c->c_ssh->compat = 0;
+		compat_banner(c->c_ssh, remote_version);
 	if (!ssh2_capable(remote_major, remote_minor)) {
 		debug("%s doesn't support ssh2", c->c_name);
 		confree(s);
@@ -552,16 +571,9 @@ conloop(void)
 	monotime_tv(&now);
 	c = TAILQ_FIRST(&tq);
 
-	if (c && (c->c_tv.tv_sec > now.tv_sec ||
-	    (c->c_tv.tv_sec == now.tv_sec && c->c_tv.tv_usec > now.tv_usec))) {
-		seltime = c->c_tv;
-		seltime.tv_sec -= now.tv_sec;
-		seltime.tv_usec -= now.tv_usec;
-		if (seltime.tv_usec < 0) {
-			seltime.tv_usec += 1000000;
-			seltime.tv_sec--;
-		}
-	} else
+	if (c && timercmp(&c->c_tv, &now, >))
+		timersub(&c->c_tv, &now, &seltime);
+	else
 		timerclear(&seltime);
 
 	r = xcalloc(read_wait_nfdset, sizeof(fd_mask));
@@ -584,8 +596,7 @@ conloop(void)
 	free(e);
 
 	c = TAILQ_FIRST(&tq);
-	while (c && (c->c_tv.tv_sec < now.tv_sec ||
-	    (c->c_tv.tv_sec == now.tv_sec && c->c_tv.tv_usec < now.tv_usec))) {
+	while (c && timercmp(&c->c_tv, &now, <)) {
 		int s = c->c_fd;
 
 		c = TAILQ_NEXT(c, c_link);
@@ -610,15 +621,16 @@ do_host(char *host)
 	}
 }
 
-__dead void
-fatal(const char *fmt,...)
+void
+sshfatal(const char *file, const char *func, int line, int showfunc,
+    LogLevel level, const char *suffix, const char *fmt, ...)
 {
 	va_list args;
 
 	va_start(args, fmt);
-	do_log(SYSLOG_LEVEL_FATAL, fmt, args);
+	sshlogv(file, func, line, showfunc, level, suffix, fmt, args);
 	va_end(args);
-	exit(255);
+	cleanup_exit(255);
 }
 
 __dead static void
@@ -643,7 +655,6 @@ main(int argc, char **argv)
 	extern int optind;
 	extern char *optarg;
 
-	ssh_malloc_init();	/* must be called before any mallocs */
 	TAILQ_INIT(&tq);
 
 	/* Ensure that fds 0, 1 and 2 are open or directed to /dev/null */
@@ -714,6 +725,12 @@ main(int argc, char **argv)
 				case KEY_XMSS:
 					get_keytypes |= KT_XMSS;
 					break;
+				case KEY_ED25519_SK:
+					get_keytypes |= KT_ED25519_SK;
+					break;
+				case KEY_ECDSA_SK:
+					get_keytypes |= KT_ECDSA_SK;
+					break;
 				case KEY_UNSPEC:
 				default:
 					fatal("Unknown key type \"%s\"", tname);
@@ -755,8 +772,7 @@ main(int argc, char **argv)
 		if (argv[j] == NULL)
 			fp = stdin;
 		else if ((fp = fopen(argv[j], "r")) == NULL)
-			fatal("%s: %s: %s", __progname, argv[j],
-			    strerror(errno));
+			fatal("%s: %s: %s", __progname, argv[j], strerror(errno));
 
 		while (getline(&line, &linesize, fp) != -1) {
 			/* Chomp off trailing whitespace and comments */
@@ -778,8 +794,7 @@ main(int argc, char **argv)
 		}
 
 		if (ferror(fp))
-			fatal("%s: %s: %s", __progname, argv[j],
-			    strerror(errno));
+			fatal("%s: %s: %s", __progname, argv[j], strerror(errno));
 
 		fclose(fp);
 	}

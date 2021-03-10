@@ -1,4 +1,4 @@
-/* $NetBSD: auixp.c,v 1.47 2019/06/08 08:02:38 isaki Exp $ */
+/* $NetBSD: auixp.c,v 1.50 2020/07/03 12:39:54 isaki Exp $ */
 
 /*
  * Copyright (c) 2004, 2005 Reinoud Zandijk <reinoud@netbsd.org>
@@ -11,13 +11,6 @@
  *    notice, this list of conditions and the following disclaimer.
  * 2. The name of the author may not be used to endorse or promote products
  *    derived from this software without specific prior written permission.
- * 3. All advertising materials mentioning features or use of this software
- *    must display the following acknowledgement:
- *	This product includes software developed by the NetBSD
- *	Foundation, Inc. and its contributors.
- * 4. Neither the name of The NetBSD Foundation nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
  *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
  * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
@@ -50,7 +43,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: auixp.c,v 1.47 2019/06/08 08:02:38 isaki Exp $");
+__KERNEL_RCSID(0, "$NetBSD: auixp.c,v 1.50 2020/07/03 12:39:54 isaki Exp $");
 
 #include <sys/types.h>
 #include <sys/errno.h>
@@ -429,16 +422,13 @@ static int
 auixp_round_blocksize(void *hdl, int bs, int mode,
     const audio_params_t *param)
 {
-	uint32_t new_bs;
 
-	new_bs = bs;
-	/* Be conservative; align to 32 bytes and maximise it to 64 kb */
 	/* 256 kb possible */
-	if (new_bs > 0x10000)
+	if (bs > 0x10000)
 		bs = 0x10000;			/* 64 kb max */
-	new_bs = (bs & ~0x20);			/* 32 bytes align */
+	bs = rounddown(bs, param->channels * param->precision / NBBY);
 
-	return new_bs;
+	return bs;
 }
 
 
@@ -1126,7 +1116,7 @@ auixp_attach(device_t parent, device_t self, void *aux)
 
 	/* establish interrupt routine hookup at IPL_AUDIO level */
 	sc->sc_ih = pci_intr_establish_xname(pc, ih, IPL_AUDIO, auixp_intr,
-	    self, device_xname(self));
+	    sc, device_xname(self));
 	if (sc->sc_ih == NULL) {
 		aprint_error_dev(sc->sc_dev, "can't establish interrupt");
 		if (intrstr != NULL)

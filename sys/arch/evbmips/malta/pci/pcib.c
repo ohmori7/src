@@ -1,4 +1,4 @@
-/*	$NetBSD: pcib.c,v 1.18 2014/03/29 19:28:28 christos Exp $	*/
+/*	$NetBSD: pcib.c,v 1.20 2020/11/21 15:36:36 thorpej Exp $	*/
 
 /*
  * Copyright 2002 Wasabi Systems, Inc.
@@ -36,13 +36,13 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pcib.c,v 1.18 2014/03/29 19:28:28 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pcib.c,v 1.20 2020/11/21 15:36:36 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/device.h>
-#include <sys/malloc.h>
+#include <sys/kmem.h>
 
 #include <uvm/uvm_extern.h>
 
@@ -508,10 +508,7 @@ pcib_isa_intr_establish(void *v, int irq, int type, int level,
 		return (NULL);
 	}
 
-	ih = malloc(sizeof(*ih), M_DEVBUF, M_NOWAIT);
-	if (ih == NULL)
-		return (NULL);
-
+	ih = kmem_alloc(sizeof(*ih), KM_SLEEP);
 	ih->ih_func = func;
 	ih->ih_arg = arg;
 	ih->ih_irq = irq;
@@ -554,7 +551,7 @@ pcib_isa_intr_disestablish(void *v, void *arg)
 
 	splx(s);
 
-	free(ih, M_DEVBUF);
+	kmem_free(ih, sizeof(*ih));
 }
 
 static int

@@ -1,4 +1,4 @@
-#	$NetBSD: t_ipsec.sh,v 1.9 2019/01/15 05:34:37 knakahara Exp $
+#	$NetBSD: t_ipsec.sh,v 1.11 2020/08/05 01:10:50 knakahara Exp $
 #
 # Copyright (c) 2017 Internet Initiative Japan Inc.
 # All rights reserved.
@@ -243,7 +243,7 @@ setup_if_ipsec()
 	local peernet=${7}
 
 	export RUMP_SERVER=${sock}
-	atf_check -s exit:0 rump.ifconfig ipsec0 create
+	rump_server_add_iface $sock ipsec0
 	atf_check -s exit:0 rump.ifconfig ipsec0 tunnel ${src} ${dst}
 	if [ ${inner} = "ipv6" ]; then
 		atf_check -s exit:0 rump.ifconfig ipsec0 inet6 ${addr}/128 ${remote}
@@ -300,8 +300,8 @@ setup_if_ipsec_sa()
 	fi
 
 	cat > $tmpfile <<-EOF
-    	add $dst $src $proto $inid -u $inunique $algo_args;
-    	add $src $dst $proto $outid -u $outunique $algo_args;
+	add $dst $src $proto $inid -u $inunique -m transport $algo_args;
+	add $src $dst $proto $outid -u $outunique -m transport $algo_args;
 	EOF
 	$DEBUG && cat $tmpfile
 	export RUMP_SERVER=$sock
@@ -426,7 +426,7 @@ setup_dummy_if_ipsec()
 	local dst=${6}
 
 	export RUMP_SERVER=${sock}
-	atf_check -s exit:0 rump.ifconfig ipsec1 create
+	rump_server_add_iface $sock ipsec1
 	atf_check -s exit:0 rump.ifconfig ipsec1 tunnel ${src} ${dst}
 	if [ ${inner} = "ipv6" ]; then
 		atf_check -s exit:0 rump.ifconfig ipsec1 inet6 ${addr}/128 ${remote}
@@ -568,7 +568,7 @@ setup_recursive_if_ipsec()
 	local dir=${10}
 
 	export RUMP_SERVER=${sock}
-	atf_check -s exit:0 rump.ifconfig ${ipsec} create
+	rump_server_add_iface $sock $ipsec
 	atf_check -s exit:0 rump.ifconfig ${ipsec} tunnel ${src} ${dst}
 	if [ ${inner} = "ipv6" ]; then
 		atf_check -s exit:0 rump.ifconfig ${ipsec} inet6 ${addr}/128 ${remote}

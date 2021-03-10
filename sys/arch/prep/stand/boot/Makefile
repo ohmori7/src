@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.30 2017/04/08 19:53:22 christos Exp $
+#	$NetBSD: Makefile,v 1.32 2020/09/07 22:22:17 mrg Exp $
 
 NOMAN= # defined
 
@@ -32,6 +32,7 @@ CPPFLAGS= -nostdinc -I${.OBJDIR} -I${MKBOOTIMAGE} -I${S}
 CPPFLAGS+= -D_STANDALONE -DRELOC=${RELOC} -DUSE_SCAN
 CPPFLAGS+= -D__daddr_t=int32_t
 #CPPFLAGS+= -DDBMONITOR
+#CPPFLAGS+= -DSCSI_SUPPORT    # experimental
 
 .if (${BASE} == "boot")
 CPPFLAGS+= -DCONS_VGA -DVGA_RESET
@@ -64,6 +65,8 @@ ${PROG}: ${OBJS} ${LIBS}
 	${STRIP} -o ${PROG} ${PROG}.elf
 
 .include "${S}/conf/newvers_stand.mk"
+
+CWARNFLAGS.gcc+=	${GCC_NO_ADDR_OF_PACKED_MEMBER}
 
 .include <bsd.prog.mk>
 .include <bsd.klinks.mk>

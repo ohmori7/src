@@ -1,4 +1,4 @@
-/*	$NetBSD: drm_fb_helper.c,v 1.12 2018/08/27 13:37:21 riastradh Exp $	*/
+/*	$NetBSD: drm_fb_helper.c,v 1.16 2020/02/14 14:34:57 maya Exp $	*/
 
 /*
  * Copyright (c) 2006-2009 Red Hat Inc.
@@ -30,7 +30,7 @@
  *      Jesse Barnes <jesse.barnes@intel.com>
  */
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: drm_fb_helper.c,v 1.12 2018/08/27 13:37:21 riastradh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: drm_fb_helper.c,v 1.16 2020/02/14 14:34:57 maya Exp $");
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
@@ -39,13 +39,7 @@ __KERNEL_RCSID(0, "$NetBSD: drm_fb_helper.c,v 1.12 2018/08/27 13:37:21 riastradh
 #include <linux/slab.h>
 #include <linux/fb.h>
 #include <linux/module.h>
-#include <linux/device.h>
-#include <linux/export.h>
-#include <linux/list.h>
-#include <linux/notifier.h>
-#include <linux/printk.h>
 #include <linux/sysrq.h>
-#include <asm/bug.h>
 #include <drm/drmP.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_fb_helper.h>
@@ -584,7 +578,7 @@ static struct sysrq_key_op sysrq_drm_fb_helper_restore_op = {
 	.action_msg = "Restore framebuffer console",
 };
 #else
-static struct sysrq_key_op sysrq_drm_fb_helper_restore_op;
+static struct sysrq_key_op sysrq_drm_fb_helper_restore_op = { };
 #endif
 
 #ifndef __NetBSD__		/* XXX fb info */
@@ -864,7 +858,11 @@ void drm_fb_helper_fini(struct drm_fb_helper *fb_helper)
 }
 EXPORT_SYMBOL(drm_fb_helper_fini);
 
-#ifndef __NetBSD__		/* XXX fb info */
+#ifdef __NetBSD__		/* XXX fb info */
+void drm_fb_helper_set_suspend(struct drm_fb_helper *fb_helper, int state)
+{
+}
+#else
 /**
  * drm_fb_helper_unlink_fbi - wrapper around unlink_framebuffer
  * @fb_helper: driver-allocated fbdev helper
@@ -2086,9 +2084,9 @@ static void drm_setup_crtcs(struct drm_fb_helper *fb_helper)
 		struct drm_display_mode *mode = modes[i];
 		struct drm_fb_helper_crtc *fb_crtc = crtcs[i];
 		struct drm_fb_offset *offset = &offsets[i];
-		modeset = &fb_crtc->mode_set;
 
 		if (mode && fb_crtc) {
+			modeset = &fb_crtc->mode_set;
 			DRM_DEBUG_KMS("desired mode %s set on crtc %d (%d,%d)\n",
 				      mode->name, fb_crtc->mode_set.crtc->base.id, offset->x, offset->y);
 			fb_crtc->desired_mode = mode;

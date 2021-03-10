@@ -1,4 +1,4 @@
-/* $NetBSD: efiblock.c,v 1.5 2019/03/09 13:16:42 jmcneill Exp $ */
+/* $NetBSD: efiblock.c,v 1.10 2020/11/28 15:24:05 jmcneill Exp $ */
 
 /*-
  * Copyright (c) 2016 Kimihiro Nonaka <nonaka@netbsd.org>
@@ -32,6 +32,8 @@
 #include <sys/param.h>
 #include <sys/md5.h>
 #include <sys/uuid.h>
+
+#include <fs/cd9660/iso.h>
 
 #include "efiboot.h"
 #include "efiblock.h"
@@ -98,6 +100,85 @@ efi_block_generate_hash_mbr(struct efi_block_part *bpart, struct mbr_sector *mbr
 	MD5Final(bpart->hash, &md5ctx);
 }
 
+static void *
+efi_block_allocate_device_buffer(struct efi_block_dev *bdev, UINTN size,
+	void **buf_start)
+{
+	void *buf;
+
+	if (bdev->bio->Media->IoAlign <= 1)
+		*buf_start = buf = AllocatePool(size);
+	else {
+		buf = AllocatePool(size + bdev->bio->Media->IoAlign - 1);
+		*buf_start = (buf == NULL) ? NULL :
+		    (void *)roundup2((intptr_t)buf, bdev->bio->Media->IoAlign);
+	}
+
+	return buf;
+}
+
+static int
+efi_block_find_partitions_cd9660(struct efi_block_dev *bdev)
+{
+	struct efi_block_part *bpart;
+	struct iso_primary_descriptor *vd;
+	void *buf, *buf_start;
+	EFI_STATUS status;
+	EFI_LBA lba;
+	UINT32 sz;
+
+	if (bdev->bio->Media->BlockSize != DEV_BSIZE &&
+	    bdev->bio->Media->BlockSize != ISO_DEFAULT_BLOCK_SIZE) {
+		return ENXIO;
+	}
+
+	sz = __MAX(sizeof(*vd), bdev->bio->Media->BlockSize);
+	sz = roundup(sz, bdev->bio->Media->BlockSize);
+	if ((buf = efi_block_allocate_device_buffer(bdev, sz, &buf_start)) == NULL) {
+		return ENOMEM;
+	}
+
+	for (lba = 16;; lba++) {
+		status = uefi_call_wrapper(bdev->bio->ReadBlocks, 5,
+		    bdev->bio,
+		    bdev->media_id,
+		    lba * ISO_DEFAULT_BLOCK_SIZE / bdev->bio->Media->BlockSize,
+		    sz,
+		    buf_start);
+		if (EFI_ERROR(status)) {
+			goto io_error;
+		}
+
+		vd = (struct iso_primary_descriptor *)buf_start;
+		if (memcmp(vd->id, ISO_STANDARD_ID, sizeof vd->id) != 0) {
+			goto io_error;
+		}
+		if (isonum_711(vd->type) == ISO_VD_END) {
+			goto io_error;
+		}
+		if (isonum_711(vd->type) == ISO_VD_PRIMARY) {
+			break;
+		}
+	}
+
+	if (isonum_723(vd->logical_block_size) != ISO_DEFAULT_BLOCK_SIZE) {
+		goto io_error;
+	}
+
+	bpart = alloc(sizeof(*bpart));
+	bpart->index = 0;
+	bpart->bdev = bdev;
+	bpart->type = EFI_BLOCK_PART_CD9660;
+	TAILQ_INSERT_TAIL(&bdev->partitions, bpart, entries);
+
+	FreePool(buf);
+	return 0;
+
+io_error:
+	FreePool(buf);
+	return EIO;
+}
+
 static int
 efi_block_find_partitions_disklabel(struct efi_block_dev *bdev, struct mbr_sector *mbr, uint32_t start, uint32_t size)
 {
@@ -106,19 +187,19 @@ efi_block_find_partitions_disklabel(struct efi_block_dev *bdev, struct mbr_secto
 	struct partition *p;
 	EFI_STATUS status;
 	EFI_LBA lba;
-	uint8_t *buf;
+	void *buf, *buf_start;
 	UINT32 sz;
 	int n;
 
 	sz = __MAX(sizeof(d), bdev->bio->Media->BlockSize);
 	sz = roundup(sz, bdev->bio->Media->BlockSize);
-	buf = AllocatePool(sz);
-	if (!buf)
+	if ((buf = efi_block_allocate_device_buffer(bdev, sz, &buf_start)) == NULL)
 		return ENOMEM;
 
 	lba = (((EFI_LBA)start + LABELSECTOR) * DEV_BSIZE) / bdev->bio->Media->BlockSize;
-	status = uefi_call_wrapper(bdev->bio->ReadBlocks, 5, bdev->bio, bdev->media_id, lba, sz, buf);
-	if (EFI_ERROR(status) || getdisklabel(buf, &d) != NULL) {
+	status = uefi_call_wrapper(bdev->bio->ReadBlocks, 5, bdev->bio, bdev->media_id,
+		lba, sz, buf_start);
+	if (EFI_ERROR(status) || getdisklabel(buf_start, &d) != NULL) {
 		FreePool(buf);
 		return EIO;
 	}
@@ -159,22 +240,22 @@ efi_block_find_partitions_mbr(struct efi_block_dev *bdev)
 	struct mbr_sector mbr;
 	struct mbr_partition *mbr_part;
 	EFI_STATUS status;
-	uint8_t *buf;
+	void *buf, *buf_start;
 	UINT32 sz;
 	int n;
 
 	sz = __MAX(sizeof(mbr), bdev->bio->Media->BlockSize);
 	sz = roundup(sz, bdev->bio->Media->BlockSize);
-	buf = AllocatePool(sz);
-	if (!buf)
+	if ((buf = efi_block_allocate_device_buffer(bdev, sz, &buf_start)) == NULL)
 		return ENOMEM;
 
-	status = uefi_call_wrapper(bdev->bio->ReadBlocks, 5, bdev->bio, bdev->media_id, 0, sz, buf);
+	status = uefi_call_wrapper(bdev->bio->ReadBlocks, 5, bdev->bio, bdev->media_id,
+		0, sz, buf_start);
 	if (EFI_ERROR(status)) {
 		FreePool(buf);
 		return EIO;
 	}
-	memcpy(&mbr, buf, sizeof(mbr));
+	memcpy(&mbr, buf_start, sizeof(mbr));
 	FreePool(buf);
 
 	if (le32toh(mbr.mbr_magic) != MBR_MAGIC)
@@ -203,6 +284,7 @@ static const struct {
 	{ GPT_ENT_TYPE_NETBSD_CCD,		FS_CCD },
 	{ GPT_ENT_TYPE_NETBSD_CGD,		FS_CGD },
 	{ GPT_ENT_TYPE_MS_BASIC_DATA,		FS_MSDOS },	/* or NTFS? ambiguous */
+	{ GPT_ENT_TYPE_EFI,			FS_MSDOS },
 };
 
 static int
@@ -240,21 +322,21 @@ efi_block_find_partitions_gpt(struct efi_block_dev *bdev)
 	struct gpt_hdr hdr;
 	struct gpt_ent ent;
 	EFI_STATUS status;
+	void *buf, *buf_start;
 	UINT32 sz, entry;
-	uint8_t *buf;
 
 	sz = __MAX(sizeof(hdr), bdev->bio->Media->BlockSize);
 	sz = roundup(sz, bdev->bio->Media->BlockSize);
-	buf = AllocatePool(sz);
-	if (!buf)
+	if ((buf = efi_block_allocate_device_buffer(bdev, sz, &buf_start)) == NULL)
 		return ENOMEM;
 
-	status = uefi_call_wrapper(bdev->bio->ReadBlocks, 5, bdev->bio, bdev->media_id, GPT_HDR_BLKNO, sz, buf);
+	status = uefi_call_wrapper(bdev->bio->ReadBlocks, 5, bdev->bio, bdev->media_id,
+		GPT_HDR_BLKNO, sz, buf_start);
 	if (EFI_ERROR(status)) {
 		FreePool(buf);
 		return EIO;
 	}
-	memcpy(&hdr, buf, sizeof(hdr));
+	memcpy(&hdr, buf_start, sizeof(hdr));
 	FreePool(buf);
 
 	if (memcmp(hdr.hdr_sig, GPT_HDR_SIG, sizeof(hdr.hdr_sig)) != 0)
@@ -264,18 +346,19 @@ efi_block_find_partitions_gpt(struct efi_block_dev *bdev)
 
 	sz = __MAX(le32toh(hdr.hdr_entsz) * le32toh(hdr.hdr_entries), bdev->bio->Media->BlockSize);
 	sz = roundup(sz, bdev->bio->Media->BlockSize);
-	buf = AllocatePool(sz);
-	if (!buf)
+	if ((buf = efi_block_allocate_device_buffer(bdev, sz, &buf_start)) == NULL)
 		return ENOMEM;
 
-	status = uefi_call_wrapper(bdev->bio->ReadBlocks, 5, bdev->bio, bdev->media_id, le64toh(hdr.hdr_lba_table), sz, buf);
+	status = uefi_call_wrapper(bdev->bio->ReadBlocks, 5, bdev->bio, bdev->media_id,
+		le64toh(hdr.hdr_lba_table), sz, buf_start);
 	if (EFI_ERROR(status)) {
 		FreePool(buf);
 		return EIO;
 	}
 
 	for (entry = 0; entry < le32toh(hdr.hdr_entries); entry++) {
-		memcpy(&ent, buf + (entry * le32toh(hdr.hdr_entsz)), sizeof(ent));
+		memcpy(&ent, buf_start + (entry * le32toh(hdr.hdr_entsz)),
+			sizeof(ent));
 		efi_block_find_partitions_gpt_entry(bdev, &hdr, &ent, entry);
 	}
 
@@ -292,6 +375,8 @@ efi_block_find_partitions(struct efi_block_dev *bdev)
 	error = efi_block_find_partitions_gpt(bdev);
 	if (error)
 		error = efi_block_find_partitions_mbr(bdev);
+	if (error)
+		error = efi_block_find_partitions_cd9660(bdev);
 
 	return error;
 }
@@ -347,11 +432,15 @@ efi_block_probe(void)
 				case EFI_BLOCK_PART_GPT:
 					fstype = bpart->gpt.fstype;
 					break;
+				case EFI_BLOCK_PART_CD9660:
+					fstype = FS_ISO9660;
+					break;
 				}
-				if (fstype == FS_BSDFFS) {
+				if (fstype == FS_BSDFFS || fstype == FS_ISO9660) {
 					char devname[9];
 					snprintf(devname, sizeof(devname), "hd%u%c", bdev->index, bpart->index + 'a');
 					set_default_device(devname);
+					set_default_fstype(fstype);
 					break;
 				}
 			}
@@ -433,6 +522,9 @@ efi_block_show(void)
 
 				printf("%s\n", fstypenames[bpart->gpt.fstype]);
 				break;
+			case EFI_BLOCK_PART_CD9660:
+				printf("  hd%u%c %s\n", bdev->index, bpart->index + 'a', fstypenames[FS_ISO9660]);
+				break;
 			default:
 				break;
 			}
@@ -493,6 +585,7 @@ efi_block_strategy(void *devdata, int rw, daddr_t dblk, size_t size, void *buf, 
 {
 	struct efi_block_part *bpart = devdata;
 	EFI_STATUS status;
+	void *allocated_buf, *aligned_buf;
 
 	if (rw != F_READ)
 		return EROFS;
@@ -514,13 +607,33 @@ efi_block_strategy(void *devdata, int rw, daddr_t dblk, size_t size, void *buf, 
 		}
 		dblk += le64toh(bpart->gpt.ent.ent_lba_start);
 		break;
+	case EFI_BLOCK_PART_CD9660:
+		dblk *= ISO_DEFAULT_BLOCK_SIZE / bpart->bdev->bio->Media->BlockSize;
+		break;
 	default:
 		return EINVAL;
 	}
 
-	status = uefi_call_wrapper(bpart->bdev->bio->ReadBlocks, 5, bpart->bdev->bio, bpart->bdev->media_id, dblk, size, buf);
-	if (EFI_ERROR(status))
+	if ((bpart->bdev->bio->Media->IoAlign <= 1) ||
+		((intptr_t)buf & (bpart->bdev->bio->Media->IoAlign - 1)) == 0) {
+		allocated_buf = NULL;
+		aligned_buf = buf;
+	} else if ((allocated_buf = efi_block_allocate_device_buffer(bpart->bdev,
+		size, &aligned_buf)) == NULL) {
+		return ENOMEM;
+	}
+
+	status = uefi_call_wrapper(bpart->bdev->bio->ReadBlocks, 5,
+		bpart->bdev->bio, bpart->bdev->media_id, dblk, size, aligned_buf);
+	if (EFI_ERROR(status)) {
+		if (allocated_buf != NULL)
+			FreePool(allocated_buf);
 		return EIO;
+	}
+	if (allocated_buf != NULL) {
+		memcpy(buf, aligned_buf, size);
+		FreePool(allocated_buf);
+	}
 
 	*rsize = size;
 

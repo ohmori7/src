@@ -1,4 +1,4 @@
-/*	$NetBSD: misc.c,v 1.21 2019/02/03 03:20:24 thorpej Exp $	*/
+/*	$NetBSD: misc.c,v 1.24 2020/09/13 04:14:48 isaki Exp $	*/
 
 /*-
  * Copyright (c) 2008 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: misc.c,v 1.21 2019/02/03 03:20:24 thorpej Exp $");
+__RCSID("$NetBSD: misc.c,v 1.24 2020/09/13 04:14:48 isaki Exp $");
 
 #include <stdbool.h>
 #include <sys/param.h>
@@ -59,6 +59,9 @@ __RCSID("$NetBSD: misc.c,v 1.21 2019/02/03 03:20:24 thorpej Exp $");
 #include <sys/mount.h>
 
 #include <net/bpfdesc.h>
+
+#include <dev/audio/audiodef.h>
+#include <dev/audio/audio_if.h>
 
 #include <err.h>
 #include <util.h>
@@ -159,7 +162,7 @@ p_bpf(struct file *f)
 		(void)printf(", waiting");
 	else if (bpf.bd_state == BPF_TIMED_OUT)
 		(void)printf(", timeout");
-	(void)printf("\n");
+	oprint(f, "\n");
 	return 0;
 }
 
@@ -183,11 +186,12 @@ p_sem(struct file *f)
 			    ks.ks_name, Pid);
 		} else {
 			buf[ks.ks_namelen] = '\0';
-			(void)printf(", name=%s\n", buf);
+			(void)printf(", name=%s", buf);
+			oprint(f, "\n");
 			return 0;
 		}
 	}
-	(void)printf("\n");
+	oprint(f, "\n");
 	return 0;
 }
 
@@ -200,35 +204,8 @@ p_mqueue(struct file *f)
 		dprintf("can't read mqueue at %p for pid %d", f->f_data, Pid);
 		return 0;
 	}
-	(void)printf("* mqueue \"%s\"\n", mq.mq_name);
-	return 0;
-}
-
-static int
-p_rnd(struct file *f)
-{
-	struct cprng_strong {
-		char cs_name[16];
-		int  cs_flags;
-		/*...*/
-	} str;
-	struct rnd_ctx {
-		struct cprng_strong *rc_cprng;
-		bool rc_hard;
-	} ctx;
-	char buf[1024];
-
-	if (!KVM_READ(f->f_data, &ctx, sizeof(ctx))) {
-		dprintf("can't read rnd_ctx at %p for pid %d", f->f_data, Pid);
-		return 0;
-	}
-	if (!KVM_READ(ctx.rc_cprng, &str, sizeof(str))) {
-		dprintf("can't read cprng_strong at %p for pid %d", f->f_data,\
-		    Pid);
-		return 0;
-	}
-	snprintb(buf, sizeof(buf), CPRNG_FMT, str.cs_flags);
-	(void)printf("* rnd \"%s\" flags %s\n", str.cs_name, buf);
+	(void)printf("* mqueue \"%s\"", mq.mq_name);
+	oprint(f, "\n");
 	return 0;
 }
 
@@ -241,7 +218,48 @@ p_kqueue(struct file *f)
 		dprintf("can't read kqueue at %p for pid %d", f->f_data, Pid);
 		return 0;
 	}
-	(void)printf("* kqueue pending %d\n", kq.kq_count);
+	(void)printf("* kqueue pending %d", kq.kq_count);
+	oprint(f, "\n");
+	return 0;
+}
+
+static int
+p_audio(struct file *f)
+{
+	struct audio_file af;
+	const char *devname;
+	const char *modename;
+
+	if (!KVM_READ(f->f_data, &af, sizeof(af))) {
+		dprintf("can't read audio_file at %p for pid %d",
+		    f->f_data, Pid);
+		return 0;
+	}
+
+	if (ISDEVAUDIO(af.dev)) {
+		devname = "audio";
+	} else if (ISDEVSOUND(af.dev)) {
+		devname = "sound";
+	} else if (ISDEVAUDIOCTL(af.dev)) {
+		devname = "audioctl";
+	} else if (ISDEVMIXER(af.dev)) {
+		devname = "mixer";
+	} else {
+		devname = "???";
+	}
+
+	if (af.ptrack && af.rtrack) {
+		modename = "playback, record";
+	} else if (af.ptrack) {
+		modename = "playback";
+	} else if (af.rtrack) {
+		modename = "record";
+	} else {
+		modename = "-";
+	}
+
+	(void)printf("* audio@%s%d %s", devname, AUDIOUNIT(af.dev), modename);
+	oprint(f, "\n");
 	return 0;
 }
 
@@ -277,26 +295,28 @@ pmisc(struct file *f, const char *name)
 	case NL_KQUEUE:
 		return p_kqueue(f);
 	case NL_RND:
-		return p_rnd(f);
+		printf("* random %p", f->f_data);
+		break;
 	case NL_SEM:
 		return p_sem(f);
 	case NL_TAP:
-		printf("* tap %lu\n", (unsigned long)(intptr_t)f->f_data);
-		return 0;
+		printf("* tap %lu", (unsigned long)(intptr_t)f->f_data);
+		break;
 	case NL_CRYPTO:
-		printf("* crypto %p\n", f->f_data);
-		return 0;
+		printf("* crypto %p", f->f_data);
+		break;
 	case NL_AUDIO:
-		printf("* audio %p\n", f->f_data);
-		return 0;
+		return p_audio(f);
 	case NL_PAD:
-		printf("* pad %p\n", f->f_data);
-		return 0;
+		printf("* pad %p", f->f_data);
+		break;
 	case NL_MAX:
-		printf("* %s ops=%p %p\n", name, f->f_ops, f->f_data);
-		return 0;
+		printf("* %s ops=%p %p", name, f->f_ops, f->f_data);
+		break;
 	default:
-		printf("* %s %p\n", nl[i].n_name, f->f_data);
-		return 0;
+		printf("* %s %p", nl[i].n_name, f->f_data);
+		break;
 	}
+	oprint(f, "\n");
+	return 0;
 }

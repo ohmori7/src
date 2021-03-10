@@ -1,4 +1,4 @@
-/*	$NetBSD: netbsd32_conv.h,v 1.38 2019/02/21 03:37:19 mrg Exp $	*/
+/*	$NetBSD: netbsd32_conv.h,v 1.45 2021/01/19 03:41:22 simonb Exp $	*/
 
 /*
  * Copyright (c) 1998, 2001 Matthew R. Green
@@ -245,21 +245,36 @@ netbsd32_to_iovecin(const struct netbsd32_iovec *iov32p, struct iovec *iovp,
     int len)
 {
 	int i, error=0;
-	u_int32_t iov_base;
-	u_int32_t iov_len;
+	uint32_t iov_base;
+	uint32_t iov_len, total_iov_len;
+
 	/*
 	 * We could allocate an iov32p, do a copyin, and translate
 	 * each field and then free it all up, or we could copyin
 	 * each field separately.  I'm doing the latter to reduce
 	 * the number of MALLOC()s.
 	 */
+	total_iov_len = 0;
 	for (i = 0; i < len; i++, iovp++, iov32p++) {
 		if ((error = copyin(&iov32p->iov_base, &iov_base, sizeof(iov_base))))
-		    return (error);
+		    return error;
 		if ((error = copyin(&iov32p->iov_len, &iov_len, sizeof(iov_len))))
-		    return (error);
+		    return error;
 		iovp->iov_base = (void *)(u_long)iov_base;
 		iovp->iov_len = (size_t)iov_len;
+
+		/*
+		 * System calls return ssize_t because -1 is returned
+		 * on error.  Therefore we must restrict the length to
+		 * SSIZE_MAX (NETBSD32_SSIZE_MAX with compat32) to
+		 * avoid garbage return values.
+		 */
+		total_iov_len += iov_len;
+		if (iov_len > NETBSD32_SSIZE_MAX ||
+		    total_iov_len > NETBSD32_SSIZE_MAX) {
+			return EINVAL;
+			break;
+		}
 	}
 	return error;
 }
@@ -307,7 +322,7 @@ netbsd32_from_mmsghdr(struct netbsd32_mmsghdr *mmsg32,
 }
 
 static __inline void
-netbsd32_from_statvfs(const struct statvfs *sbp, struct netbsd32_statvfs *sb32p)
+netbsd32_from_statvfs90(const struct statvfs *sbp, struct netbsd32_statvfs90 *sb32p)
 {
 	sb32p->f_flag = sbp->f_flag;
 	sb32p->f_bsize = (netbsd32_u_long)sbp->f_bsize;
@@ -343,6 +358,47 @@ netbsd32_from_statvfs(const struct statvfs *sbp, struct netbsd32_statvfs *sb32p)
 	memcpy(sb32p->f_fstypename, sbp->f_fstypename, sizeof(sb32p->f_fstypename));
 	memcpy(sb32p->f_mntonname, sbp->f_mntonname, sizeof(sb32p->f_mntonname));
 	memcpy(sb32p->f_mntfromname, sbp->f_mntfromname, sizeof(sb32p->f_mntfromname));
+#endif
+}
+
+static __inline void
+netbsd32_from_statvfs(const struct statvfs *sbp, struct netbsd32_statvfs *sb32p)
+{
+	sb32p->f_flag = sbp->f_flag;
+	sb32p->f_bsize = (netbsd32_u_long)sbp->f_bsize;
+	sb32p->f_frsize = (netbsd32_u_long)sbp->f_frsize;
+	sb32p->f_iosize = (netbsd32_u_long)sbp->f_iosize;
+	sb32p->f_blocks = sbp->f_blocks;
+	sb32p->f_bfree = sbp->f_bfree;
+	sb32p->f_bavail = sbp->f_bavail;
+	sb32p->f_bresvd = sbp->f_bresvd;
+	sb32p->f_files = sbp->f_files;
+	sb32p->f_ffree = sbp->f_ffree;
+	sb32p->f_favail = sbp->f_favail;
+	sb32p->f_fresvd = sbp->f_fresvd;
+	sb32p->f_syncreads = sbp->f_syncreads;
+	sb32p->f_syncwrites = sbp->f_syncwrites;
+	sb32p->f_asyncreads = sbp->f_asyncreads;
+	sb32p->f_asyncwrites = sbp->f_asyncwrites;
+	sb32p->f_fsidx = sbp->f_fsidx;
+	sb32p->f_fsid = (netbsd32_u_long)sbp->f_fsid;
+	sb32p->f_namemax = (netbsd32_u_long)sbp->f_namemax;
+	sb32p->f_owner = sbp->f_owner;
+	sb32p->f_spare[0] = 0;
+	sb32p->f_spare[1] = 0;
+	sb32p->f_spare[2] = 0;
+	sb32p->f_spare[3] = 0;
+#if 1
+	/* May as well do the whole batch in one go */
+	memcpy(sb32p->f_fstypename, sbp->f_fstypename,
+	    sizeof(sb32p->f_fstypename) + sizeof(sb32p->f_mntonname) +
+	    sizeof(sb32p->f_mntfromname) + sizeof(sb32p->f_mntfromlabel));
+#else
+	/* If we want to be careful */
+	memcpy(sb32p->f_fstypename, sbp->f_fstypename, sizeof(sb32p->f_fstypename));
+	memcpy(sb32p->f_mntonname, sbp->f_mntonname, sizeof(sb32p->f_mntonname));
+	memcpy(sb32p->f_mntfromname, sbp->f_mntfromname, sizeof(sb32p->f_mntfromname));
+	memcpy(sb32p->f_mntfromlabel, sbp->f_mntfromlabel, sizeof(sb32p->f_mntfromlabel));
 #endif
 }
 
@@ -713,7 +769,7 @@ netbsd32_to_kevent(struct netbsd32_kevent *ke32, struct kevent *ke)
 	ke->flags = ke32->flags;
 	ke->fflags = ke32->fflags;
 	ke->data = ke32->data;
-	ke->udata = ke32->udata;
+	ke->udata = NETBSD32PTR64(ke32->udata);
 }
 
 static __inline void
@@ -724,7 +780,7 @@ netbsd32_from_kevent(struct kevent *ke, struct netbsd32_kevent *ke32)
 	ke32->flags = ke->flags;
 	ke32->fflags = ke->fflags;
 	ke32->data = ke->data;
-	ke32->udata = ke->udata;
+	NETBSD32PTR32(ke32->udata, ke->udata);
 }
 
 static __inline void
@@ -758,11 +814,11 @@ netbsd32_to_dirent12(char *buf, int nbytes)
 	 */
 	for (; ndp < endp; ndp = nndp) {
 		nndp = _DIRENT_NEXT(ndp);
-		odp->d_fileno = (u_int32_t)ndp->d_fileno;
+		odp->d_fileno = (uint32_t)ndp->d_fileno;
 		if (ndp->d_namlen >= sizeof(odp->d_name))
 			odp->d_namlen = sizeof(odp->d_name) - 1;
 		else
-			odp->d_namlen = (u_int8_t)ndp->d_namlen;
+			odp->d_namlen = (uint8_t)ndp->d_namlen;
 		odp->d_type = ndp->d_type;
 		(void)memcpy(odp->d_name, ndp->d_name, (size_t)odp->d_namlen);
 		odp->d_name[odp->d_namlen] = '\0';

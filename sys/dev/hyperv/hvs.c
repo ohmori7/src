@@ -1,4 +1,4 @@
-/*	$NetBSD: hvs.c,v 1.1 2019/02/15 08:54:01 nonaka Exp $	*/
+/*	$NetBSD: hvs.c,v 1.4 2020/05/25 10:14:58 nonaka Exp $	*/
 /*	$OpenBSD: hvs.c,v 1.17 2017/08/10 17:22:48 mikeb Exp $	*/
 
 /*-
@@ -37,7 +37,7 @@
 /* #define HVS_DEBUG_IO */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: hvs.c,v 1.1 2019/02/15 08:54:01 nonaka Exp $");
+__KERNEL_RCSID(0, "$NetBSD: hvs.c,v 1.4 2020/05/25 10:14:58 nonaka Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -180,7 +180,7 @@ union hvs_cmd {
 
 #define HVS_RING_SIZE			(20 * PAGE_SIZE)
 #define HVS_MAX_CCB			128
-#define HVS_MAX_SGE			(MAXPHYS / PAGE_SIZE + 1)
+#define HVS_MAX_SGE			(howmany(MAXPHYS, PAGE_SIZE) + 1)
 
 struct hvs_softc;
 
@@ -1040,7 +1040,6 @@ hvs_empty_done(struct hvs_ccb *ccb)
 static int
 hvs_alloc_ccbs(struct hvs_softc *sc)
 {
-	const int kmemflags = cold ? KM_NOSLEEP : KM_SLEEP;
 	const int dmaflags = cold ? BUS_DMA_NOWAIT : BUS_DMA_WAITOK;
 	int i, error;
 
@@ -1049,11 +1048,7 @@ hvs_alloc_ccbs(struct hvs_softc *sc)
 
 	sc->sc_nccb = HVS_MAX_CCB;
 	sc->sc_ccbs = kmem_zalloc(sc->sc_nccb * sizeof(struct hvs_ccb),
-	    kmemflags);
-	if (sc->sc_ccbs == NULL) {
-		aprint_error_dev(sc->sc_dev, "failed to allocate CCBs\n");
-		return -1;
-	}
+	    KM_SLEEP);
 
 	for (i = 0; i < sc->sc_nccb; i++) {
 		error = bus_dmamap_create(sc->sc_dmat, MAXPHYS, HVS_MAX_SGE,
@@ -1066,13 +1061,7 @@ hvs_alloc_ccbs(struct hvs_softc *sc)
 
 		sc->sc_ccbs[i].ccb_sgl = kmem_zalloc(
 		    sizeof(struct vmbus_gpa_range) * (HVS_MAX_SGE + 1),
-		    kmemflags);
-		if (sc->sc_ccbs[i].ccb_sgl == NULL) {
-			aprint_error_dev(sc->sc_dev,
-			    "failed to allocate SGL array\n");
-			goto errout;
-		}
-
+		    KM_SLEEP);
 		sc->sc_ccbs[i].ccb_rid = i;
 		hvs_put_ccb(sc, &sc->sc_ccbs[i]);
 	}
@@ -1095,7 +1084,8 @@ hvs_free_ccbs(struct hvs_softc *sc)
 		if (ccb->ccb_dmap == NULL)
 			continue;
 
-		bus_dmamap_sync(sc->sc_dmat, ccb->ccb_dmap, 0, 0,
+		bus_dmamap_sync(sc->sc_dmat, ccb->ccb_dmap,
+		    0, ccb->ccb_dmap->dm_mapsize,
 		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 		bus_dmamap_unload(sc->sc_dmat, ccb->ccb_dmap);
 		bus_dmamap_destroy(sc->sc_dmat, ccb->ccb_dmap);

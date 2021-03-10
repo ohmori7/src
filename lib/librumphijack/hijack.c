@@ -1,4 +1,4 @@
-/*      $NetBSD: hijack.c,v 1.127 2019/02/17 23:35:50 bad Exp $	*/
+/*      $NetBSD: hijack.c,v 1.131 2020/05/27 18:55:36 christos Exp $	*/
 
 /*-
  * Copyright (c) 2011 Antti Kantee.  All Rights Reserved.
@@ -34,7 +34,7 @@
 #include <rump/rumpuser_port.h>
 
 #if !defined(lint)
-__RCSID("$NetBSD: hijack.c,v 1.127 2019/02/17 23:35:50 bad Exp $");
+__RCSID("$NetBSD: hijack.c,v 1.131 2020/05/27 18:55:36 christos Exp $");
 #endif
 
 #include <sys/param.h>
@@ -170,6 +170,9 @@ enum dualcall {
 #ifdef __NetBSD__
 	DUALCALL_LINKAT,
 #endif
+	DUALCALL_PATHCONF,
+	DUALCALL_LPATHCONF,
+
 	DUALCALL__NUM
 };
 
@@ -216,7 +219,17 @@ enum dualcall {
 #define REALMOUNT __mount50
 #define REALGETFH __getfh30
 #define REALFHOPEN __fhopen40
+#if !__NetBSD_Prereq__(9,99,13)
+#define REALSTATVFS1 statvfs1
+#define REALFSTATVFS1 fstatvfs1
+#define REALGETVFSSTAT getvfsstat
 #define REALFHSTATVFS1 __fhstatvfs140
+#else
+#define REALSTATVFS1 __statvfs190
+#define REALFSTATVFS1 __fstatvfs190
+#define REALGETVFSSTAT __getvfsstat90
+#define REALFHSTATVFS1 __fhstatvfs190
+#endif
 #define REALSOCKET __socket30
 
 #define LSEEK_ALIAS _lseek
@@ -264,7 +277,10 @@ int REALMOUNT(const char *, const char *, int, void *, size_t);
 int REALGETFH(const char *, void *, size_t *);
 int REALFHOPEN(const void *, size_t, int);
 int REALFHSTAT(const void *, size_t, struct stat *);
+int REALSTATVFS1(const char *, struct statvfs *, int);
+int REALFSTATVFS1(int, struct statvfs *, int);
 int REALFHSTATVFS1(const void *, size_t, struct statvfs *, int);
+int REALGETVFSSTAT(struct statvfs *, size_t, int);
 int REALSOCKET(int, int, int);
 
 #define S(a) __STRING(a)
@@ -365,9 +381,9 @@ struct sysnames {
 #endif
 
 #ifdef __NetBSD__
-	{ DUALCALL_STATVFS1,	"statvfs1",	RSYS_NAME(STATVFS1)	},
-	{ DUALCALL_FSTATVFS1,	"fstatvfs1",	RSYS_NAME(FSTATVFS1)	},
-	{ DUALCALL_GETVFSSTAT,	"getvfsstat",	RSYS_NAME(GETVFSSTAT)	},
+	{ DUALCALL_STATVFS1,	S(REALSTATVFS1),RSYS_NAME(STATVFS1)	},
+	{ DUALCALL_FSTATVFS1,	S(REALFSTATVFS1),RSYS_NAME(FSTATVFS1)	},
+	{ DUALCALL_GETVFSSTAT,	S(REALGETVFSSTAT),RSYS_NAME(GETVFSSTAT)	},
 #endif
 
 #ifdef __NetBSD__
@@ -392,6 +408,8 @@ struct sysnames {
 #ifdef __NetBSD__
 	{ DUALCALL_LINKAT,	"linkat",	RSYS_NAME(LINKAT)	},
 #endif
+	{ DUALCALL_PATHCONF,	"pathconf",	RSYS_NAME(PATHCONF)	},
+	{ DUALCALL_LPATHCONF,	"lpathconf",	RSYS_NAME(LPATHCONF)	},
 };
 #undef S
 
@@ -427,9 +445,9 @@ static int hijack_fdoff = FD_SETSIZE/2;
 /* note: you cannot change this without editing the env-passing code */
 #define DUP2HIGH 2
 static uint32_t dup2vec[DUP2HIGH+1];
-#define DUP2BIT (1<<31)
-#define DUP2ALIAS (1<<30)
-#define DUP2FDMASK ((1<<30)-1)
+#define DUP2BIT (1U<<31)
+#define DUP2ALIAS (1U<<30)
+#define DUP2FDMASK ((1U<<30)-1)
 
 static bool
 isdup2d(int fd)
@@ -1321,6 +1339,39 @@ linkat(int fromfd, const char *from, int tofd, const char *to, int flags)
 	    GETSYSCALL(rump, LINK), GETSYSCALL(host, LINK));
 }
 #endif
+
+static long
+do_pathconf(const char *path, int name, int link)
+{
+	long (*op_pathconf)(const char *, int);
+	enum pathtype pt;
+
+	if ((pt = path_isrump(path)) != PATH_HOST) {
+		op_pathconf = link ?
+		    GETSYSCALL(rump, LPATHCONF) :
+		    GETSYSCALL(rump, PATHCONF);
+		if (pt == PATH_RUMP)
+			path = path_host2rump(path);
+	} else {
+		op_pathconf = link ? 
+		    GETSYSCALL(host, LPATHCONF) :
+		    GETSYSCALL(host, PATHCONF);
+	}
+
+	return op_pathconf(path, name);
+}
+
+long
+lpathconf(const char *path, int name)
+{
+	return do_pathconf(path, name, 1);
+}
+
+long
+pathconf(const char *path, int name)
+{
+	return do_pathconf(path, name, 0);
+}
 
 int
 link(const char *from, const char *to)
@@ -2497,7 +2548,7 @@ FDCALL(int, REALFSTAT, DUALCALL_FSTAT,					\
 #endif
 
 #ifdef __NetBSD__
-FDCALL(int, fstatvfs1, DUALCALL_FSTATVFS1,				\
+FDCALL(int, REALFSTATVFS1, DUALCALL_FSTATVFS1,				\
 	(int fd, struct statvfs *buf, int flags),			\
 	(int, struct statvfs *, int),					\
 	(fd, buf, flags))
@@ -2599,7 +2650,7 @@ PATHCALL(int, lchmod, DUALCALL_LCHMOD,					\
 	(path, mode))
 
 #ifdef __NetBSD__
-PATHCALL(int, statvfs1, DUALCALL_STATVFS1,				\
+PATHCALL(int, REALSTATVFS1, DUALCALL_STATVFS1,				\
 	(const char *path, struct statvfs *buf, int flags),		\
 	(const char *, struct statvfs *, int),				\
 	(path, buf, flags))
@@ -2728,7 +2779,7 @@ PATHCALL(int, REALGETFH, DUALCALL_GETFH,				\
  */
 
 #ifdef __NetBSD__
-VFSCALL(VFSBIT_GETVFSSTAT, int, getvfsstat, DUALCALL_GETVFSSTAT,	\
+VFSCALL(VFSBIT_GETVFSSTAT, int, REALGETVFSSTAT, DUALCALL_GETVFSSTAT,	\
 	(struct statvfs *buf, size_t buflen, int flags),		\
 	(struct statvfs *, size_t, int),				\
 	(buf, buflen, flags))

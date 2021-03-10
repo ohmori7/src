@@ -412,7 +412,7 @@ dmu_tx_count_dnode(dmu_tx_hold_t *txh)
 	dnode_t *dn = txh->txh_dnode;
 	dnode_t *mdn = DMU_META_DNODE(txh->txh_tx->tx_objset);
 	uint64_t space = mdn->dn_datablksz +
-	    ((mdn->dn_nlevels-1) << mdn->dn_indblkshift);
+	    ((uint64_t)(mdn->dn_nlevels-1) << mdn->dn_indblkshift);
 
 	if (dn && dn->dn_dbuf->db_blkptr &&
 	    dsl_dataset_block_freeable(dn->dn_objset->os_dsl_dataset,
@@ -1153,6 +1153,9 @@ dmu_tx_delay(dmu_tx_t *tx, uint64_t dirty)
 #ifdef __NetBSD__
 	int timo = (wakeup - now) * hz / 1000000000;
 
+	if (timo < 0)
+		return;
+
 	if (timo == 0)
 		timo = 1;
 	kpause("dmu_tx_delay", false, timo, NULL);
@@ -1427,8 +1430,10 @@ dmu_tx_willuse_space(dmu_tx_t *tx, int64_t delta)
 		return;
 
 	if (delta > 0) {
+/* FreeBSD r318821, illumos 7793 ztest fails assertion in dmu_tx_willuse_space
 		ASSERT3U(refcount_count(&tx->tx_space_written) + delta, <=,
 		    tx->tx_space_towrite);
+*/
 		(void) refcount_add_many(&tx->tx_space_written, delta, NULL);
 	} else {
 		(void) refcount_add_many(&tx->tx_space_freed, -delta, NULL);

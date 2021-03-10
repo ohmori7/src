@@ -1,5 +1,5 @@
-/*	$Id: mpcsa_machdep.c,v 1.10 2018/07/15 05:16:42 maxv Exp $	*/
-/*	$NetBSD: mpcsa_machdep.c,v 1.10 2018/07/15 05:16:42 maxv Exp $	*/
+/*	$Id: mpcsa_machdep.c,v 1.13 2020/04/18 11:00:40 skrll Exp $	*/
+/*	$NetBSD: mpcsa_machdep.c,v 1.13 2020/04/18 11:00:40 skrll Exp $	*/
 
 /*
  * Copyright (c) 2007 Embedtronics Oy
@@ -77,11 +77,10 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: mpcsa_machdep.c,v 1.10 2018/07/15 05:16:42 maxv Exp $");
+__KERNEL_RCSID(0, "$NetBSD: mpcsa_machdep.c,v 1.13 2020/04/18 11:00:40 skrll Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
-#include "opt_pmap_debug.h"
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -218,7 +217,7 @@ cpu_reboot(int howto, char *bootstr)
 	/* Do a dump if requested. */
 	if ((howto & (RB_DUMP | RB_HALT)) == RB_DUMP)
 		dumpsys();
-	
+
 	/* Run any shutdown hooks */
 	doshutdownhooks();
 
@@ -247,7 +246,7 @@ cpu_reboot(int howto, char *bootstr)
 }
 
 /*
- * u_int initarm(...)
+ * vaddr_t initarm(...)
  *
  * Initial entry point on startup. This gets called before main() is
  * entered.
@@ -259,10 +258,10 @@ cpu_reboot(int howto, char *bootstr)
  *   Setting up page tables for the kernel
  *   Initialising interrupt controllers to a sane default state
  */
-u_int
+vaddr_t
 initarm(void *arg)
 {
-	u_int ret;
+	vaddr_t sp;
 	/*
 	 * basic AT91 initialization:
 	 */
@@ -283,7 +282,7 @@ initarm(void *arg)
  	bootconfig.dramblocks = 1;
  	bootconfig.dram[0].address = 0x20000000UL;
  	bootconfig.dram[0].pages =   0x04000000UL / PAGE_SIZE;
-	ret = at91bus_setup(&bootconfig);
+	sp = at91bus_setup(&bootconfig);
 
 	if (AT91_CHIP_ID() != AT91RM9200_CHIP_ID)
 		panic("%s: processor is not AT91RM9200", __FUNCTION__);
@@ -292,7 +291,7 @@ initarm(void *arg)
 	evbarm_device_register = mpcsa_device_register;
 
 	/* We return the new stack pointer address */
-	return ret;
+	return sp;
 }
 
 
@@ -305,7 +304,7 @@ at91_bus_dma_init(struct arm32_bus_dma_tag *dma_tag_template)
 	for (i = 0; i < bootconfig.dramblocks; i++) {
 		mpcsa_dma_ranges[i].dr_sysbase = bootconfig.dram[i].address;
 		mpcsa_dma_ranges[i].dr_busbase = bootconfig.dram[i].address;
-		mpcsa_dma_ranges[i].dr_len = bootconfig.dram[i].pages * 
+		mpcsa_dma_ranges[i].dr_len = bootconfig.dram[i].pages *
 			PAGE_SIZE;
 	}
 

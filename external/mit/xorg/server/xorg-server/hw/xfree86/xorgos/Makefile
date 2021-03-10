@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.47 2018/12/31 11:14:05 mrg Exp $
+#	$NetBSD: Makefile,v 1.49 2021/03/07 10:42:27 rin Exp $
 
 .include "../../../Makefile.serverlib"
 .include "../../../Makefile.servermod"
@@ -35,8 +35,13 @@ CPPFLAGS.${_FN}+=	-DPCVT_SUPPORT -DWSCONS_SUPPORT \
 .endfor
 .endif
 
-.if ${MACHINE} == "macppc" || ${MACHINE} == "prep" || ${MACHINE} == "bebox" || ${MACHINE} == "ofppc" || ${MACHINE} == "ibmnws"
-SRCS.bsd+=	ppc_video.c pm_noop.c lnx_agp.c
+.if ${MACHINE_CPU} == "powerpc" || ${MACHINE} == "hppa"
+SRCS.bsd+=	ppc_video.c pm_noop.c
+.  if ${MACHINE} != "evbppc"
+SRCS.bsd+=	lnx_agp.c
+.  else
+SRCS.bsd+=	agp_noop.c
+.  endif
 .for _FN in ${SRCS.bsd}
 CPPFLAGS.${_FN}=	-DWSCONS_SUPPORT -DPCVT_SUPPORT -DUSESTDRES -DHAVE_SYSV_IPC
 .endfor

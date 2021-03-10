@@ -1,6 +1,6 @@
 // Components for manipulating sequences of characters -*- C++ -*-
 
-// Copyright (C) 1997-2016 Free Software Foundation, Inc.
+// Copyright (C) 1997-2018 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -35,6 +35,12 @@
 # define _GLIBCXX_USE_CXX11_ABI 1
 #endif
 
+// Prevent the basic_string(const _CharT*, const _Alloc&) and
+// basic_string(size_type, _CharT, const _Alloc&) constructors from being
+// replaced by constrained function templates, so that we instantiate the
+// pre-C++17 definitions.
+#define _GLIBCXX_DEFINING_STRING_INSTANTIATIONS 1
+
 #include <string>
 
 // Instantiation configuration.
@@ -53,7 +59,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   template S operator+(C, const S&);
   template S operator+(const S&, const S&);
 
-  // Only one template keyword allowed here. 
+  // Only one template keyword allowed here.
   // See core issue #46 (NAD)
   // http://www.open-std.org/jtc1/sc22/wg21/docs/cwg_closed.html#46
   template
@@ -62,17 +68,17 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
   template
     S::basic_string(const C*, const C*, const allocator<C>&);
 
-  template 
+  template
     S::basic_string(S::iterator, S::iterator, const allocator<C>&);
 
 #if _GLIBCXX_USE_CXX11_ABI
-  template 
+  template
     void
     S::_M_construct(S::iterator, S::iterator, forward_iterator_tag);
 
-  template 
+  template
     void
-    S::_M_construct(S::const_iterator, S::const_iterator, 
+    S::_M_construct(S::const_iterator, S::const_iterator,
 		    forward_iterator_tag);
 
   template
@@ -85,9 +91,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
 #else // !_GLIBCXX_USE_CXX11_ABI
 
-  template 
-    C* 
-    S::_S_construct(S::iterator, S::iterator, 
+  template
+    C*
+    S::_S_construct(S::iterator, S::iterator,
 		    const allocator<C>&, forward_iterator_tag);
 
   template

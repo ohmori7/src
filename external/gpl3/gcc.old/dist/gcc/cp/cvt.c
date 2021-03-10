@@ -1,5 +1,5 @@
 /* Language-level data type conversion for GNU C++.
-   Copyright (C) 1987-2016 Free Software Foundation, Inc.
+   Copyright (C) 1987-2018 Free Software Foundation, Inc.
    Hacked by Michael Tiemann (tiemann@cygnus.com)
 
 This file is part of GCC.
@@ -33,6 +33,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "flags.h"
 #include "intl.h"
 #include "convert.h"
+#include "stringpool.h"
+#include "attribs.h"
 
 static tree convert_to_pointer_force (tree, tree, tsubst_flags_t);
 static tree build_type_conversion (tree, tree);
@@ -86,7 +88,7 @@ cp_convert_to_pointer (tree type, tree expr, bool dofold,
       if (!COMPLETE_TYPE_P (intype))
 	{
 	  if (complain & tf_error)
-	    error_at (loc, "can%'t convert from incomplete type %qT to %qT",
+	    error_at (loc, "can%'t convert from incomplete type %qH to %qI",
 		      intype, type);
 	  return error_mark_node;
 	}
@@ -96,7 +98,7 @@ cp_convert_to_pointer (tree type, tree expr, bool dofold,
 	{
 	  if ((complain & tf_error)
 	      && rval == error_mark_node)
-	    error_at (loc, "conversion of %qE from %qT to %qT is ambiguous",
+	    error_at (loc, "conversion of %qE from %qH to %qI is ambiguous",
 		      expr, intype, type);
 	  return rval;
 	}
@@ -168,7 +170,7 @@ cp_convert_to_pointer (tree type, tree expr, bool dofold,
       if (TYPE_PTRMEMFUNC_P (type))
 	{
 	  if (complain & tf_error)
-	    error_at (loc, "cannot convert %qE from type %qT to type %qT",
+	    error_at (loc, "cannot convert %qE from type %qH to type %qI",
 		      expr, intype, type);
 	  return error_mark_node;
 	}
@@ -195,7 +197,7 @@ cp_convert_to_pointer (tree type, tree expr, bool dofold,
 	    }
 	}
       if (complain & tf_error)
-	error_at (loc, "cannot convert %qE from type %qT to type %qT",
+	error_at (loc, "cannot convert %qE from type %qH to type %qI",
 		  expr, intype, type);
       return error_mark_node;
     }
@@ -221,7 +223,7 @@ cp_convert_to_pointer (tree type, tree expr, bool dofold,
   else if (TYPE_PTRMEM_P (type) && INTEGRAL_CODE_P (form))
     {
       if (complain & tf_error)
-	error_at (loc, "invalid conversion from %qT to %qT", intype, type);
+	error_at (loc, "invalid conversion from %qH to %qI", intype, type);
       return error_mark_node;
     }
 
@@ -234,8 +236,13 @@ cp_convert_to_pointer (tree type, tree expr, bool dofold,
       /* Modes may be different but sizes should be the same.  There
 	 is supposed to be some integral type that is the same width
 	 as a pointer.  */
-      gcc_assert (GET_MODE_SIZE (TYPE_MODE (TREE_TYPE (expr)))
-		  == GET_MODE_SIZE (TYPE_MODE (type)));
+      gcc_assert (GET_MODE_SIZE (SCALAR_INT_TYPE_MODE (TREE_TYPE (expr)))
+		  == GET_MODE_SIZE (SCALAR_INT_TYPE_MODE (type)));
+
+      /* FIXME needed because convert_to_pointer_maybe_fold still folds
+	 conversion of constants.  */
+      if (!dofold)
+	return build1 (CONVERT_EXPR, type, expr);
 
       return convert_to_pointer_maybe_fold (type, expr, dofold);
     }
@@ -244,7 +251,7 @@ cp_convert_to_pointer (tree type, tree expr, bool dofold,
     return instantiate_type (type, expr, complain);
 
   if (complain & tf_error)
-    error_at (loc, "cannot convert %qE from type %qT to type %qT",
+    error_at (loc, "cannot convert %qE from type %qH to type %qI",
 	      expr, intype, type);
   return error_mark_node;
 }
@@ -317,7 +324,7 @@ build_up_reference (tree type, tree arg, int flags, tree decl,
 
   gcc_assert (TREE_CODE (type) == REFERENCE_TYPE);
 
-  if ((flags & DIRECT_BIND) && ! real_lvalue_p (arg))
+  if ((flags & DIRECT_BIND) && ! lvalue_p (arg))
     {
       /* Create a new temporary variable.  We can't just use a TARGET_EXPR
 	 here because it needs to live as long as DECL.  */
@@ -330,7 +337,7 @@ build_up_reference (tree type, tree arg, int flags, tree decl,
       cp_finish_decl (arg, targ, /*init_const_expr_p=*/false, NULL_TREE,
 		      LOOKUP_ONLYCONVERTING|DIRECT_BIND);
     }
-  else if (!(flags & DIRECT_BIND) && ! lvalue_p (arg))
+  else if (!(flags & DIRECT_BIND) && ! obvalue_p (arg))
     return get_target_expr_sfinae (arg, complain);
 
   /* If we had a way to wrap this up, and say, if we ever needed its
@@ -439,7 +446,7 @@ convert_to_reference (tree reftype, tree expr, int convtype,
 	= build_type_conversion (reftype, expr);
 
       if (rval_as_conversion && rval_as_conversion != error_mark_node
-	  && real_lvalue_p (rval_as_conversion))
+	  && lvalue_p (rval_as_conversion))
 	{
 	  expr = rval_as_conversion;
 	  rval_as_conversion = NULL_TREE;
@@ -457,14 +464,14 @@ convert_to_reference (tree reftype, tree expr, int convtype,
 	tree ttr = lvalue_type (expr);
 
 	if ((complain & tf_error)
-	    && ! real_lvalue_p (expr))
+	    && ! lvalue_p (expr))
 	  diagnose_ref_binding (loc, reftype, intype, decl);
 
 	if (! (convtype & CONV_CONST)
 	    && !at_least_as_qualified_p (ttl, ttr))
 	  {
 	    if (complain & tf_error)
-	      permerror (loc, "conversion from %qT to %qT discards qualifiers",
+	      permerror (loc, "conversion from %qH to %qI discards qualifiers",
 			 ttr, reftype);
 	    else
 	      return error_mark_node;
@@ -473,7 +480,7 @@ convert_to_reference (tree reftype, tree expr, int convtype,
 
       return build_up_reference (reftype, expr, flags, decl, complain);
     }
-  else if ((convtype & CONV_REINTERPRET) && lvalue_p (expr))
+  else if ((convtype & CONV_REINTERPRET) && obvalue_p (expr))
     {
       /* When casting an lvalue to a reference type, just convert into
 	 a pointer to the new type and deference it.  This is allowed
@@ -514,7 +521,7 @@ convert_to_reference (tree reftype, tree expr, int convtype,
     }
 
   if (complain & tf_error)
-    error_at (loc, "cannot convert type %qT to type %qT", intype, reftype);
+    error_at (loc, "cannot convert type %qH to type %qI", intype, reftype);
 
   return error_mark_node;
 }
@@ -580,7 +587,7 @@ ignore_overflows (tree expr, tree orig)
     {
       gcc_assert (!TREE_OVERFLOW (orig));
       /* Ensure constant sharing.  */
-      expr = wide_int_to_tree (TREE_TYPE (expr), expr);
+      expr = wide_int_to_tree (TREE_TYPE (expr), wi::to_wide (expr));
     }
   return expr;
 }
@@ -600,6 +607,10 @@ cp_fold_convert (tree type, tree expr)
       conv = copy_node (expr);
       TREE_TYPE (conv) = type;
     }
+  else if (TREE_CODE (expr) == CONSTRUCTOR
+	   && TYPE_PTRMEMFUNC_P (type))
+    conv = build_ptrmemfunc (TYPE_PTRMEMFUNC_FN_TYPE (type), expr,
+			     true, false, tf_warning_or_error);
   else
     {
       conv = fold_convert (type, expr);
@@ -645,6 +656,7 @@ cp_convert_and_check (tree type, tree expr, tsubst_flags_t complain)
 	{
 	  /* Avoid bogus -Wparentheses warnings.  */
 	  warning_sentinel w (warn_parentheses);
+	  warning_sentinel c (warn_int_in_bool_context);
 	  folded_result = cp_convert (type, folded, tf_none);
 	}
       folded_result = fold_simple (folded_result);
@@ -688,7 +700,10 @@ ocp_convert (tree type, tree expr, int convtype, int flags,
 
   /* FIXME remove when moving to c_fully_fold model.  */
   if (!CLASS_TYPE_P (type))
-    e = scalar_constant_value (e);
+    {
+      e = mark_rvalue_use (e);
+      e = scalar_constant_value (e);
+    }
   if (error_operand_p (e))
     return error_mark_node;
 
@@ -797,7 +812,15 @@ ocp_convert (tree type, tree expr, int convtype, int flags,
 	     to the underlying type first.  */
 	  if (SCOPED_ENUM_P (intype) && (convtype & CONV_STATIC))
 	    e = build_nop (ENUM_UNDERLYING_TYPE (intype), e);
-	  return cp_truthvalue_conversion (e);
+	  if (complain & tf_warning)
+	    return cp_truthvalue_conversion (e);
+	  else
+	    {
+	      /* Prevent bogus -Wint-in-bool-context warnings coming
+		 from c_common_truthvalue_conversion down the line.  */
+	      warning_sentinel w (warn_int_in_bool_context);
+	      return cp_truthvalue_conversion (e);
+	    }
 	}
 
       converted = convert_to_integer_maybe_fold (type, e, dofold);
@@ -898,10 +921,131 @@ ocp_convert (tree type, tree expr, int convtype, int flags,
       if (invalid_nonstatic_memfn_p (loc, expr, complain))
 	/* We displayed the error message.  */;
       else
-	error_at (loc, "conversion from %qT to non-scalar type %qT requested",
+	error_at (loc, "conversion from %qH to non-scalar type %qI requested",
 		  TREE_TYPE (expr), type);
     }
   return error_mark_node;
+}
+
+/* If CALL is a call, return the callee; otherwise null.  */
+
+tree
+cp_get_callee (tree call)
+{
+  if (call == NULL_TREE)
+    return call;
+  else if (TREE_CODE (call) == CALL_EXPR)
+    return CALL_EXPR_FN (call);
+  else if (TREE_CODE (call) == AGGR_INIT_EXPR)
+    return AGGR_INIT_EXPR_FN (call);
+  return NULL_TREE;
+}
+
+/* FN is the callee of a CALL_EXPR or AGGR_INIT_EXPR; return the FUNCTION_DECL
+   if we can.  */
+
+tree
+cp_get_fndecl_from_callee (tree fn, bool fold /* = true */)
+{
+  if (fn == NULL_TREE)
+    return fn;
+  if (TREE_CODE (fn) == FUNCTION_DECL)
+    return fn;
+  tree type = TREE_TYPE (fn);
+  if (type == unknown_type_node)
+    return NULL_TREE;
+  gcc_assert (POINTER_TYPE_P (type));
+  if (fold)
+    fn = maybe_constant_init (fn);
+  STRIP_NOPS (fn);
+  if (TREE_CODE (fn) == ADDR_EXPR)
+    {
+      fn = TREE_OPERAND (fn, 0);
+      if (TREE_CODE (fn) == FUNCTION_DECL)
+	return fn;
+    }
+  return NULL_TREE;
+}
+
+/* Like get_callee_fndecl, but handles AGGR_INIT_EXPR as well and uses the
+   constexpr machinery.  */
+
+tree
+cp_get_callee_fndecl (tree call)
+{
+  return cp_get_fndecl_from_callee (cp_get_callee (call));
+}
+
+/* As above, but not using the constexpr machinery.  */
+
+tree
+cp_get_callee_fndecl_nofold (tree call)
+{
+  return cp_get_fndecl_from_callee (cp_get_callee (call), false);
+}
+
+/* Subroutine of convert_to_void.  Warn if we're discarding something with
+   attribute [[nodiscard]].  */
+
+static void
+maybe_warn_nodiscard (tree expr, impl_conv_void implicit)
+{
+  tree call = expr;
+  if (TREE_CODE (expr) == TARGET_EXPR)
+    call = TARGET_EXPR_INITIAL (expr);
+  location_t loc = EXPR_LOC_OR_LOC (call, input_location);
+  tree callee = cp_get_callee (call);
+  if (!callee)
+    return;
+
+  tree type = TREE_TYPE (callee);
+  if (TYPE_PTRMEMFUNC_P (type))
+    type = TYPE_PTRMEMFUNC_FN_TYPE (type);
+  if (POINTER_TYPE_P (type))
+    type = TREE_TYPE (type);
+
+  tree rettype = TREE_TYPE (type);
+  tree fn = cp_get_fndecl_from_callee (callee);
+  if (implicit != ICV_CAST && fn
+      && lookup_attribute ("nodiscard", DECL_ATTRIBUTES (fn)))
+    {
+      if (warning_at (loc, OPT_Wunused_result,
+		      "ignoring return value of %qD, "
+		      "declared with attribute nodiscard", fn))
+	inform (DECL_SOURCE_LOCATION (fn), "declared here");
+    }
+  else if (implicit != ICV_CAST
+	   && lookup_attribute ("nodiscard", TYPE_ATTRIBUTES (rettype)))
+    {
+      if (warning_at (loc, OPT_Wunused_result,
+		      "ignoring returned value of type %qT, "
+		      "declared with attribute nodiscard", rettype))
+	{
+	  if (fn)
+	    inform (DECL_SOURCE_LOCATION (fn),
+		    "in call to %qD, declared here", fn);
+	  inform (DECL_SOURCE_LOCATION (TYPE_NAME (rettype)),
+		  "%qT declared here", rettype);
+	}
+    }
+  else if (TREE_CODE (expr) == TARGET_EXPR
+	   && lookup_attribute ("warn_unused_result", TYPE_ATTRIBUTES (type)))
+    {
+      /* The TARGET_EXPR confuses do_warn_unused_result into thinking that the
+	 result is used, so handle that case here.  */
+      if (fn)
+	{
+	  if (warning_at (loc, OPT_Wunused_result,
+			  "ignoring return value of %qD, "
+			  "declared with attribute warn_unused_result",
+			  fn))
+	    inform (DECL_SOURCE_LOCATION (fn), "declared here");
+	}
+      else
+	warning_at (loc, OPT_Wunused_result,
+		    "ignoring return value of function "
+		    "declared with attribute warn_unused_result");
+    }
 }
 
 /* When an expression is used in a void context, its value is discarded and
@@ -934,24 +1078,10 @@ convert_to_void (tree expr, impl_conv_void implicit, tsubst_flags_t complain)
 
   expr = maybe_undo_parenthesized_ref (expr);
 
+  expr = mark_discarded_use (expr);
   if (implicit == ICV_CAST)
+    /* An explicit cast to void avoids all -Wunused-but-set* warnings.  */
     mark_exp_read (expr);
-  else
-    {
-      tree exprv = expr;
-
-      while (TREE_CODE (exprv) == COMPOUND_EXPR)
-	exprv = TREE_OPERAND (exprv, 1);
-      if (DECL_P (exprv)
-	  || handled_component_p (exprv)
-	  || INDIRECT_REF_P (exprv))
-	/* Expr is not being 'used' here, otherwise we whould have
-	   called mark_{rl}value_use use here, which would have in turn
-	   called mark_exp_read.  Rather, we call mark_exp_read directly
-	   to avoid some warnings when
-	   -Wunused-but-set-{variable,parameter} is in effect.  */
-	mark_exp_read (exprv);
-    }
 
   if (!TREE_TYPE (expr))
     return expr;
@@ -1020,6 +1150,7 @@ convert_to_void (tree expr, impl_conv_void implicit, tsubst_flags_t complain)
       break;
 
     case CALL_EXPR:   /* We have a special meaning for volatile void fn().  */
+      maybe_warn_nodiscard (expr, implicit);
       break;
 
     case INDIRECT_REF:
@@ -1176,6 +1307,8 @@ convert_to_void (tree expr, impl_conv_void implicit, tsubst_flags_t complain)
                 && !is_reference)
               warning_at (loc, OPT_Wunused_value, "value computed is not used");
             expr = TREE_OPERAND (expr, 0);
+	    if (TREE_CODE (expr) == CALL_EXPR)
+	      maybe_warn_nodiscard (expr, implicit);
           }
 
 	break;
@@ -1245,12 +1378,14 @@ convert_to_void (tree expr, impl_conv_void implicit, tsubst_flags_t complain)
 	    {
 	      tree fn = AGGR_INIT_EXPR_FN (init);
 	      expr = build_call_array_loc (input_location,
-					   TREE_TYPE (TREE_TYPE (TREE_TYPE (fn))),
+					   TREE_TYPE (TREE_TYPE
+						      (TREE_TYPE (fn))),
 					   fn,
 					   aggr_init_expr_nargs (init),
 					   AGGR_INIT_EXPR_ARGP (init));
 	    }
 	}
+      maybe_warn_nodiscard (expr, implicit);
       break;
 
     default:;
@@ -1530,7 +1665,7 @@ build_expr_type_conversion (int desires, tree expr, bool complain)
   tree conv = NULL_TREE;
   tree winner = NULL_TREE;
 
-  if (expr == null_node
+  if (null_node_p (expr)
       && (desires & WANT_INT)
       && !(desires & WANT_NULL))
     {
@@ -1550,7 +1685,7 @@ build_expr_type_conversion (int desires, tree expr, bool complain)
       case INTEGER_TYPE:
 	if ((desires & WANT_NULL) && null_ptr_cst_p (expr))
 	  return expr;
-	/* else fall through...  */
+	/* fall through.  */
 
       case BOOLEAN_TYPE:
 	return (desires & WANT_INT) ? expr : NULL_TREE;
@@ -1600,7 +1735,7 @@ build_expr_type_conversion (int desires, tree expr, bool complain)
       int win = 0;
       tree candidate;
       tree cand = TREE_VALUE (conv);
-      cand = OVL_CURRENT (cand);
+      cand = OVL_FIRST (cand);
 
       if (winner && winner == cand)
 	continue;
@@ -1722,12 +1857,27 @@ type_promotes_to (tree type)
 	   || type == char32_type_node
 	   || type == wchar_type_node)
     {
+      tree prom = type;
+
+      if (TREE_CODE (type) == ENUMERAL_TYPE)
+	{
+	  prom = ENUM_UNDERLYING_TYPE (prom);
+	  if (!ENUM_IS_SCOPED (type)
+	      && ENUM_FIXED_UNDERLYING_TYPE_P (type))
+	    {
+	      /* ISO C++17, 7.6/4.  A prvalue of an unscoped enumeration type
+		 whose underlying type is fixed (10.2) can be converted to a
+		 prvalue of its underlying type. Moreover, if integral promotion
+		 can be applied to its underlying type, a prvalue of an unscoped
+		 enumeration type whose underlying type is fixed can also be 
+		 converted to a prvalue of the promoted underlying type.  */
+	      return type_promotes_to (prom);
+	    }
+	}
+
       int precision = MAX (TYPE_PRECISION (type),
 			   TYPE_PRECISION (integer_type_node));
       tree totype = c_common_type_for_size (precision, 0);
-      tree prom = type;
-      if (TREE_CODE (prom) == ENUMERAL_TYPE)
-	prom = ENUM_UNDERLYING_TYPE (prom);
       if (TYPE_UNSIGNED (prom)
 	  && ! int_fits_type_p (TYPE_MAX_VALUE (prom), totype))
 	prom = c_common_type_for_size (precision, 1);
@@ -1766,9 +1916,30 @@ type_promotes_to (tree type)
    closely.  Although they are used only in pt.c at the moment, they
    should presumably be used everywhere in the future.  */
 
+/* True iff EXPR can be converted to TYPE via a qualification conversion.
+   Callers should check for identical types before calling this function.  */
+
+bool
+can_convert_qual (tree type, tree expr)
+{
+  tree expr_type = TREE_TYPE (expr);
+  gcc_assert (!same_type_p (type, expr_type));
+
+  if (TYPE_PTR_P (type) && TYPE_PTR_P (expr_type))
+    return comp_ptr_ttypes (TREE_TYPE (type), TREE_TYPE (expr_type));
+  else if (TYPE_PTRMEM_P (type) && TYPE_PTRMEM_P (expr_type))
+    return (same_type_p (TYPE_PTRMEM_CLASS_TYPE (type),
+			 TYPE_PTRMEM_CLASS_TYPE (expr_type))
+	    && comp_ptr_ttypes (TYPE_PTRMEM_POINTED_TO_TYPE (type),
+				TYPE_PTRMEM_POINTED_TO_TYPE (expr_type)));
+  else
+    return false;
+}
+
 /* Attempt to perform qualification conversions on EXPR to convert it
    to TYPE.  Return the resulting expression, or error_mark_node if
-   the conversion was impossible.  */
+   the conversion was impossible.  Since this is only used by
+   convert_nontype_argument, we fold the conversion.  */
 
 tree
 perform_qualification_conversions (tree type, tree expr)
@@ -1779,15 +1950,8 @@ perform_qualification_conversions (tree type, tree expr)
 
   if (same_type_p (type, expr_type))
     return expr;
-  else if (TYPE_PTR_P (type) && TYPE_PTR_P (expr_type)
-	   && comp_ptr_ttypes (TREE_TYPE (type), TREE_TYPE (expr_type)))
-    return build_nop (type, expr);
-  else if (TYPE_PTRMEM_P (type) && TYPE_PTRMEM_P (expr_type)
-	   && same_type_p (TYPE_PTRMEM_CLASS_TYPE (type),
-			   TYPE_PTRMEM_CLASS_TYPE (expr_type))
-	   && comp_ptr_ttypes (TYPE_PTRMEM_POINTED_TO_TYPE (type),
-			       TYPE_PTRMEM_POINTED_TO_TYPE (expr_type)))
-    return build_nop (type, expr);
+  else if (can_convert_qual (type, expr))
+    return cp_fold_convert (type, expr);
   else
     return error_mark_node;
 }
@@ -1818,9 +1982,87 @@ tx_unsafe_fn_variant (tree t)
 /* Return true iff FROM can convert to TO by a transaction-safety
    conversion.  */
 
-bool
+static bool
 can_convert_tx_safety (tree to, tree from)
 {
   return (flag_tm && tx_safe_fn_type_p (from)
 	  && same_type_p (to, tx_unsafe_fn_variant (from)));
+}
+
+/* Return true iff FROM can convert to TO by dropping noexcept.  */
+
+static bool
+noexcept_conv_p (tree to, tree from)
+{
+  if (!flag_noexcept_type)
+    return false;
+
+  tree t = non_reference (to);
+  tree f = from;
+  if (TYPE_PTRMEMFUNC_P (t)
+      && TYPE_PTRMEMFUNC_P (f))
+    {
+      t = TYPE_PTRMEMFUNC_FN_TYPE (t);
+      f = TYPE_PTRMEMFUNC_FN_TYPE (f);
+    }
+  if (TREE_CODE (t) == POINTER_TYPE
+      && TREE_CODE (f) == POINTER_TYPE)
+    {
+      t = TREE_TYPE (t);
+      f = TREE_TYPE (f);
+    }
+  tree_code code = TREE_CODE (f);
+  if (TREE_CODE (t) != code)
+    return false;
+  if (code != FUNCTION_TYPE && code != METHOD_TYPE)
+    return false;
+  if (!type_throw_all_p (t)
+      || type_throw_all_p (f))
+    return false;
+  tree v = build_exception_variant (f, NULL_TREE);
+  return same_type_p (t, v);
+}
+
+/* Return true iff FROM can convert to TO by a function pointer conversion.  */
+
+bool
+fnptr_conv_p (tree to, tree from)
+{
+  tree t = non_reference (to);
+  tree f = from;
+  if (TYPE_PTRMEMFUNC_P (t)
+      && TYPE_PTRMEMFUNC_P (f))
+    {
+      t = TYPE_PTRMEMFUNC_FN_TYPE (t);
+      f = TYPE_PTRMEMFUNC_FN_TYPE (f);
+    }
+  if (TREE_CODE (t) == POINTER_TYPE
+      && TREE_CODE (f) == POINTER_TYPE)
+    {
+      t = TREE_TYPE (t);
+      f = TREE_TYPE (f);
+    }
+
+  return (noexcept_conv_p (t, f)
+	  || can_convert_tx_safety (t, f));
+}
+
+/* Return FN with any NOP_EXPRs stripped that represent function pointer
+   conversions or conversions to the same type.  */
+
+tree
+strip_fnptr_conv (tree fn)
+{
+  while (TREE_CODE (fn) == NOP_EXPR)
+    {
+      tree op = TREE_OPERAND (fn, 0);
+      tree ft = TREE_TYPE (fn);
+      tree ot = TREE_TYPE (op);
+      if (same_type_p (ft, ot)
+	  || fnptr_conv_p (ft, ot))
+	fn = op;
+      else
+	break;
+    }
+  return fn;
 }

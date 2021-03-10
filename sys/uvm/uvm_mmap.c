@@ -1,4 +1,4 @@
-/*	$NetBSD: uvm_mmap.c,v 1.172 2019/04/06 03:06:29 thorpej Exp $	*/
+/*	$NetBSD: uvm_mmap.c,v 1.175 2020/02/23 15:46:43 ad Exp $	*/
 
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.
@@ -46,7 +46,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: uvm_mmap.c,v 1.172 2019/04/06 03:06:29 thorpej Exp $");
+__KERNEL_RCSID(0, "$NetBSD: uvm_mmap.c,v 1.175 2020/02/23 15:46:43 ad Exp $");
 
 #include "opt_compat_netbsd.h"
 #include "opt_pax.h"
@@ -132,7 +132,8 @@ sys_mincore(struct lwp *l, const struct sys_mincore_args *uap,
 	vaddr_t start, end, lim;
 	struct vm_map *map;
 	vsize_t len;
-	int error = 0, npgs;
+	int error = 0;
+	size_t npgs;
 
 	map = &p->p_vmspace->vm_map;
 
@@ -199,9 +200,9 @@ sys_mincore(struct lwp *l, const struct sys_mincore_args *uap,
 		uobj = entry->object.uvm_obj;	/* lower layer */
 
 		if (amap != NULL)
-			amap_lock(amap);
+			amap_lock(amap, RW_READER);
 		if (uobj != NULL)
-			mutex_enter(uobj->vmobjlock);
+			rw_enter(uobj->vmobjlock, RW_READER);
 
 		for (/* nothing */; start < lim; start += PAGE_SIZE, vec++) {
 			pgi = 0;
@@ -237,7 +238,7 @@ sys_mincore(struct lwp *l, const struct sys_mincore_args *uap,
 			(void) ustore_char(vec, pgi);
 		}
 		if (uobj != NULL)
-			mutex_exit(uobj->vmobjlock);
+			rw_exit(uobj->vmobjlock);
 		if (amap != NULL)
 			amap_unlock(amap);
 	}
@@ -860,7 +861,7 @@ uvm_mmap(struct vm_map *map, vaddr_t *addr, vsize_t size, vm_prot_t prot,
 	if (align) {
 		if (align >= sizeof(vaddr_t) * NBBY)
 			return EINVAL;
-		align = 1L << align;
+		align = 1UL << align;
 		if (align < PAGE_SIZE)
 			return EINVAL;
 		if (align >= vm_map_max(map))

@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2019, Intel Corp.
+ * Copyright (C) 2000 - 2020, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -90,6 +90,7 @@ union acpi_parse_object;
 
 #define ACPI_MAX_MUTEX                  5
 #define ACPI_NUM_MUTEX                  (ACPI_MAX_MUTEX+1)
+
 
 /* Lock structure for reader/writer interfaces */
 
@@ -186,12 +187,12 @@ typedef struct acpi_namespace_node
     union acpi_operand_object       *Object;        /* Interpreter object */
     UINT8                           DescriptorType; /* Differentiate object descriptor types */
     UINT8                           Type;           /* ACPI Type associated with this name */
-    UINT8                           Flags;          /* Miscellaneous flags */
-    ACPI_OWNER_ID                   OwnerId;        /* Node creator */
+    UINT16                          Flags;          /* Miscellaneous flags */
     ACPI_NAME_UNION                 Name;           /* ACPI Name, always 4 chars per ACPI spec */
     struct acpi_namespace_node      *Parent;        /* Parent node */
     struct acpi_namespace_node      *Child;         /* First child */
     struct acpi_namespace_node      *Peer;          /* First peer */
+    ACPI_OWNER_ID                   OwnerId;        /* Node creator */
 
     /*
      * The following fields are used by the ASL compiler and disassembler only

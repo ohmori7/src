@@ -1,4 +1,4 @@
-/*	$NetBSD: part_edit.c,v 1.3 2019/06/16 13:02:29 martin Exp $ */
+/*	$NetBSD: part_edit.c,v 1.25 2021/01/31 22:45:46 rillig Exp $ */
 
 /*
  * Copyright (c) 2019 The NetBSD Foundation, Inc.
@@ -57,8 +57,23 @@ struct part_edit_info {
 	bool num_changed;		/* number of partitions has changed */
 };
 
+#ifndef NO_CLONES
+struct single_clone_data {
+	struct selected_partitions clone_src;
+	part_id *clone_ids;	/* partition IDs in target */
+};
+#endif
+struct outer_parts_data {
+	struct arg_rv av;
+#ifndef NO_CLONES
+	struct single_clone_data *clones;
+	size_t num_clone_entries;
+#endif
+};
+
 static menu_ent *part_menu_opts;		/* the currently edited partitions */
 static menu_ent *outer_fill_part_menu_opts(const struct disk_partitions *parts, size_t *cnt);
+static void draw_outer_part_line(menudesc *m, int opt, void *arg);
 
 static char 	outer_part_sep_line[MENUSTRSIZE],
 		outer_part_title[2*MENUSTRSIZE];
@@ -97,8 +112,8 @@ err_msg_win(const char *errmsg)
 	if (l < l1)
 		l = l1;
 
-	msg_prompt_win("%s.\n%s", -1, 18, l + 5, 2+lines,
-			NULL, NULL, 1, errmsg, cont);
+	msg_fmt_prompt_win("%s.\n%s", -1, 18, l + 5, 2+lines,
+			NULL, NULL, 1, "%s%s", errmsg, cont);
 	return 0;
 }
 
@@ -173,7 +188,6 @@ edit_part_type(menudesc *m, void *arg)
 	popt_cnt =  info->parts->pscheme->get_part_types_count() + 2;
 	type_opts = calloc(popt_cnt, sizeof(*type_opts));
 	for (i = 0; i < popt_cnt; i++) {
-		type_opts[i].opt_menu = OPT_NOMENU;
 		type_opts[i].opt_action = set_part_type;
 	}
 	type_menu = new_menu(NULL, type_opts, popt_cnt,
@@ -197,11 +211,17 @@ static int
 edit_part_start(menudesc *m, void *arg)
 {
 	struct part_edit_info *marg = arg;
+	struct disk_part_info pinfo;
 	daddr_t max_size;
 
+	if (marg->cur_id == NO_PART ||
+	    !marg->parts->pscheme->get_part_info(marg->parts, marg->cur_id,
+	    &pinfo))
+		pinfo = marg->cur;
 	marg->cur.start = getpartoff(marg->parts, marg->cur.start);
 	max_size = marg->parts->pscheme->max_free_space_at(marg->parts,
-	    marg->cur.start);
+	    pinfo.start);
+	max_size += pinfo.start - marg->cur.start;
 	if (marg->cur.size > max_size)
 		marg->cur.size = max_size;
 
@@ -212,9 +232,14 @@ static int
 edit_part_size(menudesc *m, void *arg)
 {
 	struct part_edit_info *marg = arg;
+	struct disk_part_info pinfo;
 
-	marg->cur.size = getpartsize(marg->parts, marg->cur.start,
-	    marg->cur.size);
+	if (marg->cur_id == NO_PART ||
+	    !marg->parts->pscheme->get_part_info(marg->parts, marg->cur_id,
+	    &pinfo))
+		pinfo = marg->cur;
+	marg->cur.size = getpartsize(marg->parts, pinfo.start,
+	    marg->cur.start, marg->cur.size);
 
 	return 0;
 }
@@ -224,13 +249,7 @@ edit_part_install(menudesc *m, void *arg)
 {
 	struct part_edit_info *marg = arg;
 
-	if (pm->ptstart == marg->cur.start) {
-		pm->ptstart = 0;
-		pm->ptsize = 0;
-	} else {
-		pm->ptstart = marg->cur.start;
-		pm->ptsize = marg->cur.size;
-	}
+	marg->cur.flags ^= PTI_INSTALL_TARGET;
 	return 0;
 }
 
@@ -278,20 +297,20 @@ part_rollback(menudesc *m, void *arg)
 
 static menu_ent common_ptn_edit_opts[] = {
 #define PTN_OPT_TYPE		0
-	{ .opt_menu=OPT_NOMENU, .opt_action=edit_part_type },
+	{ .opt_action=edit_part_type },
 #define PTN_OPT_START		1
-	{ .opt_menu=OPT_NOMENU, .opt_action=edit_part_start },
+	{ .opt_action=edit_part_start },
 #define PTN_OPT_SIZE		2
-	{ .opt_menu=OPT_NOMENU, .opt_action=edit_part_size },
+	{ .opt_action=edit_part_size },
 #define PTN_OPT_END		3
-	{ .opt_menu=OPT_NOMENU, .opt_flags=OPT_IGNORE }, /* read only "end" */
+	{ .opt_flags=OPT_IGNORE }, /* read only "end" */
 
 	/*
 	 * Only the part upto here will be used when adding a new partition
 	 */
 
 #define PTN_OPT_INSTALL		4
-	{ .opt_menu=OPT_NOMENU, .opt_action=edit_part_install },
+	{ .opt_action=edit_part_install },
 
 #define	PTN_OPTS_COMMON		PTN_OPT_INSTALL	/* cut off from here for add */
 };
@@ -328,10 +347,10 @@ static menu_ent ptn_edit_opts[] = {
 	{ .opt_name=MSG_askunits, .opt_menu=MENU_sizechoice,
 	  .opt_flags=OPT_SUB },
 
-	{ .opt_name=MSG_Delete_partition, .opt_menu=OPT_NOMENU,
+	{ .opt_name=MSG_Delete_partition,
 	  .opt_action = delete_part, .opt_flags = OPT_EXIT },
 
-	{ .opt_name=MSG_cancel, .opt_menu=OPT_NOMENU,
+	{ .opt_name=MSG_cancel,
 	  .opt_action = part_rollback, .opt_flags = OPT_EXIT },
 };
 
@@ -339,7 +358,7 @@ static menu_ent ptn_add_opts[] = {
 	{ .opt_name=MSG_askunits, .opt_menu=MENU_sizechoice,
 	  .opt_flags=OPT_SUB },
 
-	{ .opt_name=MSG_cancel, .opt_menu=OPT_NOMENU,
+	{ .opt_name=MSG_cancel,
 	  .opt_action = part_rollback, .opt_flags = OPT_EXIT },
 };
 
@@ -376,7 +395,6 @@ fill_part_edit_menu_opts(struct disk_partitions *parts,
 	p = opts + hdr_cnt;
 	if (with_custom_attrs) {
 		for (i = 0; i < parts->pscheme->custom_attribute_count; i++) {
-			p->opt_menu = OPT_NOMENU;
 			p->opt_action = edit_custom_opt;
 			p++;
 		}
@@ -390,15 +408,16 @@ fill_part_edit_menu_opts(struct disk_partitions *parts,
 static int
 edit_part_entry(menudesc *m, void *arg)
 {
-	arg_rv *av = arg;
-	struct part_edit_info data = { .parts = av->arg, .cur_id = m->cursel,
+	struct outer_parts_data *pdata = arg;
+	struct part_edit_info data = { .parts = pdata->av.arg,
+	    .cur_id = m->cursel,
 	    .first_custom_opt = __arraycount(common_ptn_edit_opts) };
 	int ptn_menu;
 	const char *err;
 	menu_ent *opts;
 	size_t num_opts;
 
-	opts = fill_part_edit_menu_opts(av->arg, true, ptn_edit_opts,
+	opts = fill_part_edit_menu_opts(data.parts, true, ptn_edit_opts,
 	    __arraycount(ptn_edit_opts), &num_opts);
 	if (opts == NULL)
 		return 1;
@@ -435,31 +454,142 @@ edit_part_entry(menudesc *m, void *arg)
 	return 0;
 }
 
+#ifndef NO_CLONES
+static int
+add_part_clone(menudesc *menu, void *arg)
+{
+	struct outer_parts_data *pdata = arg;
+	struct disk_partitions *parts = pdata->av.arg;
+	struct clone_target_menu_data data;
+	menu_ent *men;
+	int num_men, i;
+	struct disk_part_info sinfo, cinfo;
+	struct disk_partitions *csrc;
+	struct disk_part_free_space space;
+	daddr_t offset, align;
+	size_t s;
+	part_id cid;
+	struct selected_partitions selected;
+	struct single_clone_data *new_clones;
+
+	if (!select_partitions(&selected, parts))
+		return 0;
+
+	new_clones = realloc(pdata->clones,
+	    sizeof(*pdata->clones)*(pdata->num_clone_entries+1));
+	if (new_clones == NULL)
+		return 0;
+	pdata->num_clone_entries++;
+	pdata->clones = new_clones;
+	new_clones += (pdata->num_clone_entries-1);
+	memset(new_clones, 0, sizeof *new_clones);
+	new_clones->clone_src = selected;
+
+	memset(&data, 0, sizeof data);
+	data.usage.parts = parts;
+
+	/* if we already have partitions, ask for the target position */
+	if (parts->num_part > 0) {
+		data.res = -1;
+		num_men = parts->num_part+1;
+		men = calloc(num_men, sizeof *men);
+		if (men == NULL)
+			return 0;
+		for (i = 0; i < num_men; i++)
+			men[i].opt_action = clone_target_select;
+		men[num_men-1].opt_name = MSG_clone_target_end;
+
+		data.usage.menu = new_menu(MSG_clone_target_hdr,
+		    men, num_men, 3, 2, 0, 65, MC_SCROLL,
+		    NULL, draw_outer_part_line, NULL, NULL, MSG_cancel);
+		process_menu(data.usage.menu, &data);
+		free_menu(data.usage.menu);
+		free(men);
+
+		if (data.res < 0)
+			goto err;
+	} else {
+		data.res = 0;
+	}
+
+	/* find selected offset from data.res and insert clones there */
+	align = parts->pscheme->get_part_alignment(parts);
+	offset = -1;
+	if (data.res > 0) {
+		for (cid = 0; cid < (size_t)data.res; cid++) {
+			if (!parts->pscheme->get_part_info(parts, cid, &sinfo))
+			continue;
+			offset = sinfo.start + sinfo.size;
+		}
+	} else {
+		offset = 0;
+	}
+
+	new_clones->clone_ids = calloc(selected.num_sel,
+	    sizeof(*new_clones->clone_ids));
+	if (new_clones->clone_ids == NULL)
+		goto err;
+	for (s = 0; s < selected.num_sel; s++) {
+		csrc = selected.selection[s].parts;
+		cid = selected.selection[s].id;
+		csrc->pscheme->get_part_info(csrc, cid, &sinfo);
+		if (!parts->pscheme->adapt_foreign_part_info(
+		    parts, &cinfo, csrc->pscheme, &sinfo))
+			continue;
+		size_t cnt = parts->pscheme->get_free_spaces(
+		    parts, &space, 1, cinfo.size-align, align,
+		    offset, -1);
+		if (cnt == 0)
+			continue;
+		cinfo.start = space.start;
+		cid = parts->pscheme->add_partition(
+		    parts, &cinfo, NULL);
+		new_clones->clone_ids[s] = cid;
+		if (cid == NO_PART)
+			continue;
+		parts->pscheme->get_part_info(parts, cid, &cinfo);
+		offset = roundup(cinfo.start+cinfo.size, align);
+	}
+
+	/* reload menu and start again */
+	menu_opts_reload(menu, parts);
+	menu->cursel = parts->num_part+1;
+	if (parts->num_part == 0)
+		menu->cursel++;
+	return -1;
+
+err:
+	free_selected_partitions(&selected);
+	return -1;
+}
+#endif
+
 static int
 add_part_entry(menudesc *m, void *arg)
 {
-	arg_rv *av = arg;
-	struct part_edit_info data = { .parts = av->arg,
+	struct outer_parts_data *pdata = arg;
+	struct part_edit_info data = { .parts = pdata->av.arg,
 	    .first_custom_opt = PTN_OPTS_COMMON };
 	int ptn_menu;
-	daddr_t ptn_alignment;
+	daddr_t ptn_alignment, start;
 	menu_ent *opts;
 	size_t num_opts;
 	struct disk_part_free_space space;
 	const char *err;
 
-	opts = fill_part_edit_menu_opts(av->arg, false, ptn_add_opts,
+	opts = fill_part_edit_menu_opts(data.parts, false, ptn_add_opts,
 	    __arraycount(ptn_add_opts), &num_opts);
 	if (opts == NULL)
 		return 1;
 
 	ptn_alignment = data.parts->pscheme->get_part_alignment(data.parts);
+	start = pm->ptstart > 0 ? pm->ptstart : -1;
 	data.cur_id = NO_PART;
 	memset(&data.cur, 0, sizeof(data.cur));
 	data.cur.nat_type = data.parts->pscheme->
 	    get_generic_part_type(PT_root);
 	if (data.parts->pscheme->get_free_spaces(data.parts, &space, 1,
-	    max(sizemult, ptn_alignment), ptn_alignment, -1, -1) > 0) {
+	    max(sizemult, ptn_alignment), ptn_alignment, start, -1) > 0) {
 		data.cur.start = space.start;
 		data.cur.size = space.size;
 	} else {
@@ -562,7 +692,7 @@ draw_outer_ptn_line(menudesc *m, int line, void *arg)
 	case PTN_OPT_INSTALL:
 		wprintw(m->mw, "%*s : %s", col_width, ptn_install,
 		    (marg->cur.nat_type->generic_ptype == PT_root &&
-		    marg->cur.start == pm->ptstart) ? yes : no);
+		    (marg->cur.flags & PTI_INSTALL_TARGET)) ? yes : no);
 		break;
 	}
 
@@ -607,7 +737,7 @@ draw_outer_ptn_header(menudesc *m, void *arg)
 	if (marg->cur_id == NO_PART)
 		return;
 
-	for (attr_no = 0; attr_no < 
+	for (attr_no = 0; attr_no <
 	    marg->parts->pscheme->custom_attribute_count; attr_no++) {
 		bool writable =
 		    marg->parts->pscheme->custom_attribute_writable(
@@ -619,8 +749,8 @@ draw_outer_ptn_header(menudesc *m, void *arg)
 static void
 draw_outer_part_line(menudesc *m, int opt, void *arg)
 {
-	arg_rv *args = arg;
-	struct disk_partitions *parts = args->arg;
+	struct outer_parts_data *pdata = arg;
+	struct disk_partitions *parts = pdata->av.arg;
 	int len;
 	part_id pno = opt;
 	struct disk_part_info info;
@@ -639,7 +769,7 @@ draw_outer_part_line(menudesc *m, int opt, void *arg)
 		return;
 	}
 
-	if (info.start == pm->ptstart &&
+	if ((info.flags & PTI_INSTALL_TARGET) &&
 	    info.nat_type->generic_ptype == PT_root) {
 		if (install_flag == 0)
 			install_flag = msg_string(MSG_install_flag)[0];
@@ -679,9 +809,9 @@ draw_outer_part_line(menudesc *m, int opt, void *arg)
 static int
 part_edit_abort(menudesc *m, void *arg)
 {
-	arg_rv *args = arg;
+	struct outer_parts_data *pdata = arg;
 
-	args->rv = -1;
+	pdata->av.rv = -1;
 	return 0;
 }
 
@@ -695,6 +825,9 @@ outer_fill_part_menu_opts(const struct disk_partitions *parts, size_t *cnt)
 
 	may_add = parts->pscheme->can_add_partition(parts);
 	num_opts = 3 + parts->num_part;
+#ifndef NO_CLONES
+	num_opts++;
+#endif
 	if (parts->num_part == 0)
 		num_opts++;
 	if (may_add)
@@ -708,9 +841,6 @@ outer_fill_part_menu_opts(const struct disk_partitions *parts, size_t *cnt)
 	/* add all exisiting partitions */
 	for (op = opts, i = 0; i < parts->num_part && i < (num_opts-2);
 	    op++, i++) {
-		op->opt_name = NULL;
-		op->opt_exp_name = NULL;
-		op->opt_menu = OPT_NOMENU;
 		op->opt_flags = OPT_SUB;
 		op->opt_action = edit_part_entry;
 	}
@@ -718,32 +848,32 @@ outer_fill_part_menu_opts(const struct disk_partitions *parts, size_t *cnt)
 	/* if empty, hint that partitions are missing */
 	if (parts->num_part == 0) {
 		op->opt_name = MSG_nopart;
-		op->opt_exp_name = NULL;
-		op->opt_menu = OPT_NOMENU;
 		op->opt_flags = OPT_IGNORE|OPT_NOSHORT;
 		op++;
 	}
 
 	/* separator line between partitions and actions */
 	op->opt_name = outer_part_sep_line;
-	op->opt_exp_name = NULL;
-	op->opt_menu = OPT_NOMENU;
 	op->opt_flags = OPT_IGNORE|OPT_NOSHORT;
 	op++;
 
 	/* followed by new partition adder */
 	if (may_add) {
 		op->opt_name = MSG_addpart;
-		op->opt_exp_name = NULL;
-		op->opt_menu = OPT_NOMENU;
 		op->opt_flags = OPT_SUB;
 		op->opt_action = add_part_entry;
 		op++;
 	}
 
+#ifndef NO_CLONES
+	/* and a partition cloner */
+	op->opt_name = MSG_clone_from_elsewhere;
+	op->opt_action = add_part_clone;
+	op++;
+#endif
+
 	/* and unit changer */
 	op->opt_name = MSG_askunits;
-	op->opt_exp_name = NULL;
 	op->opt_menu = MENU_sizechoice;
 	op->opt_flags = OPT_SUB;
 	op->opt_action = NULL;
@@ -751,11 +881,12 @@ outer_fill_part_menu_opts(const struct disk_partitions *parts, size_t *cnt)
 
 	/* and abort option */
 	op->opt_name = MSG_cancel;
-	op->opt_exp_name = NULL;
-	op->opt_menu = OPT_NOMENU;
 	op->opt_flags = OPT_EXIT;
 	op->opt_action = part_edit_abort;
 	op++;
+
+	/* counts are consistent? */
+	assert((op - opts) >= 0 && (size_t)(op - opts) == num_opts);
 
 	*cnt = num_opts;
 	return opts;
@@ -764,8 +895,8 @@ outer_fill_part_menu_opts(const struct disk_partitions *parts, size_t *cnt)
 static void
 draw_outer_part_header(menudesc *m, void *arg)
 {
-	arg_rv *av = arg;
-	struct disk_partitions *parts = av->arg;
+	struct outer_parts_data *pdata = arg;
+	struct disk_partitions *parts = pdata->av.arg;
 	char start[SSTRSIZE], size[SSTRSIZE], col[SSTRSIZE],
 	    *disk_info, total[SSTRSIZE], avail[SSTRSIZE];
 	size_t sep;
@@ -835,20 +966,24 @@ parts_use_wholedisk(struct disk_partitions *parts,
 	part_id nbsd;
 	struct disk_part_info info;
 	struct disk_part_free_space space;
-	daddr_t align;
+	daddr_t align, start;
 	size_t i;
- 
+
 	parts->pscheme->delete_all_partitions(parts);
 	align = parts->pscheme->get_part_alignment(parts);
+	start = pm->ptstart > 0 ? pm->ptstart : -1;
 
 	if (ext_parts != NULL) {
 		for (i = 0; i < add_ext_parts; i++) {
 			info = ext_parts[i];
 			if (parts->pscheme->get_free_spaces(parts, &space,
-			    1, info.size, align, -1, -1) != 1)
+			    1, info.size, align, start, -1) != 1)
 				return false;
 			info.start = space.start;
-			info.size = space.size;
+			if (info.nat_type == NULL)
+				info.nat_type = parts->pscheme->
+				    get_fs_part_type(PT_undef, info.fs_type,
+				    info.fs_sub_type);
 			if (parts->pscheme->add_partition(parts, &info, NULL)
 			    == NO_PART)
 				return false;
@@ -856,12 +991,15 @@ parts_use_wholedisk(struct disk_partitions *parts,
 	}
 
 	if (parts->pscheme->get_free_spaces(parts, &space, 1, 3*align,
-	    align, -1, -1) != 1)
+	    align, start, -1) != 1)
 		return false;
 
 	memset(&info, 0, sizeof(info));
 	info.start = space.start;
 	info.size = space.size;
+	info.flags = PTI_INSTALL_TARGET;
+	if (parts->pscheme->secondary_scheme != NULL)
+		info.flags |= PTI_SEC_CONTAINER;
 	info.nat_type = parts->pscheme->get_generic_part_type(PT_root);
 	nbsd = parts->pscheme->add_partition(parts, &info, NULL);
 
@@ -876,8 +1014,6 @@ parts_use_wholedisk(struct disk_partitions *parts,
 		parts->pscheme->secondary_partitions(parts, info.start, true);
 	}
 
-	pm->ptstart = info.start;
-	pm->ptsize = info.size;
 	return true;
 }
 
@@ -902,6 +1038,13 @@ set_use_entire_disk(menudesc *m, void *arg)
 	return 0;
 }
 
+static int
+set_switch_scheme(menudesc *m, void *arg)
+{
+	((arg_rep_int*)arg)->rv = LY_OTHERSCHEME;
+	return 0;
+}
+
 static enum layout_type
 ask_fullpart(struct disk_partitions *parts)
 {
@@ -909,14 +1052,14 @@ ask_fullpart(struct disk_partitions *parts)
 	const char *args[2];
 	int menu;
 	size_t num_opts;
-	menu_ent options[3], *opt;
+	menu_ent options[4], *opt;
 	daddr_t start, size;
 
 	args[0] = msg_string(pm->parts->pscheme->name);
 	args[1] = msg_string(pm->parts->pscheme->short_name);
 	ai.args.argv = args;
 	ai.args.argc = 2;
-	ai.rv = LY_SETSIZES;
+	ai.rv = LY_ERROR;
 
 	memset(options, 0, sizeof(options));
 	num_opts = 0;
@@ -924,31 +1067,33 @@ ask_fullpart(struct disk_partitions *parts)
 	if (parts->pscheme->guess_install_target != NULL &&
 	    parts->pscheme->guess_install_target(parts, &start, &size)) {
 		opt->opt_name = MSG_Keep_existing_partitions;
-		opt->opt_exp_name = NULL;
-		opt->opt_menu = OPT_NOMENU;
 		opt->opt_flags = OPT_EXIT;
 		opt->opt_action = set_keep_existing;
 		opt++;
 		num_opts++;
 	}
 	opt->opt_name = MSG_Use_only_part_of_the_disk;
-	opt->opt_exp_name = NULL;
-	opt->opt_menu = OPT_NOMENU;
 	opt->opt_flags = OPT_EXIT;
 	opt->opt_action = set_use_only_part;
 	opt++;
 	num_opts++;
 
 	opt->opt_name = MSG_Use_the_entire_disk;
-	opt->opt_exp_name = NULL;
-	opt->opt_menu = OPT_NOMENU;
 	opt->opt_flags = OPT_EXIT;
 	opt->opt_action = set_use_entire_disk;
 	opt++;
 	num_opts++;
 
+	if (num_available_part_schemes > 1) {
+		opt->opt_name = MSG_Use_Different_Part_Scheme;
+		opt->opt_flags = OPT_EXIT;
+		opt->opt_action = set_switch_scheme;
+		opt++;
+		num_opts++;
+	}
+
 	menu = new_menu(MSG_Select_your_choice, options, num_opts,
-	    -1, -10, 0, 0, MC_NOEXITOPT, NULL, NULL, NULL, NULL, NULL);
+	    -1, -10, 0, 0, 0, NULL, NULL, NULL, NULL, MSG_cancel);
 	if (menu != -1) {
 		get_menudesc(menu)->expand_act = expand_all_option_texts;
 		process_menu(menu, &ai);
@@ -969,10 +1114,10 @@ verify_outer_parts(struct disk_partitions *parts, bool quiet)
 {
 	part_id i;
 	int num_bsdparts;
-	daddr_t first_bsdstart, first_bsdsize, inst_start, inst_size;
+	daddr_t first_bsdstart, inst_start, inst_size;
 
-	first_bsdstart = first_bsdsize = 0;
-	inst_start = inst_size = 0;
+	first_bsdstart = inst_start = -1;
+	inst_size = 0;
 	num_bsdparts = 0;
 	for (i = 0; i < parts->num_part; i++) {
 		struct disk_part_info info;
@@ -984,26 +1129,22 @@ verify_outer_parts(struct disk_partitions *parts, bool quiet)
 			continue;
 		num_bsdparts++;
 
-		if (first_bsdstart == 0) {
+		if (first_bsdstart < 0) {
 			first_bsdstart = info.start;
-			first_bsdsize = info.size;
 		}
-		if (inst_start == 0 && info.start == pm->ptstart) {
+		if (inst_start<  0 && (info.flags & PTI_INSTALL_TARGET)) {
 			inst_start = info.start;
 			inst_size = info.size;
 		}
 	}
 
 	if (num_bsdparts == 0 ||
-	    (num_bsdparts > 1 && inst_start == 0)) {
+	    (num_bsdparts > 1 && inst_start < 0)) {
 		if (quiet && num_bsdparts == 0)
 			return 0;
-		if (quiet && parts->pscheme->guess_install_target &&
-		    parts->pscheme->guess_install_target(parts,
+		if (!quiet || parts->pscheme->guess_install_target == NULL ||
+		    !parts->pscheme->guess_install_target(parts,
 		    &inst_start, &inst_size)) {
-			pm->ptstart = inst_start;
-			pm->ptsize = inst_size;
-		} else {
 			if (num_bsdparts == 0)
 				msg_display_subst(MSG_nobsdpart, 2,
 				    msg_string(parts->pscheme->name),
@@ -1014,21 +1155,6 @@ verify_outer_parts(struct disk_partitions *parts, bool quiet)
 				    msg_string(parts->pscheme->short_name));
 
 			return ask_reedit(parts);
-		}
-	}
-
-	if (pm->ptstart == 0) {
-		if (inst_start > 0) {
-			pm->ptstart = inst_start;
-			pm->ptsize = inst_size;
-		} else if (first_bsdstart > 0) {
-			pm->ptstart = first_bsdstart;
-			pm->ptsize = first_bsdsize;
-		} else if (parts->pscheme->guess_install_target &&
-			   parts->pscheme->guess_install_target(
-			   parts, &inst_start, &inst_size)) {
-			pm->ptstart = inst_start;
-			pm->ptsize = inst_size;
 		}
 	}
 
@@ -1050,7 +1176,10 @@ ask_outer_partsizes(struct disk_partitions *parts)
 	int j;
 	int part_menu;
 	size_t num_opts;
-	arg_rv av;
+#ifndef NO_CLONES
+	size_t i, ci;
+#endif
+	struct outer_parts_data data;
 
 	part_menu_opts = outer_fill_part_menu_opts(parts, &num_opts);
 	part_menu = new_menu(outer_part_title, part_menu_opts, num_opts,
@@ -1064,23 +1193,21 @@ ask_outer_partsizes(struct disk_partitions *parts)
 	}
 
 	/* Default to MB, and use bios geometry for cylinder size */
-	set_default_sizemult(MEG/512);
+	set_default_sizemult(parts->disk, MEG, parts->bytes_per_sector);
 	if (pm->current_cylsize == 0)
 		pm->current_cylsize = 16065;	/* noone cares nowadays */
-	pm->ptstart = 0;
-	pm->ptsize = 0;
-	av.rv = 0;
+	memset(&data, 0, sizeof data);
+	data.av.arg = parts;
 
 	for (;;) {
-		av.arg = parts;
-		av.rv = 0;
-		process_menu(part_menu, &av);
-		if (av.rv < 0)
+		data.av.rv = 0;
+		process_menu(part_menu, &data);
+		if (data.av.rv < 0)
 			break;
 
 		j = verify_outer_parts(parts, false);
 		if (j == 0) {
-			av.rv = -1;
+			data.av.rv = -1;
 			return false;
 		} else if (j == 1) {
 			continue;
@@ -1088,13 +1215,34 @@ ask_outer_partsizes(struct disk_partitions *parts)
 		break;
 	}
 
+#ifndef NO_CLONES
+	/* handle cloned partitions content copies now */
+	for (i = 0; i < data.num_clone_entries; i++) {
+		for (ci = 0; ci < data.clones[i].clone_src.num_sel; ci++) {
+			if (data.clones[i].clone_src.with_data)
+				clone_partition_data(parts,
+				    data.clones[i].clone_ids[ci],
+				    data.clones[i].clone_src.selection[ci].
+				    parts,
+				    data.clones[i].clone_src.selection[ci].id);
+		}
+	}
+
+	/* free clone data */
+	if (data.clones) {
+		for (i = 0; i < data.num_clone_entries; i++)
+			free_selected_partitions(&data.clones[i].clone_src);
+		free(data.clones);
+	}
+#endif
+
 	free_menu(part_menu);
 	free(part_menu_opts);
 
-	return av.rv == 0;
+	return data.av.rv == 0;
 }
 
-bool
+int
 edit_outer_parts(struct disk_partitions *parts)
 {
 	part_id i;
@@ -1103,26 +1251,27 @@ edit_outer_parts(struct disk_partitions *parts)
 
 	/* If targeting a wedge, do not ask for further partitioning */
 	if (pm && (pm->no_part || pm->no_mbr))
-		return true;
+		return 1;
 
-	/* Make sure pm has been properly initialized */
-	assert(pm->parts && pm->parts->pscheme);
+	/* Make sure parts has been properly initialized */
+	assert(parts && parts->pscheme);
 
-	if (partman_go)
+	if (parts->pscheme->secondary_scheme == NULL)
+		return 1;	/* no outer parts */
+
+	if (partman_go) {
 		layout = LY_SETSIZES;
-	else {
+	} else {
 		/* Ask full/part */
 		const struct disk_partitioning_scheme *sec =
-		    pm->parts->pscheme->secondary_scheme;
-
-		assert(sec != NULL);
+		    parts->pscheme->secondary_scheme;
 
 		uint64_t m_size =
 		    DEFROOTSIZE + DEFSWAPSIZE + DEFUSRSIZE + XNEEDMB;
 		char min_size[5], build_size[5];
 		const char
-		    *prim_name = msg_string(pm->parts->pscheme->name),
-		    *prim_short = msg_string(pm->parts->pscheme->short_name),
+		    *prim_name = msg_string(parts->pscheme->name),
+		    *prim_short = msg_string(parts->pscheme->short_name),
 		    *sec_name = msg_string(sec->name),
 		    *sec_short = msg_string(sec->short_name);
 
@@ -1140,7 +1289,11 @@ edit_outer_parts(struct disk_partitions *parts)
 		    min_size, build_size);
 		msg_display_add("\n\n");
 
-		layout = ask_fullpart(pm->parts);
+		layout = ask_fullpart(parts);
+		if (layout == LY_ERROR)
+			return 0;
+		else if (layout == LY_OTHERSCHEME)
+			return -1;
 	}
 
 	if (layout == LY_USEFULL) {
@@ -1152,6 +1305,8 @@ edit_outer_parts(struct disk_partitions *parts)
 			if (!parts->pscheme->get_part_info(parts, i, &info))
 				continue;
 			if (info.size == 0)
+				continue;
+			if (info.flags & (PTI_PSCHEME_INTERNAL|PTI_RAW_PART))
 				continue;
 			if (info.nat_type != NULL
 			    && info.nat_type->generic_ptype != PT_root
@@ -1167,16 +1322,18 @@ edit_outer_parts(struct disk_partitions *parts)
 					(void)fprintf(logfp,
 					    "User answered no to destroy "
 					    "other data, aborting.\n");
-				return false;
+				return 0;
 			}
 		}
-		if (!md_parts_use_wholedisk(parts))
-			return false;
+		if (!md_parts_use_wholedisk(parts)) {
+			hit_enter_to_continue(MSG_No_free_space, NULL);
+			return 0;
+		}
 		if (parts->pscheme->post_edit_verify) {
 			return
 			    parts->pscheme->post_edit_verify(parts, true) == 2;
 		}
-		return true;
+		return 1;
 	} else if (layout == LY_SETSIZES) {
 		return ask_outer_partsizes(parts);
 	} else {
@@ -1229,12 +1386,22 @@ select_part_scheme(
 
 	for (used = 0, ndx = 0; ndx < num_available_part_schemes; ndx++) {
 		p = available_part_schemes[ndx];
-		if (skip != NULL && p == skip)
+		/*
+		 * Do not match exactly, we want to skip all lookalikes
+		 * too (only_disklabel_parts vs. disklabel_parts)
+		 */
+		if (skip != NULL &&
+		    p->create_new_for_disk == skip->create_new_for_disk)
 			continue;
 		if (bootable && p->have_boot_support != NULL &&
 		    !p->have_boot_support(dev->diskdev))
 			continue;
-		if (p->size_limit && dev->dlsize > p->size_limit) {
+#ifdef HAVE_MBR
+		if (dev->no_mbr && p->name == MSG_parttype_mbr)
+			continue;
+#endif
+		if (p->size_limit && dev->dlsize*(dev->sectorsize/512) >
+		    p->size_limit) {
 			char buf[255], hum_lim[5];
 
 			humanize_number(hum_lim, sizeof(hum_lim),
@@ -1251,8 +1418,6 @@ select_part_scheme(
 			goto out;
 
 		opt[used].opt_name = str[used];
-		opt[used].opt_exp_name = NULL;
-		opt[used].opt_menu = OPT_NOMENU;
 		opt[used].opt_action = set_part_scheme;
 		options[used] = p;
 		used++;
@@ -1272,7 +1437,7 @@ select_part_scheme(
 		const char *p2 = msg_string(MSG_select_part_limit);
 
 		humanize_number(hum_lim, sizeof(hum_lim),
-		    (uint64_t)dev->dlsize*512, "",
+		    (uint64_t)dev->dlsize*dev->sectorsize, "",
 		    HN_AUTOSCALE, HN_B | HN_NOSPACE | HN_DECIMAL);
 
 		const char *args[] = { dev->diskdev, hum_lim };

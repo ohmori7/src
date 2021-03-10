@@ -1,4 +1,4 @@
-/*	$NetBSD: bootxx.c,v 1.19 2018/11/12 20:00:46 scole Exp $	*/
+/*	$NetBSD: bootxx.c,v 1.21 2020/01/23 17:23:03 uwe Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996 Wolfgang Solfrank.
@@ -70,8 +70,8 @@ __asm(
 "	li	%r9,0x40	\n"	/* loop 64 times (for 2048 bytes of bootxx) */
 "	mtctr	%r9		\n"
 "				\n"
-"1:	dcbf	%r0,%r8		\n"
-"	icbi	%r0,%r8		\n"
+"1:	dcbf	0,%r8		\n"
+"	icbi	0,%r8		\n"
 "	addi	%r8,%r8,0x20	\n"
 "	bdnz	1b		\n"
 "	sync			\n"
@@ -299,7 +299,7 @@ OF_write(int handle, const void *addr, int len)
 
 int stdout;
 
-void
+static void
 putstrn(const char *s, size_t n)
 {
 	OF_write(stdout, s, n);

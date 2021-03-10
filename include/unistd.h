@@ -1,4 +1,4 @@
-/*	$NetBSD: unistd.h,v 1.151 2018/11/18 19:22:23 christos Exp $	*/
+/*	$NetBSD: unistd.h,v 1.161 2020/12/04 23:04:58 kre Exp $	*/
 
 /*-
  * Copyright (c) 1998, 1999, 2008 The NetBSD Foundation, Inc.
@@ -102,9 +102,9 @@ char	*cuserid(char *);	/* obsolete */
 #endif /* __CUSERID_DECLARED */
 int	 dup(int);
 int	 dup2(int, int);
-int	 execl(const char *, const char *, ...);
+int	 execl(const char *, const char *, ...) __null_sentinel;
 int	 execle(const char *, const char *, ...);
-int	 execlp(const char *, const char *, ...);
+int	 execlp(const char *, const char *, ...) __null_sentinel;
 int	 execv(const char *, char * const *);
 int	 execve(const char *, char * const *, char * const *);
 int	 execvp(const char *, char * const *);
@@ -235,6 +235,9 @@ int	 nice(int);
 __aconst char *crypt(const char *, const char *);
 int	 encrypt(char *, int);
 char	*getpass(const char *);
+#endif
+#if defined(_XOPEN_SOURCE) || (_POSIX_C_SOURCE - 0) >= 200809L || \
+    defined(_NETBSD_SOURCE)
 pid_t	 getsid(pid_t);
 #endif
 
@@ -306,7 +309,7 @@ ssize_t	 pwrite(int, const void *, size_t, off_t);
  * X/Open Extended API set 2 (a.k.a. C063)
  */
 #if (_POSIX_C_SOURCE - 0) >= 200809L || (_XOPEN_SOURCE - 0 >= 700) || \
-    defined(_INCOMPLETE_XOPEN_C063) || defined(_NETBSD_SOURCE)
+    defined(_NETBSD_SOURCE)
 int	linkat(int, const char *, int, const char *, int);
 int	renameat(int, const char *, int, const char *);
 int	faccessat(int, const char *, int, int);
@@ -314,8 +317,6 @@ int	fchownat(int, const char *, uid_t, gid_t, int);
 ssize_t	readlinkat(int, const char *, char *, size_t);
 int	symlinkat(const char *, int, const char *);
 int	unlinkat(int, const char *, int);
-#endif
-#if defined(_INCOMPLETE_XOPEN_C063)
 int	fexecve(int, char * const *, char * const *);
 #endif
 
@@ -359,6 +360,7 @@ __aconst char *getusershell(void);
 int	 initgroups(const char *, gid_t);
 int	 iruserok(uint32_t, int, const char *, const char *);
 int      issetugid(void);
+long	 lpathconf(const char *, int);
 int	 mkstemps(char *, int);
 int	 nfssvc(int, void *);
 int	 pipe2(int *, int);

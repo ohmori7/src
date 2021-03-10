@@ -1,4 +1,4 @@
-/*	$NetBSD: wskbd.c,v 1.2 2019/06/12 06:20:18 martin Exp $	*/
+/*	$NetBSD: wskbd.c,v 1.5 2021/01/31 22:45:47 rillig Exp $	*/
 
 /*-
  * Copyright (c) 2003 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: wskbd.c,v 1.2 2019/06/12 06:20:18 martin Exp $");
+__RCSID("$NetBSD: wskbd.c,v 1.5 2021/01/31 22:45:47 rillig Exp $");
 
 #include <unistd.h>
 #include <stdlib.h>
@@ -93,6 +93,13 @@ get_kb_encoding(void)
 	menu_ent opt[__arraycount(kb_types)];
 	const char *dflt = msg_string(MSG_kb_default);
 
+	/*
+	 * Check if we are running on a wscons keyboard at all,
+	 * do not bother to try changing the layout if not.
+	 */
+	if (ioctl(0, WSKBDIO_GTYPE,  &i) == -1)
+		return;
+
 	memset(opt, 0, sizeof(opt));
 	fd = open("/dev/wskbd0", O_WRONLY);
 	if (fd < 0)
@@ -107,7 +114,6 @@ get_kb_encoding(void)
 				if (strcmp(kb_types[i].kb_name, dflt) == 0)
 					kb_default = i;
 			}
-			opt[i].opt_menu = OPT_NOMENU;
 			opt[i].opt_action = set_kb_encoding;
 		}
 		kb_menu = new_menu(MSG_Keyboard_type, opt, __arraycount(opt),
@@ -132,7 +138,7 @@ save_kb_encoding(void)
 		return;
 	/*
 	 * Put the keyboard encoding into the wscons.conf file. Either:
-	 * 1) replace an exiting line
+	 * 1) replace an existing line
 	 * 2) replace a commented out line
 	 * or
 	 * 3) add a line to the end of the file

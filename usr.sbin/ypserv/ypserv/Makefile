@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.18 2009/10/29 14:41:02 christos Exp $
+#	$NetBSD: Makefile,v 1.21 2021/03/07 15:09:13 christos Exp $
 
 .include <bsd.own.mk>
 
@@ -12,10 +12,14 @@ LIBCDIR=${NETBSDSRCDIR}/lib/libc
 CPPFLAGS+=-DOPTIMIZE_DB -DLIBWRAP -I. -I${LIBCDIR}/include
 YHEADER=1
 
-LDADD+=	-lwrap -lutil
-DPADD+=	${LIBWRAP} ${LIBUTIL}
+LDADD+=	-lwrap -lblocklist -lutil
+DPADD+=	${LIBWRAP} ${LIBBLOCKLIST} ${LIBUTIL}
 
 CPPFLAGS.gethnamaddr.c=	-UYP -D_LIBC
 CPPFLAGS.getnetnamadr.c=-UYP -D_LIBC
+
+SANITIZER_RENAME_SYMBOL+=	gethostbyname2
+
+COPTS.ypserv.c+=	${GCC_NO_CAST_FUNCTION_TYPE}
 
 .include <bsd.prog.mk>

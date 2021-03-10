@@ -1,4 +1,4 @@
-/*	$NetBSD: af_inet.c,v 1.25 2018/06/11 17:45:50 kamil Exp $	*/
+/*	$NetBSD: af_inet.c,v 1.28 2020/05/14 08:34:17 msaitoh Exp $	*/
 
 /*
  * Copyright (c) 1983, 1993
@@ -31,14 +31,14 @@
 
 #include <sys/cdefs.h>
 #ifndef lint
-__RCSID("$NetBSD: af_inet.c,v 1.25 2018/06/11 17:45:50 kamil Exp $");
+__RCSID("$NetBSD: af_inet.c,v 1.28 2020/05/14 08:34:17 msaitoh Exp $");
 #endif /* not lint */
 
-#include <sys/param.h> 
-#include <sys/ioctl.h> 
+#include <sys/param.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 
-#include <net/if.h> 
+#include <net/if.h>
 #include <netinet/in.h>
 #include <netinet/in_var.h>
 
@@ -64,7 +64,7 @@ static void in_status(prop_dictionary_t, prop_dictionary_t, bool);
 static void in_commit_address(prop_dictionary_t, prop_dictionary_t);
 static bool in_addr_tentative(struct ifaddrs *);
 static bool in_addr_tentative_or_detached(struct ifaddrs *);
-static in_addr_t in_netmask(struct sockaddr *);;
+static in_addr_t in_netmask(struct sockaddr *);
 static int  in_prefixlen(struct sockaddr *);
 static void in_alias(struct ifaddrs *, prop_dictionary_t, prop_dictionary_t);
 
@@ -219,7 +219,6 @@ in_addr_flags(struct ifaddrs *ifa, int flags)
 	if (prog_ioctl(s, SIOCGIFAFLAG_IN, &ifr) == -1)
 		err(EXIT_FAILURE, "SIOCGIFAFLAG_IN");
 	return ifr.ifr_addrflags & flags ? true : false;
-	return false;
 }
 #endif
 

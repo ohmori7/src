@@ -1,4 +1,4 @@
-/*	$NetBSD: mbr.c,v 1.13 2019/06/15 08:20:33 martin Exp $ */
+/*	$NetBSD: mbr.c,v 1.38 2021/01/31 22:45:46 rillig Exp $ */
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -74,6 +74,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <util.h>
+#include <paths.h>
+#include <sys/ioctl.h>
 #include "defs.h"
 #include "mbr.h"
 #include "md.h"
@@ -87,6 +89,9 @@
 #define MAXCYL		1023    /* Possibly 1024 */
 #define MAXHEAD		255     /* Possibly 256 */
 #define MAXSECTOR	63
+
+
+#define	MBR_UNKNOWN_PTYPE	94	/* arbitrary not widely used value */
 
 
 /* A list of predefined partition types */
@@ -113,6 +118,7 @@ const struct {
 	{ .ptype=MBR_PTYPE_FAT16B, .desc="DOS FAT16, >32M" },
 	{ .ptype=MBR_PTYPE_FAT16L, .desc="Windows FAT16, LBA" },
 	{ .ptype=MBR_PTYPE_FAT32, .desc="Windows FAT32" },
+	{ .ptype=MBR_PTYPE_EFI, .desc="(U)EFI Boot" },
 };
 
 /* bookeeping of available partition types (including custom ones) */
@@ -127,7 +133,7 @@ struct mbr_disk_partitions {
 	struct disk_partitions dp, *dlabel;
 	mbr_info_t mbr;
 	uint ptn_alignment, ptn_0_offset, ext_ptn_alignment,
-	    geo_sec, geo_head, geo_cyl;
+	    geo_sec, geo_head, geo_cyl, target;
 };
 
 const struct disk_partitioning_scheme mbr_parts;
@@ -138,10 +144,19 @@ static const size_t first_part_type = MBR_PTYPE_NETBSD;
 /* all partition types (we are lucky, only a fixed number is possible) */
 struct mbr_part_type_info mbr_gen_type_desc[256];
 
-const struct disk_partitioning_scheme disklabel_parts;
+extern const struct disk_partitioning_scheme disklabel_parts;
 
 static void convert_mbr_chs(int, int, int, uint8_t *, uint8_t *,
 				 uint8_t *, uint32_t);
+
+static part_id mbr_add_part(struct disk_partitions *arg,
+    const struct disk_part_info *info, const char **errmsg);
+
+static size_t mbr_get_free_spaces(const struct disk_partitions *arg,
+    struct disk_part_free_space *result, size_t max_num_result,
+    daddr_t min_size, daddr_t align, daddr_t lower_bound, daddr_t ignore);
+
+static size_t mbr_type_from_gen_desc(const struct part_type_desc *desc);
 
 /*
  * Notes on the extended partition editor.
@@ -221,29 +236,98 @@ dump_mbr(mbr_info_t *m, const char *label)
 }
 #endif
 
+/*
+ * Like pread, but handles re-blocking for non 512 byte sector disks
+ */
+static ssize_t
+blockread(int fd, size_t secsize, void *buf, size_t nbytes, off_t offset)
+{
+        ssize_t nr;
+	off_t sector = offset / 512;
+        off_t offs = sector * (off_t)secsize;
+        off_t mod = offs & (secsize - 1);
+        off_t rnd = offs & ~(secsize - 1);
+	char *iobuf;
+
+	assert(nbytes <= 512);
+
+	if (secsize == 512)
+		return pread(fd, buf, nbytes, offset);
+
+	iobuf = malloc(secsize);
+	if (iobuf == NULL)
+		return -1;
+	nr = pread(fd, iobuf, secsize, rnd);
+	if (nr == (off_t)secsize)
+		memcpy(buf, &iobuf[mod], nbytes);
+	free(iobuf);
+
+	return nr == (off_t)secsize ? (off_t)nbytes : -1;
+}
+
+/*
+ * Same for pwrite
+ */
+static ssize_t
+blockwrite(int fd, size_t secsize, const void *buf, size_t nbytes,
+    off_t offset)
+{
+        ssize_t nr;
+	off_t sector = offset / secsize;
+        off_t offs = sector * (off_t)secsize;
+        off_t mod = offs & (secsize - 1);
+        off_t rnd = offs & ~(secsize - 1);
+	char *iobuf;
+
+	assert(nbytes <= 512);
+
+	if (secsize == 512)
+		return pwrite(fd, buf, nbytes, offset);
+
+	iobuf = malloc(secsize);
+	if (iobuf == NULL)
+		return -1;
+	nr = pread(fd, iobuf, secsize, rnd);
+	if (nr == (off_t)secsize) {
+		memcpy(&iobuf[mod], buf, nbytes);
+		nr = pwrite(fd, iobuf, secsize, rnd);
+	}
+	free(iobuf);
+
+	return nr == (off_t)secsize ? (off_t)nbytes : -1;
+}
+
+static void
+free_last_mounted(mbr_info_t *m)
+{
+	size_t i;
+
+	for (i = 0; i < MBR_PART_COUNT; i++)
+		free(__UNCONST(m->last_mounted[i]));
+}
+
 static void
 free_mbr_info(mbr_info_t *m)
 {
 	if (m == NULL)
 		return;
-
-	for (int i = 0; i < MBR_PART_COUNT; i++)
-		free(__UNCONST(m->last_mounted[i]));
+	free_last_mounted(m);
 	free(m);
 }
 
 /*
  * To be used only on ports which cannot provide any bios geometry
  */
-bool
+int
 set_bios_geom_with_mbr_guess(struct disk_partitions *parts)
 {
 	int cyl, head, sec;
 
-	msg_display(MSG_nobiosgeom, pm->dlcyl, pm->dlhead, pm->dlsec);
+	msg_fmt_display(MSG_nobiosgeom, "%d%d%d",
+	    pm->dlcyl, pm->dlsec, pm->dlhead);
 	if (guess_biosgeom_from_parts(parts, &cyl, &head, &sec) >= 0)
-		msg_display_add(MSG_biosguess, cyl, head, sec);
-	set_bios_geom(parts, cyl, head, sec);
+		msg_fmt_display_add(MSG_biosguess, "%d%d%d", cyl, head, sec);
+	set_bios_geom(parts, &cyl, &head, &sec);
 	if (parts->pscheme->change_disk_geom)
 		parts->pscheme->change_disk_geom(parts, cyl, head, sec);
 
@@ -267,7 +351,7 @@ mbr_init_chs(struct mbr_disk_partitions *parts, int ncyl, int nhead, int nsec)
  * store in globals.
  */
 void
-set_bios_geom(struct disk_partitions *parts, int cyl, int head, int sec)
+set_bios_geom(struct disk_partitions *parts, int *cyl, int *head, int *sec)
 {
 	char res[80];
 	int bsec, bhead, bcyl;
@@ -279,13 +363,13 @@ set_bios_geom(struct disk_partitions *parts, int cyl, int head, int sec)
 	msg_display_add(MSG_setbiosgeom);
 
 	do {
-		snprintf(res, 80, "%d", sec);
+		snprintf(res, 80, "%d", *sec);
 		msg_prompt_add(MSG_sectors, res, res, 80);
 		bsec = atoi(res);
 	} while (bsec <= 0 || bsec > MAXSECTOR);
 
 	do {
-		snprintf(res, 80, "%d", head);
+		snprintf(res, 80, "%d", *head);
 		msg_prompt_add(MSG_heads, res, res, 80);
 		bhead = atoi(res);
 	} while (bhead <= 0 || bhead > MAXHEAD);
@@ -297,7 +381,10 @@ set_bios_geom(struct disk_partitions *parts, int cyl, int head, int sec)
 		bcyl = MAXCYL;
 	pm->max_chs = (unsigned long)bcyl * bhead * bsec;
 	pm->current_cylsize = bhead * bsec;
-	parts->pscheme->change_disk_geom(parts, cyl, head, sec);
+	parts->pscheme->change_disk_geom(parts, bcyl, bhead, bsec);
+	*cyl = bcyl;
+	*head = bhead;
+	*sec = bsec;
 }
 
 static int
@@ -434,19 +521,6 @@ validate_and_set_names(mbr_info_t *mbri, const struct mbr_bootsel *src,
 }
 #endif
 
-static void
-free_mbr(mbr_info_t *mbri)
-{
-	mbr_info_t *m = mbri->extended, *next;
-
-	while (m != NULL) {
-		next = m->extended;
-		free_mbr_info(m);
-		m = next;
-	}
-	free_mbr_info(mbri);
-}
-
 static int
 valid_mbr(struct mbr_sector *mbrs)
 {
@@ -455,7 +529,8 @@ valid_mbr(struct mbr_sector *mbrs)
 }
 
 static int
-read_mbr(const char *disk, mbr_info_t *mbri)
+read_mbr(const char *disk, size_t secsize, mbr_info_t *mbri,
+     struct mbr_disk_partitions *parts)
 {
 	struct mbr_partition *mbrp;
 	struct mbr_sector *mbrs = &mbri->mbr;
@@ -477,8 +552,9 @@ read_mbr(const char *disk, mbr_info_t *mbri)
 		goto bad_mbr;
 
 	for (;;) {
-		if (pread(fd, mbrs, sizeof *mbrs,
-		    (ext_base + next_ext) * (off_t)MBR_SECSIZE) - sizeof *mbrs != 0)
+		if (blockread(fd, secsize, mbrs, sizeof *mbrs,
+		    (ext_base + next_ext) * (off_t)MBR_SECSIZE)
+		    - sizeof *mbrs != 0)
 			break;
 
 		if (!valid_mbr(mbrs))
@@ -531,9 +607,13 @@ read_mbr(const char *disk, mbr_info_t *mbri)
 				next_ext = mbrp->mbrp_start;
 			} else {
 				uint flags = 0;
-				if (mbrp->mbrp_type == MBR_PTYPE_NETBSD)
+				if (mbrp->mbrp_type == MBR_PTYPE_NETBSD) {
 					flags |= GLM_LIKELY_FFS;
-				else if (mbrp->mbrp_type == MBR_PTYPE_FAT12 ||
+					if (parts->target == ~0U)
+						parts->target =
+						    mbri->sector +
+						    mbrp->mbrp_start;
+				} else if (mbrp->mbrp_type == MBR_PTYPE_FAT12 ||
 				    mbrp->mbrp_type == MBR_PTYPE_FAT16S ||
 				    mbrp->mbrp_type == MBR_PTYPE_FAT16B ||
 				    mbrp->mbrp_type == MBR_PTYPE_FAT32 ||
@@ -548,7 +628,9 @@ read_mbr(const char *disk, mbr_info_t *mbri)
 					    &mbri->fs_type[i],
 					    &mbri->fs_sub_type[i],
 					    flags);
-					mbri->last_mounted[i] = strdup(mount);
+					char *p = strdup(mount);
+					canonicalize_last_mounted(p);
+					mbri->last_mounted[i] = p;
 				}
 			}
 #if BOOTSEL
@@ -565,7 +647,7 @@ read_mbr(const char *disk, mbr_info_t *mbri)
 			ext_base = next_ext;
 			next_ext = 0;
 		}
-		ext = calloc(sizeof *ext, 1);
+		ext = calloc(1, sizeof *ext);
 		if (!ext)
 			break;
 		mbrs = &ext->mbr;
@@ -584,10 +666,11 @@ read_mbr(const char *disk, mbr_info_t *mbri)
 }
 
 static int
-write_mbr(const char *disk, mbr_info_t *mbri, int bsec, int bhead, int bcyl)
+write_mbr(const char *disk, size_t secsize, mbr_info_t *mbri, int bsec,
+    int bhead, int bcyl)
 {
 	char diskpath[MAXPATHLEN];
-	int fd, i, ret = 0;
+	int fd, i, ret = 0, bits = 0;
 	struct mbr_partition *mbrp;
 	u_int32_t pstart, psize;
 #ifdef BOOTSEL
@@ -600,8 +683,13 @@ write_mbr(const char *disk, mbr_info_t *mbri, int bsec, int bhead, int bcyl)
 	dump_mbr(mbri, "write");
 
 	/* Open the disk. */
-	fd = opendisk(disk, O_WRONLY, diskpath, sizeof(diskpath), 0);
+	fd = opendisk(disk, secsize == 512 ? O_WRONLY : O_RDWR,
+	    diskpath, sizeof(diskpath), 0);
 	if (fd < 0)
+		return -1;
+
+	/* Remove all wedges */
+	if (ioctl(fd, DIOCRMWEDGES, &bits) == -1)
 		return -1;
 
 #ifdef BOOTSEL
@@ -645,6 +733,7 @@ write_mbr(const char *disk, mbr_info_t *mbri, int bsec, int bhead, int bcyl)
 #endif
 
 	for (ext = mbri; ext != NULL; ext = ext->extended) {
+		memset(mbri->wedge, 0, sizeof mbri->wedge);
 		sector = ext->sector;
 		mbrsec = ext->mbr;	/* copy sector */
 		mbrp = &mbrsec.mbr_parts[0];
@@ -691,7 +780,7 @@ write_mbr(const char *disk, mbr_info_t *mbri, int bsec, int bhead, int bcyl)
 		}
 
 		mbrsec.mbr_magic = htole16(MBR_MAGIC);
-		if (pwrite(fd, &mbrsec, sizeof mbrsec,
+		if (blockwrite(fd, secsize, &mbrsec, sizeof mbrsec,
 					    sector * (off_t)MBR_SECSIZE) < 0) {
 			ret = -1;
 			break;
@@ -800,44 +889,54 @@ mbr_init_default_alignments(struct mbr_disk_partitions *parts, uint track)
 	if (parts->dp.disk_size < 0)
 		return;
 
+	parts->ptn_0_offset = parts->geo_sec;
+
 	/* Use 1MB offset/alignemnt for large (>128GB) disks */
 	if (parts->dp.disk_size > HUGE_DISK_SIZE) {
 		parts->ptn_alignment = 2048;
-		parts->ptn_0_offset = 2048;
 	} else if (parts->dp.disk_size > TINY_DISK_SIZE) {
 		parts->ptn_alignment = 64;
-		parts->ptn_0_offset = parts->geo_sec;
 	} else {
 		parts->ptn_alignment = 1;
-		parts->ptn_0_offset = parts->geo_sec;
 	}
 	parts->ext_ptn_alignment = track;
 }
 
 static struct disk_partitions *
-mbr_create_new(const char *disk, daddr_t start, daddr_t len, daddr_t total,
-    bool is_boot_drive)
+mbr_create_new(const char *disk, daddr_t start, daddr_t len,
+    bool is_boot_drive, struct disk_partitions *parent)
 {
 	struct mbr_disk_partitions *parts;
+	struct disk_geom geo;
 
 	assert(start == 0);
 	if (start != 0)
 		return NULL;
 
-	parts = calloc(sizeof(*parts), 1);
+	parts = calloc(1, sizeof(*parts));
 	if (!parts)
 		return NULL;
 
 	parts->dp.pscheme = &mbr_parts;
-	parts->dp.disk = disk;
+	parts->dp.disk = strdup(disk);
 	if (len > mbr_parts.size_limit)
 		len = mbr_parts.size_limit;
 	parts->dp.disk_start = start;
 	parts->dp.disk_size = len;
 	parts->dp.free_space = len-1;
+	parts->dp.bytes_per_sector = 512;
 	parts->geo_sec = MAXSECTOR;
 	parts->geo_head = MAXHEAD;
 	parts->geo_cyl = len/MAXHEAD/MAXSECTOR+1;
+	parts->target = ~0U;
+
+	if (get_disk_geom(disk, &geo)) {
+		parts->geo_sec = geo.dg_nsectors;
+		parts->geo_head = geo.dg_ntracks;
+		parts->geo_cyl = geo.dg_ncylinders;
+		parts->dp.bytes_per_sector = geo.dg_secsize;
+	}
+
 	mbr_init_default_alignments(parts, 0);
 
 	return &parts->dp;
@@ -873,13 +972,13 @@ mbr_calc_free_space(struct mbr_disk_partitions *parts)
 				parts->dp.free_space = 0;
 			else
 				parts->dp.free_space -= psize;
-			    
 		}
 	} while ((m = m->extended));
 }
 
 static struct disk_partitions *
-mbr_read_from_disk(const char *disk, daddr_t start, daddr_t len)
+mbr_read_from_disk(const char *disk, daddr_t start, daddr_t len, size_t bps,
+    const struct disk_partitioning_scheme *scheme)
 {
 	struct mbr_disk_partitions *parts;
 
@@ -887,12 +986,12 @@ mbr_read_from_disk(const char *disk, daddr_t start, daddr_t len)
 	if (start != 0)
 		return NULL;
 
-	parts = calloc(sizeof(*parts), 1);
+	parts = calloc(1, sizeof(*parts));
 	if (!parts)
 		return NULL;
 
-	parts->dp.pscheme = &mbr_parts;
-	parts->dp.disk = disk;
+	parts->dp.pscheme = scheme;
+	parts->dp.disk = strdup(disk);
 	if (len >= mbr_parts.size_limit)
 		len = mbr_parts.size_limit;
 	parts->dp.disk_start = start;
@@ -900,12 +999,29 @@ mbr_read_from_disk(const char *disk, daddr_t start, daddr_t len)
 	parts->geo_sec = MAXSECTOR;
 	parts->geo_head = MAXHEAD;
 	parts->geo_cyl = len/MAXHEAD/MAXSECTOR+1;
+	parts->dp.bytes_per_sector = bps;
+	parts->target = ~0U;
 	mbr_init_default_alignments(parts, 0);
-	if (read_mbr(disk, &parts->mbr) == -1) {
+	if (read_mbr(disk, parts->dp.bytes_per_sector, &parts->mbr, parts)
+	     == -1) {
 		free(parts);
 		return NULL;
 	}
 	mbr_calc_free_space(parts);
+	if (parts->dp.num_part == 1 &&
+	    parts->dp.free_space < parts->ptn_alignment) {
+		struct disk_part_info info;
+
+		/*
+		 * Check if this is a GPT protective MBR
+		 */
+		if (parts->dp.pscheme->get_part_info(&parts->dp, 0, &info)
+		    && info.nat_type != NULL
+		    && mbr_type_from_gen_desc(info.nat_type) == 0xEE) {
+			parts->dp.pscheme->free(&parts->dp);
+			return NULL;
+		}
+	}
 
 	return &parts->dp;
 }
@@ -915,19 +1031,26 @@ mbr_write_to_disk(struct disk_partitions *new_state)
 {
 	struct mbr_disk_partitions *parts =
 	    (struct mbr_disk_partitions *)new_state;
-	unsigned long bsec = parts->geo_sec,
-	    bhead = parts->ext_ptn_alignment / bsec,
-	    bcyl;
+	unsigned long bsec, bhead, bcyl;
 	daddr_t t;
 
+	assert(parts->geo_sec != 0);
+	if (parts->geo_sec != 0) {
+		bsec = parts->geo_sec;
+		bhead = parts->ext_ptn_alignment / bsec;
+	} else {
+		bsec = MAXSECTOR;
+		bhead = MAXHEAD;
+	}
 	t = bsec * bhead;
+	assert(t != 0);
 	if ((daddr_t)(1UL<<10) * t <= parts->dp.disk_size)
 		bcyl = (1UL<<10) - 1;
 	else
 		bcyl = (unsigned long)(parts->dp.disk_size / t);
 
-	return write_mbr(parts->dp.disk, &parts->mbr,
-	    bsec, bhead, bcyl) == 0;
+	return write_mbr(parts->dp.disk, parts->dp.bytes_per_sector,
+	    &parts->mbr, bsec, bhead, bcyl) == 0;
 }
 
 static bool
@@ -943,7 +1066,8 @@ mbr_change_disk_geom(struct disk_partitions *arg, int ncyl, int nhead,
 	mbr_init_default_alignments(parts, nhead * nsec);
 
 	if (parts->dp.disk_size <= TINY_DISK_SIZE) {
-		set_default_sizemult(1);
+		set_default_sizemult(arg->disk,
+		    parts->dp.bytes_per_sector, parts->dp.bytes_per_sector);
 		return true;
 	}
 
@@ -956,14 +1080,21 @@ mbr_change_disk_geom(struct disk_partitions *arg, int ncyl, int nhead,
 		if (!(ptn_0_limit & 2047)) {
 			/* Partition ends on a 1MB boundary, align to 1MB */
 			parts->ptn_alignment = 2048;
-			if (ptn_0_base <= 2048
-			    && !(ptn_0_base & (ptn_0_base - 1))) {
-				/* ptn_base is a power of 2, use it */
+			if ((ptn_0_base <= 2048
+			    && !(ptn_0_base & (ptn_0_base - 1)))
+			    || (ptn_0_base < parts->ptn_0_offset)) {
+				/*
+				 * If ptn_base is a power of 2, use it.
+				 * Also use it if the first partition
+				 * already is close to the begining
+				 * of the disk and we can't enforce
+				 * better alignment.
+				 */
 				parts->ptn_0_offset = ptn_0_base;
 			}
 		}
 	}
-	set_default_sizemult(MEG/512);
+	set_default_sizemult(arg->disk, MEG, parts->dp.bytes_per_sector);
 	return true;
 }
 
@@ -984,11 +1115,17 @@ mbr_map_part_type(unsigned int t)
 	switch (t) {
 	case MBR_PTYPE_FAT32:
 	case MBR_PTYPE_FAT32L:
+	case MBR_PTYPE_FAT16S:
+	case MBR_PTYPE_FAT16B:
+	case MBR_PTYPE_FAT16L:
+	case MBR_PTYPE_FAT12:
 	case MBR_PTYPE_FT_FAT32:
 	case MBR_PTYPE_FT_FAT32_EXT:
 		return PT_FAT;
 	case MBR_PTYPE_EFI:
 		return PT_EFI_SYSTEM;
+	case MBR_PTYPE_LNXEXT2:
+		return PT_EXT2;
 	case MBR_PTYPE_NETBSD:
 		return PT_root;
 	}
@@ -1027,7 +1164,7 @@ mbr_get_part_type_count(void)
 }
 
 static const struct part_type_desc *
-mbr_get_fs_part_type(unsigned fs_type, unsigned sub_type)
+mbr_get_fs_part_type(enum part_type pt, unsigned fs_type, unsigned sub_type)
 {
 	if (known_part_types == 0)
 		map_mbr_part_types();
@@ -1038,6 +1175,9 @@ mbr_get_fs_part_type(unsigned fs_type, unsigned sub_type)
 	case FS_EX2FS:
 		return &mbr_gen_type_desc[MBR_PTYPE_LNXEXT2].gen;
 	case FS_MSDOS:
+		if (sub_type == 0)
+			sub_type = MBR_PTYPE_FAT32L;
+
 		switch (sub_type) {
 		case MBR_PTYPE_FAT12:
 		case MBR_PTYPE_FAT16S:
@@ -1115,6 +1255,16 @@ mbr_custom_part_type(const char *custom, const char **err_msg)
 }
 
 static const struct part_type_desc *
+mbr_create_unknown_part_type(void)
+{
+
+	if (mbr_gen_type_desc[MBR_UNKNOWN_PTYPE].gen.short_desc != NULL)
+		return &mbr_gen_type_desc[MBR_UNKNOWN_PTYPE].gen;
+
+	return mbr_new_custom_part_type(MBR_UNKNOWN_PTYPE);
+}
+
+static const struct part_type_desc *
 mbr_get_gen_type_desc(unsigned int pt)
 {
 
@@ -1138,6 +1288,8 @@ mbr_get_generic_part_type(enum part_type pt)
 		return mbr_get_gen_type_desc(MBR_PTYPE_NETBSD);
 	case PT_FAT:
 		return mbr_get_gen_type_desc(MBR_PTYPE_FAT32L);
+	case PT_EXT2:
+		return mbr_get_gen_type_desc(MBR_PTYPE_LNXEXT2);
 	case PT_EFI_SYSTEM:
 		return mbr_get_gen_type_desc(MBR_PTYPE_EFI);
 	default:
@@ -1215,13 +1367,88 @@ mbr_do_get_part_info(const struct disk_partitions *arg, part_id id,
     const struct mbr_partition *mp, void *cookie)
 {
 	struct disk_part_info *info = cookie;
+	const struct mbr_disk_partitions *parts =
+	    (const struct mbr_disk_partitions*)arg;
 
 	mbr_partition_to_info(mp, mb->sector, info);
+	if (mp->mbrp_start + mb->sector == parts->target)
+		info->flags |= PTI_INSTALL_TARGET;
 	if (mb->last_mounted[i] != NULL && mb->last_mounted[i][0] != 0)
 		info->last_mounted = mb->last_mounted[i];
-	info->fs_type = mb->fs_type[i];
-	info->fs_sub_type = mb->fs_sub_type[i];
+	if (mb->fs_type[i] != FS_UNUSED) {
+		info->fs_type = mb->fs_type[i];
+		info->fs_sub_type = mb->fs_sub_type[i];
+	} else {
+		info->fs_sub_type = 0;
+		switch (mp->mbrp_type) {
+		case MBR_PTYPE_FAT12:
+		case MBR_PTYPE_FAT16S:
+		case MBR_PTYPE_FAT16B:
+		case MBR_PTYPE_FAT32:
+		case MBR_PTYPE_FAT32L:
+		case MBR_PTYPE_FAT16L:
+		case MBR_PTYPE_OS2_DOS12:
+		case MBR_PTYPE_OS2_DOS16S:
+		case MBR_PTYPE_OS2_DOS16B:
+		case MBR_PTYPE_HID_FAT32:
+		case MBR_PTYPE_HID_FAT32_LBA:
+		case MBR_PTYPE_HID_FAT16_LBA:
+		case MBR_PTYPE_MDOS_FAT12:
+		case MBR_PTYPE_MDOS_FAT16S:
+		case MBR_PTYPE_MDOS_EXT:
+		case MBR_PTYPE_MDOS_FAT16B:
+		case MBR_PTYPE_SPEEDSTOR_16S:
+		case MBR_PTYPE_EFI:
+			info->fs_type = FS_MSDOS;
+			break;
+		case MBR_PTYPE_LNXEXT2:
+			info->fs_type = FS_EX2FS;
+			break;
+		case MBR_PTYPE_XENIX_ROOT:
+		case MBR_PTYPE_XENIX_USR:
+			info->fs_type = FS_SYSV;
+			break;
+		case MBR_PTYPE_NTFS:
+			info->fs_type = FS_NTFS;
+			break;
+		case MBR_PTYPE_APPLE_HFS:
+			info->fs_type = FS_HFS;
+			break;
+		case MBR_PTYPE_VMWARE:
+			info->fs_type = FS_VMFS;
+			break;
+		case MBR_PTYPE_AST_SWAP:
+		case MBR_PTYPE_DRDOS_LSWAP:
+		case MBR_PTYPE_LNXSWAP:
+		case MBR_PTYPE_BSDI_SWAP:
+		case MBR_PTYPE_HID_LNX_SWAP:
+		case MBR_PTYPE_VMWARE_SWAP:
+			info->fs_type = FS_SWAP;
+			break;
+		}
+	}
 	return true;
+}
+
+static bool
+get_wedge_devname(const struct disk_partitions *arg, part_id id,
+    const mbr_info_t *mb, int i, bool primary,
+    const struct mbr_partition *mp, void *cookie)
+{
+	char **res = cookie;
+
+	if (!res)
+		return false;
+
+	*res = __UNCONST(mb->wedge[i]);
+	return true;
+}
+
+static bool
+mbr_part_get_wedge(const struct disk_partitions *arg, part_id id,
+    char **res)
+{
+	return mbr_part_apply(arg, id, get_wedge_devname, res);
 }
 
 static bool
@@ -1350,7 +1577,8 @@ mbr_part_attr_str(const struct disk_partitions *arg, part_id id,
 
 static bool
 mbr_info_to_partitition(const struct disk_part_info *info,
-   struct mbr_partition *mp, uint sector, const char **err_msg)
+   struct mbr_partition *mp, uint sector,
+   struct mbr_info_t *mb, size_t index, const char **err_msg)
 {
 	size_t pt = mbr_type_from_gen_desc(info->nat_type);
 	if (info->start + info->size > UINT_MAX
@@ -1362,6 +1590,12 @@ mbr_info_to_partitition(const struct disk_part_info *info,
 	mp->mbrp_start = info->start - sector;
 	mp->mbrp_size = info->size;
 	mp->mbrp_type = pt;
+	if (info->flags & PTI_INSTALL_TARGET) {
+		mp->mbrp_flag |= MBR_PFLAG_ACTIVE;
+#ifdef BOOTSEL
+		strcpy(mb->mbrb.mbrbs_nametab[index], "NetBSD");
+#endif
+	}
 
 	return true;
 }
@@ -1542,8 +1776,12 @@ found:
 		data.size = size;
 	uint old_start = m->mbr.mbr_parts[i].mbrp_start;
 	if (!mbr_info_to_partitition(&data,
-	   &m->mbr.mbr_parts[i], m->sector, err_msg))
+	   &m->mbr.mbr_parts[i], m->sector, m, i, err_msg))
 		return false;
+	if (data.flags & PTI_INSTALL_TARGET)
+		parts->target = start;
+	else if (old_start == parts->target)
+		parts->target = -1;
 	if (data.last_mounted && m->last_mounted[i] &&
 	    data.last_mounted != m->last_mounted[i]) {
 		free(__UNCONST(m->last_mounted[i]));
@@ -1608,35 +1846,54 @@ mbr_read_disklabel(struct disk_partitions *arg, daddr_t start, bool force_empty)
 	struct mbr_disk_partitions *myparts =
 	    (struct mbr_disk_partitions*)arg;
 	struct disk_part_info part;
+	struct disk_part_free_space space;
 
-	if (force_empty && myparts->dlabel) 
-		myparts->dlabel->pscheme->delete_all_partitions(myparts->dlabel);
+	if (force_empty && myparts->dlabel)
+		myparts->dlabel->pscheme->delete_all_partitions(
+		    myparts->dlabel);
 
 	if (myparts->dlabel == NULL) {
 		/*
 		 * Find the NetBSD MBR partition
 		 */
-		if (!mbr_find_netbsd(&myparts->mbr, start, &part))
-			return NULL;
+		if (!mbr_find_netbsd(&myparts->mbr, start, &part)) {
+			if (!force_empty)
+				return NULL;
 
-		if (!force_empty)
+			/* add a "whole disk" NetBSD partition */
+			memset(&part, 0, sizeof part);
+			part.start = min(myparts->ptn_0_offset,start);
+			if (!mbr_get_free_spaces(arg, &space, 1,
+			    part.start, myparts->ptn_alignment, -1, -1))
+				return NULL;
+			part.start = space.start;
+			part.size = space.size;
+			part.nat_type = &mbr_gen_type_desc[MBR_PTYPE_NETBSD].gen;
+			mbr_add_part(arg, &part, NULL);
+			if (!mbr_find_netbsd(&myparts->mbr, start, &part))
+				return NULL;
+		}
+
+		if (!force_empty) {
 			myparts->dlabel = disklabel_parts.read_from_disk(
-			    myparts->dp.disk, part.start, part.size);
+			    myparts->dp.disk, part.start, part.size,
+			    myparts->dp.bytes_per_sector, &disklabel_parts);
+			if (myparts->dlabel != NULL)
+				myparts->dlabel->parent = &myparts->dp;
+		}
 
 		if (myparts->dlabel == NULL && part.size > 0) {
 			/* we just created the outer partitions? */
-			myparts->dlabel = 
+			myparts->dlabel =
 			    disklabel_parts.create_new_for_disk(
 			    myparts->dp.disk, part.start, part.size,
-			    myparts->dp.disk_size, false);
+			    false, &myparts->dp);
 		}
 
-		if (myparts->dlabel != NULL) {
-			myparts->dlabel->parent = arg;
+		if (myparts->dlabel != NULL)
 			myparts->dlabel->pscheme->change_disk_geom(
 			    myparts->dlabel, myparts->geo_cyl,
 			    myparts->geo_head, myparts->geo_sec);
-		}
 	}
 	return myparts->dlabel;
 }
@@ -1842,6 +2099,9 @@ mbr_delete_part(struct disk_partitions *arg, part_id pno, const char **err_msg)
 		return false;
 	}
 
+	if (parts->target == data.start)
+		parts->target = ~0U;
+
 	if (parts->dlabel) {
 		/*
 		 * If we change the mbr partitioning, the we must
@@ -2007,7 +2267,7 @@ mbr_add_part(struct disk_partitions *arg,
 			/* empty slot, we can just use it */
 			newp = &m->mbr.mbr_parts[0];
 			mbr_info_to_partitition(&data, &m->mbr.mbr_parts[0],
-			    m->sector, errmsg);
+			    m->sector, m, 0, errmsg);
 			if (data.last_mounted && m->last_mounted[0] &&
 			    data.last_mounted != m->last_mounted[0]) {
 				free(__UNCONST(m->last_mounted[0]));
@@ -2061,7 +2321,7 @@ mbr_add_part(struct disk_partitions *arg,
 				newp = &new_mbr->mbr.mbr_parts[0];
 				mbr_info_to_partitition(&data,
 				    &new_mbr->mbr.mbr_parts[0],
-				    new_mbr->sector, errmsg);
+				    new_mbr->sector, new_mbr, 0, errmsg);
 				if (data.last_mounted && m->last_mounted[0] &&
 				    data.last_mounted != m->last_mounted[0]) {
 					free(__UNCONST(m->last_mounted[0]));
@@ -2080,7 +2340,7 @@ mbr_add_part(struct disk_partitions *arg,
 				newp = &new_mbr->mbr.mbr_parts[0];
 				mbr_info_to_partitition(&data,
 				    &new_mbr->mbr.mbr_parts[0],
-				    new_mbr->sector, errmsg);
+				    new_mbr->sector, new_mbr, 0, errmsg);
 				if (data.last_mounted && m->last_mounted[0] &&
 				    data.last_mounted != m->last_mounted[0]) {
 					free(__UNCONST(m->last_mounted[0]));
@@ -2144,7 +2404,7 @@ mbr_add_part(struct disk_partitions *arg,
 	if (data.start + data.size > start + size)
 		data.size = start + size - data.start;
 	mbr_info_to_partitition(&data, &m->mbr.mbr_parts[free_primary],
-	     m->sector, errmsg);
+	     m->sector, m, free_primary, errmsg);
 	if (data.last_mounted && m->last_mounted[free_primary] &&
 	    data.last_mounted != m->last_mounted[free_primary]) {
 		free(__UNCONST(m->last_mounted[free_primary]));
@@ -2276,6 +2536,15 @@ mbr_guess_geom(struct disk_partitions *arg, int *cyl, int *head, int *sec)
 	return 0;
 }
 
+static size_t
+mbr_get_cylinder(const struct disk_partitions *arg)
+{
+	const struct mbr_disk_partitions *parts =
+	    (const struct mbr_disk_partitions*)arg;
+
+	return parts->geo_cyl;
+}
+
 static daddr_t
 mbr_max_part_size(const struct disk_partitions *arg, daddr_t fp_start)
 {
@@ -2369,17 +2638,73 @@ mbr_can_add_partition(const struct disk_partitions *arg)
 }
 
 static void
+mbr_free_wedge(int *fd, const char *disk, const char *wedge)
+{
+	struct dkwedge_info dkw;
+	char diskpath[MAXPATHLEN];
+
+	if (*fd == -1)
+		*fd = opendisk(disk, O_RDWR, diskpath,
+		    sizeof(diskpath), 0);
+	if (*fd != -1) {
+		memset(&dkw, 0, sizeof(dkw));
+		strlcpy(dkw.dkw_devname, wedge,
+		    sizeof(dkw.dkw_devname));
+		ioctl(*fd, DIOCDWEDGE, &dkw);
+	}
+}
+
+static void
 mbr_free(struct disk_partitions *arg)
 {
 	struct mbr_disk_partitions *parts = (struct mbr_disk_partitions*)arg;
+	mbr_info_t *m;
+	int i, fd;
 
 	assert(parts != NULL);
+
+	fd = -1;
+	m = &parts->mbr;
+	do {
+		for (i = 0; i < MBR_PART_COUNT; i++) {
+			if (m->wedge[i][0] != 0)
+				mbr_free_wedge(&fd, arg->disk, m->wedge[i]);
+		}
+	} while ((m = m->extended));
+
+	if (fd != -1)
+		close(fd);
 
 	if (parts->dlabel)
 		parts->dlabel->pscheme->free(parts->dlabel);
 
-	free_mbr(&parts->mbr);
+	free_mbr_info(parts->mbr.extended);
+	free_last_mounted(&parts->mbr);
+	free(__UNCONST(parts->dp.disk));
 	free(parts);
+}
+
+static void
+mbr_destroy_part_scheme(struct disk_partitions *arg)
+{
+	struct mbr_disk_partitions *parts = (struct mbr_disk_partitions*)arg;
+	char diskpath[MAXPATHLEN];
+	int fd;
+
+	if (parts->dlabel != NULL)
+		parts->dlabel->pscheme->destroy_part_scheme(parts->dlabel);
+	fd = opendisk(arg->disk, O_RDWR, diskpath, sizeof(diskpath), 0);
+	if (fd != -1) {
+		char *buf;
+
+		buf = calloc(arg->bytes_per_sector, 1);
+		if (buf != NULL) {
+			write(fd, buf, arg->bytes_per_sector);
+			free(buf);
+		}
+		close(fd);
+	}
+	mbr_free(arg);
 }
 
 static bool
@@ -2663,6 +2988,103 @@ mbr_part_alignment(const struct disk_partitions *arg)
 }
 
 static bool
+add_wedge(const char *disk, daddr_t start, daddr_t size,
+    char *wname, size_t max_len)
+{
+	struct dkwedge_info dkw;
+	char diskpath[MAXPATHLEN];
+	int fd;
+
+	memset(&dkw, 0, sizeof(dkw));
+	dkw.dkw_offset = start;
+	dkw.dkw_size = size;
+	snprintf((char*)dkw.dkw_wname, sizeof dkw.dkw_wname,
+	    "%s_%" PRIi64 "@%" PRIi64, disk, size, start);
+
+	*wname = 0;
+
+	fd = opendisk(disk, O_RDWR, diskpath, sizeof(diskpath), 0);
+	if (fd < 0)
+		return false;
+	if (ioctl(fd, DIOCAWEDGE, &dkw) == -1) {
+		close(fd);
+		return false;
+	}
+	close(fd);
+	strlcpy(wname, dkw.dkw_devname, max_len);
+	return true;
+}
+
+static bool
+mbr_get_part_device(const struct disk_partitions *arg,
+    part_id ptn, char *devname, size_t max_devname_len, int *part,
+    enum dev_name_usage usage, bool with_path, bool life)
+{
+	const struct mbr_disk_partitions *parts =
+	    (const struct mbr_disk_partitions*)arg;
+	struct disk_part_info info, tmp;
+	part_id dptn;
+	char *wedge_dev;
+
+	if (!mbr_get_part_info(arg, ptn, &info))
+		return false;
+
+	if (!mbr_part_get_wedge(arg, ptn, &wedge_dev) || wedge_dev == NULL)
+		return false;
+
+	if (wedge_dev[0] == 0) {
+		/*
+		 * If we have secondary partitions, try to find a match there
+		 * and use that...
+		 */
+		if (parts->dlabel != NULL) {
+			for (dptn = 0; dptn < parts->dlabel->num_part; dptn++) {
+				if (!parts->dlabel->pscheme->get_part_info(
+				    parts->dlabel, dptn, &tmp))
+					continue;
+				if (tmp.start != info.start ||
+				    tmp.size != info.size)
+					continue;
+				return parts->dlabel->pscheme->get_part_device(
+				    parts->dlabel, dptn, devname,
+				     max_devname_len,
+				    part, usage, with_path, life);
+			}
+		}
+
+		/*
+		 * Configure a new wedge and remember the name
+		 */
+		if (!add_wedge(arg->disk, info.start, info.size, wedge_dev,
+		    MBR_DEV_LEN))
+			return false;
+	}
+
+	assert(wedge_dev[0] != 0);
+
+	switch (usage) {
+	case logical_name:
+	case plain_name:
+		if (with_path)
+			snprintf(devname, max_devname_len, _PATH_DEV "%s",
+			    wedge_dev);
+		else
+			strlcpy(devname, wedge_dev, max_devname_len);
+		return true;
+	case raw_dev_name:
+		if (with_path)
+			snprintf(devname, max_devname_len, _PATH_DEV "r%s",
+			    wedge_dev);
+		else
+			snprintf(devname, max_devname_len, "r%s",
+			    wedge_dev);
+		return true;
+	default:
+		return false;
+	}
+}
+
+static bool
 is_custom_attribute_writable(const struct disk_partitions *arg, part_id id,
     const mbr_info_t *mb, int i, bool primary,
     const struct mbr_partition *mp, void *cookie)
@@ -2752,16 +3174,20 @@ mbr_parts = {
 	.custom_attribute_toggle = mbr_custom_attribute_toggle,
 	.custom_attribute_set_str = mbr_custom_attribute_set_str,
 	.get_part_types_count = mbr_get_part_type_count,
+	.adapt_foreign_part_info = generic_adapt_foreign_part_info,
 	.get_part_type = mbr_get_part_type,
 	.get_fs_part_type = mbr_get_fs_part_type,
 	.get_generic_part_type = mbr_get_generic_part_type,
 	.create_custom_part_type = mbr_custom_part_type,
+	.create_unknown_part_type = mbr_create_unknown_part_type,
 	.secondary_partitions = mbr_read_disklabel,
 	.write_to_disk = mbr_write_to_disk,
 	.read_from_disk = mbr_read_from_disk,
 	.create_new_for_disk = mbr_create_new,
 	.guess_disk_geom = mbr_guess_geom,
+	.get_cylinder_size = mbr_get_cylinder,
 	.change_disk_geom = mbr_change_disk_geom,
+	.get_part_device = mbr_get_part_device,
 	.max_free_space_at = mbr_max_part_size,
 	.get_free_spaces = mbr_get_free_spaces,
 	.set_part_info = mbr_set_part_info,
@@ -2772,6 +3198,7 @@ mbr_parts = {
 	.post_edit_verify = mbr_verify,
 	.pre_update_verify = mbr_verify_for_update,
 	.free = mbr_free,
+	.destroy_part_scheme = mbr_destroy_part_scheme,
 };
 
 #endif

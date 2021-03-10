@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.5 2019/02/05 08:08:59 mrg Exp $
+#	$NetBSD: Makefile,v 1.7 2019/10/13 07:28:06 mrg Exp $
 
 .include <bsd.own.mk>
 
@@ -103,10 +103,12 @@ ipf_l.h: lexer.h
 	    ${.ALLSRC} > ${.TARGET}
 
 # Ugh. Generates too large offsets with -O2.
-.if defined(HAVE_GCC) && ${HAVE_GCC} == 7 && ${ACTIVE_CC} == "gcc"
+.if defined(HAVE_GCC) && ${HAVE_GCC} >= 7 && ${ACTIVE_CC} == "gcc"
 . if ${MACHINE_CPU} == "m68k" && empty(CFLAGS:M-O0)
 COPTS.ipf_y.c+=	-O1
 . endif
 .endif
+
+COPTS.fil.c+=	${GCC_NO_STRINGOP_OVERFLOW}
 
 .include <bsd.prog.mk>

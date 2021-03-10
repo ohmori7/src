@@ -1,4 +1,4 @@
-/*	$NetBSD: ahcisata_pci.c,v 1.55 2019/01/27 02:08:42 pgoyette Exp $	*/
+/*	$NetBSD: ahcisata_pci.c,v 1.58 2020/12/28 20:01:46 jmcneill Exp $	*/
 
 /*
  * Copyright (c) 2006 Manuel Bouyer.
@@ -26,11 +26,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ahcisata_pci.c,v 1.55 2019/01/27 02:08:42 pgoyette Exp $");
-
-#ifdef _KERNEL_OPT
-#include "opt_ahcisata_pci.h"
-#endif
+__KERNEL_RCSID(0, "$NetBSD: ahcisata_pci.c,v 1.58 2020/12/28 20:01:46 jmcneill Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_ahcisata_pci.h"
@@ -179,17 +175,17 @@ static const struct ahci_pci_quirk ahci_pci_quirks[] = {
 	    AHCI_PCI_QUIRK_FORCE },
 	/* ATI SB600 AHCI 64-bit DMA only works on some boards/BIOSes */
 	{ PCI_VENDOR_ATI, PCI_PRODUCT_ATI_SB600_SATA_1,
-	    AHCI_PCI_QUIRK_BAD64 | AHCI_QUIRK_BADPMP },
+	    AHCI_PCI_QUIRK_BAD64 | AHCI_QUIRK_BADPMP | AHCI_QUIRK_BADNCQ },
 	{ PCI_VENDOR_ATI, PCI_PRODUCT_ATI_SB700_SATA_AHCI,
-	    AHCI_QUIRK_BADPMP },
+	    AHCI_QUIRK_BADPMP | AHCI_QUIRK_BADNCQ },
 	{ PCI_VENDOR_ATI, PCI_PRODUCT_ATI_SB700_SATA_RAID,
-	    AHCI_QUIRK_BADPMP },
+	    AHCI_QUIRK_BADPMP | AHCI_QUIRK_BADNCQ },
 	{ PCI_VENDOR_ATI, PCI_PRODUCT_ATI_SB700_SATA_RAID5,
-	    AHCI_QUIRK_BADPMP },
+	    AHCI_QUIRK_BADPMP | AHCI_QUIRK_BADNCQ },
 	{ PCI_VENDOR_ATI, PCI_PRODUCT_ATI_SB700_SATA_AHCI2,
-	    AHCI_QUIRK_BADPMP },
+	    AHCI_QUIRK_BADPMP | AHCI_QUIRK_BADNCQ },
 	{ PCI_VENDOR_ATI, PCI_PRODUCT_ATI_SB700_SATA_STORAGE,
-	    AHCI_QUIRK_BADPMP },
+	    AHCI_QUIRK_BADPMP | AHCI_QUIRK_BADNCQ },
 	{ PCI_VENDOR_VIATECH, PCI_PRODUCT_VIATECH_VT8237R_SATA,
 	    AHCI_QUIRK_BADPMP },
 	{ PCI_VENDOR_VIATECH, PCI_PRODUCT_VIATECH_VT8251_SATA,
@@ -394,6 +390,7 @@ ahci_pci_attach(device_t parent, device_t self, void *aux)
 	struct ahci_softc *sc = &psc->ah_sc;
 	bool ahci_cap_64bit;
 	bool ahci_bad_64bit;
+	pcireg_t reg;
 
 	sc->sc_atac.atac_dev = self;
 
@@ -446,6 +443,10 @@ ahci_pci_attach(device_t parent, device_t self, void *aux)
 	} else {
 		AHCIDEBUG_PRINT(("%s: SATA mode\n", AHCINAME(sc)), DEBUG_PROBE);
 	}
+
+	reg = pci_conf_read(psc->sc_pc, psc->sc_pcitag, PCI_COMMAND_STATUS_REG);
+	reg |= (PCI_COMMAND_MEM_ENABLE | PCI_COMMAND_MASTER_ENABLE);
+	pci_conf_write(psc->sc_pc, psc->sc_pcitag, PCI_COMMAND_STATUS_REG, reg);
 
 	ahci_attach(sc);
 

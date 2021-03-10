@@ -1,11 +1,11 @@
-/*	$NetBSD: cds_59.c,v 1.3 2019/01/09 16:55:12 christos Exp $	*/
+/*	$NetBSD: cds_59.c,v 1.6 2021/02/19 16:42:17 christos Exp $	*/
 
 /*
  * Copyright (C) Internet Systems Consortium, Inc. ("ISC")
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ * file, you can obtain one at https://mozilla.org/MPL/2.0/.
  *
  * See the COPYRIGHT file distributed with this work for additional
  * information regarding copyright ownership.
@@ -22,7 +22,6 @@
 
 static inline isc_result_t
 fromtext_cds(ARGS_FROMTEXT) {
-
 	REQUIRE(type == dns_rdatatype_cds);
 
 	return (generic_fromtext_ds(rdclass, type, lexer, origin, options,
@@ -31,7 +30,6 @@ fromtext_cds(ARGS_FROMTEXT) {
 
 static inline isc_result_t
 totext_cds(ARGS_TOTEXT) {
-
 	REQUIRE(rdata->type == dns_rdatatype_cds);
 
 	return (generic_totext_ds(rdata, tctx, target));
@@ -39,7 +37,6 @@ totext_cds(ARGS_TOTEXT) {
 
 static inline isc_result_t
 fromwire_cds(ARGS_FROMWIRE) {
-
 	REQUIRE(type == dns_rdatatype_cds);
 
 	return (generic_fromwire_ds(rdclass, type, source, dctx, options,
@@ -77,7 +74,6 @@ compare_cds(ARGS_COMPARE) {
 
 static inline isc_result_t
 fromstruct_cds(ARGS_FROMSTRUCT) {
-
 	REQUIRE(type == dns_rdatatype_cds);
 
 	return (generic_fromstruct_ds(rdclass, type, source, target));
@@ -88,7 +84,7 @@ tostruct_cds(ARGS_TOSTRUCT) {
 	dns_rdata_cds_t *cds = target;
 
 	REQUIRE(rdata->type == dns_rdatatype_cds);
-	REQUIRE(target != NULL);
+	REQUIRE(cds != NULL);
 	REQUIRE(rdata->length != 0);
 
 	/*
@@ -103,17 +99,19 @@ tostruct_cds(ARGS_TOSTRUCT) {
 
 static inline void
 freestruct_cds(ARGS_FREESTRUCT) {
-	dns_rdata_cds_t *ds = source;
+	dns_rdata_cds_t *cds = source;
 
-	REQUIRE(ds != NULL);
-	REQUIRE(ds->common.rdtype == dns_rdatatype_cds);
+	REQUIRE(cds != NULL);
+	REQUIRE(cds->common.rdtype == dns_rdatatype_cds);
 
-	if (ds->mctx == NULL)
+	if (cds->mctx == NULL) {
 		return;
+	}
 
-	if (ds->digest != NULL)
-		isc_mem_free(ds->mctx, ds->digest);
-	ds->mctx = NULL;
+	if (cds->digest != NULL) {
+		isc_mem_free(cds->mctx, cds->digest);
+	}
+	cds->mctx = NULL;
 }
 
 static inline isc_result_t
@@ -140,7 +138,6 @@ digest_cds(ARGS_DIGEST) {
 
 static inline bool
 checkowner_cds(ARGS_CHECKOWNER) {
-
 	REQUIRE(type == dns_rdatatype_cds);
 
 	UNUSED(name);
@@ -153,7 +150,6 @@ checkowner_cds(ARGS_CHECKOWNER) {
 
 static inline bool
 checknames_cds(ARGS_CHECKNAMES) {
-
 	REQUIRE(rdata->type == dns_rdatatype_cds);
 
 	UNUSED(rdata);
@@ -168,4 +164,4 @@ casecompare_cds(ARGS_COMPARE) {
 	return (compare_cds(rdata1, rdata2));
 }
 
-#endif	/* RDATA_GENERIC_CDS_59_C */
+#endif /* RDATA_GENERIC_CDS_59_C */

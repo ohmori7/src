@@ -287,7 +287,7 @@ struct urtw_rx_radiotap_header {
 	uint16_t	wr_chan_freq;
 	uint16_t	wr_chan_flags;
 	int8_t		wr_dbm_antsignal;
-} __packed;
+};
 
 #define	URTW_RX_RADIOTAP_PRESENT					\
 	((1 << IEEE80211_RADIOTAP_FLAGS) |				\
@@ -300,7 +300,7 @@ struct urtw_tx_radiotap_header {
 	uint8_t		wt_rate;
 	uint16_t	wt_chan_freq;
 	uint16_t	wt_chan_flags;
-} __packed;
+};
 
 #define	URTW_TX_RADIOTAP_PRESENT					\
 	((1 << IEEE80211_RADIOTAP_FLAGS) |				\
@@ -323,6 +323,13 @@ struct urtw_softc {
 	struct ieee80211com		sc_ic;
 	struct ethercom			sc_ec;
 #define sc_if	sc_ec.ec_if
+
+	kmutex_t			sc_media_mtx;	/* XXX */
+
+	enum {
+		URTW_INIT_NONE,
+		URTW_INIT_INITED
+	} sc_init_state;
 	int				(*sc_newstate)(struct ieee80211com *,
 					    enum ieee80211_state, int);
 	struct urtw_rf			sc_rf;
@@ -367,7 +374,7 @@ struct urtw_softc {
 #define	URTW_DATA_TIMEOUT		10000		/* 10 sec */
 	struct urtw_rx_data		sc_rx_data[URTW_RX_DATA_LIST_COUNT];
 	struct urtw_tx_data		sc_tx_data[URTW_PRIORITY_MAX][URTW_TX_DATA_LIST_COUNT];
-	uint32_t			sc_tx_queued[URTW_PRIORITY_MAX];;
+	uint32_t			sc_tx_queued[URTW_PRIORITY_MAX];
 	uint32_t			sc_txidx[URTW_PRIORITY_MAX];
 	uint8_t				sc_rts_retry;
 	uint8_t				sc_tx_retry;

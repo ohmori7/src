@@ -1,4 +1,4 @@
-/*	$NetBSD: ncr5380.c,v 1.72 2014/10/18 08:33:25 snj Exp $	*/
+/*	$NetBSD: ncr5380.c,v 1.74 2020/09/29 03:02:18 msaitoh Exp $	*/
 
 /*
  * Copyright (c) 1995 Leo Weppelman.
@@ -26,7 +26,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ncr5380.c,v 1.72 2014/10/18 08:33:25 snj Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ncr5380.c,v 1.74 2020/09/29 03:02:18 msaitoh Exp $");
 
 /*
  * Bit mask of targets you want debugging to be shown
@@ -171,8 +171,8 @@ finish_req(SC_REQ *reqp)
 /*
  * Auto config stuff....
  */
-void	ncr_attach(device_t, device_t, void *);
-int	ncr_match(device_t, cfdata_t, void *);
+static void	ncr_attach(device_t, device_t, void *);
+static int	ncr_match(device_t, cfdata_t, void *);
 
 /*
  * Tricks to make driver-name configurable
@@ -187,14 +187,14 @@ CFATTACH_DECL_NEW(CFDRNAME(DRNAME), sizeof(struct ncr_softc),
 
 extern struct cfdriver CFNAME(DRNAME);
 
-int
+static int
 ncr_match(device_t parent, cfdata_t cf, void *aux)
 {
 
 	return machine_match(parent, cf, aux, &CFNAME(DRNAME));
 }
 
-void
+static void
 ncr_attach(device_t parent, device_t self, void *aux)
 {
 	struct ncr_softc	*sc;
@@ -1218,7 +1218,7 @@ handle_message(SC_REQ *reqp, u_int msg)
 	case MSG_SAVEDATAPOINTER:
 	case MSG_RESTOREPOINTERS:
 		/*
-		 * We save pointers implicitely at disconnect.
+		 * We save pointers implicitly at disconnect.
 		 * So we can ignore these messages.
 		 */
 		ack_message();

@@ -1,4 +1,4 @@
-/*	$NetBSD: if_media_80.c,v 1.1 2019/05/17 07:37:11 msaitoh Exp $	*/
+/*	$NetBSD: if_media_80.c,v 1.3 2019/12/12 02:15:42 pgoyette Exp $	*/
 
 /*-
  * Copyright (c) 1998 The NetBSD Foundation, Inc.
@@ -126,8 +126,8 @@ compat_ifmediareq_post(struct ifreq *ifr, u_long cmd)
 {
 	struct ifmediareq *ifmr = (struct ifmediareq *)ifr;
 	size_t minwords;
-	int count, *kptr;
-	int error;
+	size_t count;
+	int error, *kptr;
 
 	switch (cmd) {
 	case SIOCSIFMEDIA:
@@ -177,10 +177,8 @@ void
 ifmedia_80_init(void)
 {
 
-	MODULE_HOOK_SET(ifmedia_80_pre_hook, "ifmedia80",
-	    compat_ifmediareq_pre);
-	MODULE_HOOK_SET(ifmedia_80_post_hook, "ifmedia80",
-	    compat_ifmediareq_post);
+	MODULE_HOOK_SET(ifmedia_80_pre_hook, compat_ifmediareq_pre);
+	MODULE_HOOK_SET(ifmedia_80_post_hook, compat_ifmediareq_post);
 }
 
 void

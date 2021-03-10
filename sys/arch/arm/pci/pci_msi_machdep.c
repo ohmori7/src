@@ -1,4 +1,4 @@
-/* $NetBSD: pci_msi_machdep.c,v 1.5 2018/12/01 20:38:45 skrll Exp $ */
+/* $NetBSD: pci_msi_machdep.c,v 1.9 2020/02/13 06:28:25 skrll Exp $ */
 
 /*-
  * Copyright (c) 2018 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pci_msi_machdep.c,v 1.5 2018/12/01 20:38:45 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pci_msi_machdep.c,v 1.9 2020/02/13 06:28:25 skrll Exp $");
 
 #include <sys/kernel.h>
 #include <sys/kmem.h>
@@ -59,6 +59,26 @@ arm_pci_msi_find_frame(pci_intr_handle_t ih)
 	return NULL;
 }
 
+static struct arm_pci_msi *
+arm_pci_msi_lookup(const struct pci_attach_args *pa)
+{
+	struct arm_pci_msi *msip;
+	uint32_t devid, frameid;
+	int b, d, f;
+
+	pci_decompose_tag(pa->pa_pc, pa->pa_tag, &b, &d, &f);
+
+	devid = (b << 8) | (d << 3) | f;
+	devid = pci_get_devid(pa->pa_pc, devid);
+	frameid = pci_get_frameid(pa->pa_pc, devid);
+
+	SIMPLEQ_FOREACH(msip, &arm_pci_msi_list, msi_link)
+		if (frameid == msip->msi_id)
+			return msip;
+
+	return NULL;
+}
+
 static int
 arm_pci_msi_alloc_common(pci_intr_handle_t **ihps, int *count, const struct pci_attach_args *pa, bool exact)
 {
@@ -68,7 +88,7 @@ arm_pci_msi_alloc_common(pci_intr_handle_t **ihps, int *count, const struct pci_
 	if ((pa->pa_flags & PCI_FLAGS_MSI_OKAY) == 0)
 		return ENODEV;
 
-	msi = SIMPLEQ_FIRST(&arm_pci_msi_list);		/* XXX multiple frame support */
+	msi = arm_pci_msi_lookup(pa);
 	if (msi == NULL || msi->msi_alloc == NULL)
 		return EINVAL;
 
@@ -90,7 +110,7 @@ arm_pci_msix_alloc_common(pci_intr_handle_t **ihps, u_int *table_indexes, int *c
 	if ((pa->pa_flags & PCI_FLAGS_MSIX_OKAY) == 0)
 		return ENODEV;
 
-	msi = SIMPLEQ_FIRST(&arm_pci_msi_list);		/* XXX multiple frame support */
+	msi = arm_pci_msi_lookup(pa);
 	if (msi == NULL || msi->msix_alloc == NULL)
 		return EINVAL;
 
@@ -186,11 +206,10 @@ pci_intr_alloc(const struct pci_attach_args *pa, pci_intr_handle_t **ihps, int *
 	int intx_count, msi_count, msix_count, error;
 
 	error = EINVAL;
-	intx_count = 1;
-	msi_count = 1;
-	msix_count = 1;
 
 	if (counts != NULL) {
+		intx_count = msi_count = msix_count = 0;
+
 		switch (max_type) {
 		case PCI_INTR_TYPE_MSIX:
 			msix_count = counts[PCI_INTR_TYPE_MSIX];
@@ -207,6 +226,8 @@ pci_intr_alloc(const struct pci_attach_args *pa, pci_intr_handle_t **ihps, int *
 			return EINVAL;
 		}
 		memset(counts, 0, sizeof(*counts) * PCI_INTR_TYPE_SIZE);
+	} else {
+		intx_count = msi_count = msix_count = 1;
 	}
 
 	if (msix_count == -1)
@@ -237,14 +258,16 @@ pci_intr_alloc(const struct pci_attach_args *pa, pci_intr_handle_t **ihps, int *
 void 
 pci_intr_release(pci_chipset_tag_t pc, pci_intr_handle_t *pih, int count)
 {
-	struct arm_pci_msi *msi;
+	struct arm_pci_msi *msi = NULL;
 
 	if (pih == NULL || count == 0)
 		return;
 
-	msi = arm_pci_msi_find_frame(pih[0]);
-	KASSERT(msi != NULL);
-	msi->msi_intr_release(msi, pih, count);
+	if ((pih[0] & (ARM_PCI_INTR_MSIX|ARM_PCI_INTR_MSI)) != 0) {
+		msi = arm_pci_msi_find_frame(pih[0]);
+		KASSERT(msi != NULL);
+		msi->msi_intr_release(msi, pih, count);
+	}
 
 	kmem_free(pih, sizeof(*pih) * count);
 }

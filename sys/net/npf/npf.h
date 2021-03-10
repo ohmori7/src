@@ -37,7 +37,7 @@
 #include <sys/param.h>
 #include <sys/types.h>
 
-#define	NPF_VERSION		21
+#define	NPF_VERSION		22
 
 #if defined(_NPF_STANDALONE)
 #include "npf_stand.h"
@@ -144,6 +144,8 @@ int		nbuf_find_tag(nbuf_t *, uint32_t *);
 
 #define	NPC_IP46	(NPC_IP4|NPC_IP6)
 
+struct npf_connkey;
+
 typedef struct {
 	/* NPF context, information flags and the nbuf. */
 	npf_t *			npc_ctx;
@@ -167,7 +169,7 @@ typedef struct {
 		struct ip6_hdr *	v6;
 	} npc_ip;
 
-	/* TCP, UDP, ICMP. */
+	/* TCP, UDP, ICMP or other protocols. */
 	union {
 		struct tcphdr *		tcp;
 		struct udphdr *		udp;
@@ -175,6 +177,13 @@ typedef struct {
 		struct icmp6_hdr *	icmp6;
 		void *			hdr;
 	} npc_l4;
+
+	/*
+	 * Override the connection key, if not NULL.  This affects the
+	 * behaviour of npf_conn_lookup() and npf_conn_establish().
+	 * Note: npc_ckey is of npf_connkey_t type.
+	 */
+	const void *		npc_ckey;
 } npf_cache_t;
 
 static inline bool
@@ -184,9 +193,6 @@ npf_iscached(const npf_cache_t *npc, const int inf)
 	return __predict_true((npc->npc_info & inf) != 0);
 }
 
-#define	NPF_SRC		0
-#define	NPF_DST		1
-
 /*
  * Misc.
  */
@@ -194,6 +200,9 @@ npf_iscached(const npf_cache_t *npc, const int inf)
 bool		npf_autounload_p(void);
 
 #endif	/* _KERNEL */
+
+#define	NPF_SRC		0
+#define	NPF_DST		1
 
 /* Rule attributes. */
 #define	NPF_RULE_PASS			0x00000001
@@ -203,7 +212,7 @@ bool		npf_autounload_p(void);
 #define	NPF_RULE_RETRST			0x00000010
 #define	NPF_RULE_RETICMP		0x00000020
 #define	NPF_RULE_DYNAMIC		0x00000040
-#define	NPF_RULE_MULTIENDS		0x00000080
+#define	NPF_RULE_GSTATEFUL		0x00000080
 
 #define	NPF_DYNAMIC_GROUP		(NPF_RULE_GROUP | NPF_RULE_DYNAMIC)
 
@@ -253,8 +262,9 @@ bool		npf_autounload_p(void);
 #define	NPF_LAYER_2			2
 #define	NPF_LAYER_3			3
 
-/* XXX mbuf.h: just for now. */
-#define	PACKET_TAG_NPF			10
+/*
+ * Flags passed via nbuf tags.
+ */
 #define	NPF_NTAG_PASS			0x0001
 
 /*
@@ -310,6 +320,7 @@ typedef struct npf_ioctl_table {
 #define	IOC_NPF_SAVE		_IOR('N', 105, nvlist_ref_t)
 #define	IOC_NPF_RULE		_IOWR('N', 107, nvlist_ref_t)
 #define	IOC_NPF_CONN_LOOKUP	_IOWR('N', 108, nvlist_ref_t)
+#define	IOC_NPF_TABLE_REPLACE	_IOWR('N', 109, nvlist_ref_t)
 
 /*
  * NPF error report.
@@ -317,8 +328,9 @@ typedef struct npf_ioctl_table {
 
 typedef struct {
 	int64_t		id;
+	char *		error_msg;
 	char *		source_file;
-	u_int		source_line;
+	unsigned	source_line;
 } npf_error_t;
 
 /*

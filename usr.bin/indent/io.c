@@ -1,4 +1,4 @@
-/*	$NetBSD: io.c,v 1.19 2019/04/04 15:22:13 kamil Exp $	*/
+/*	$NetBSD: io.c,v 1.27 2021/03/08 22:28:31 rillig Exp $	*/
 
 /*-
  * SPDX-License-Identifier: BSD-4-Clause
@@ -46,7 +46,7 @@ static char sccsid[] = "@(#)io.c	8.1 (Berkeley) 6/6/93";
 #include <sys/cdefs.h>
 #ifndef lint
 #if defined(__NetBSD__)
-__RCSID("$NetBSD: io.c,v 1.19 2019/04/04 15:22:13 kamil Exp $");
+__RCSID("$NetBSD: io.c,v 1.27 2021/03/08 22:28:31 rillig Exp $");
 #elif defined(__FreeBSD__)
 __FBSDID("$FreeBSD: head/usr.bin/indent/io.c 334927 2018-06-10 16:44:18Z pstef $");
 #endif
@@ -57,22 +57,23 @@ __FBSDID("$FreeBSD: head/usr.bin/indent/io.c 334927 2018-06-10 16:44:18Z pstef $
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "indent_globs.h"
+#include <stdarg.h>
+
 #include "indent.h"
 
 int         comment_open;
 static int  paren_target;
 static int pad_output(int current, int target);
 
+/*
+ * dump_line is the routine that actually effects the printing of the new
+ * source. It prints the label section, followed by the code section with
+ * the appropriate nesting level, followed by any comments.
+ */
 void
 dump_line(void)
-{				/* dump_line is the routine that actually
-				 * effects the printing of the new source. It
-				 * prints the label section, followed by the
-				 * code section with the appropriate nesting
-				 * level, followed by any comments */
-    int cur_col,
-                target_col = 1;
+{
+    int cur_col, target_col;
     static int  not_first_line;
 
     if (ps.procname[0]) {
@@ -125,8 +126,9 @@ dump_line(void)
 				    || strncmp(s_lab, "#endif", 6) == 0)) {
 		char *s = s_lab;
 		if (e_lab[-1] == '\n') e_lab--;
-		do putc(*s++, output);
-		while (s < e_lab && 'a' <= *s && *s<='z');
+		do {
+		    putc(*s++, output);
+		} while (s < e_lab && 'a' <= *s && *s <= 'z');
 		while ((*s == ' ' || *s == '\t') && s < e_lab)
 		    s++;
 		if (s < e_lab)
@@ -207,6 +209,11 @@ dump_line(void)
 	    prefix_blankline_requested = postfix_blankline_requested;
 	postfix_blankline_requested = 0;
     }
+
+    /* keep blank lines after '//' comments */
+    if (e_com - s_com > 1 && s_com[1] == '/')
+	fprintf(output, "%.*s", (int)(e_token - s_token), s_token);
+
     ps.decl_on_line = ps.in_decl;	/* if we are in the middle of a
 					 * declaration, remember that fact for
 					 * proper comment indentation */
@@ -276,7 +283,7 @@ compute_label_target(void)
  *
  * FUNCTION: Reads one block of input into input_buffer
  *
- * HISTORY: initial coding 	November 1976	D A Willcox of CAC 1/7/77 A
+ * HISTORY: initial coding	November 1976	D A Willcox of CAC 1/7/77 A
  * Willcox of CAC	Added check for switch back to partly full input
  * buffer from temporary buffer
  *
@@ -363,9 +370,9 @@ fill_buffer(void)
     }
     if (inhibit_formatting) {
 	p = in_buffer;
-	do
+	do {
 	    putc(*p, output);
-	while (*p++ != '\n');
+	} while (*p++ != '\n');
     }
 }
 
@@ -394,7 +401,7 @@ fill_buffer(void)
  *
  * CALLED BY: dump_line
  *
- * HISTORY: initial coding 	November 1976	D A Willcox of CAC
+ * HISTORY: initial coding	November 1976	D A Willcox of CAC
  *
  */
 static int
@@ -408,7 +415,7 @@ pad_output(int current, int target)
     int curr;			/* internal column pointer */
 
     if (current >= target)
-	return (current);	/* line is already long enough */
+	return current;		/* line is already long enough */
     curr = current;
     if (opt.use_tabs) {
 	int tcur;
@@ -421,7 +428,7 @@ pad_output(int current, int target)
     while (curr++ < target)
 	putc(' ', output);	/* pad with final blanks */
 
-    return (target);
+    return target;
 }
 
 /*
@@ -441,7 +448,7 @@ pad_output(int current, int target)
  * RETURNS: Integer value of position after printing "buffer" starting in column
  * "current".
  *
- * HISTORY: initial coding 	November 1976	D A Willcox of CAC
+ * HISTORY: initial coding	November 1976	D A Willcox of CAC
  *
  */
 int
@@ -474,62 +481,34 @@ count_spaces_until(int cur, char *buffer, char *end)
 	    break;
 	}			/* end of switch */
     }				/* end of for loop */
-    return (cur);
+    return cur;
 }
 
 int
 count_spaces(int cur, char *buffer)
 {
-    return (count_spaces_until(cur, buffer, NULL));
+    return count_spaces_until(cur, buffer, NULL);
 }
 
 void
-diag4(int level, const char *msg, int a, int b)
+diag(int level, const char *msg, ...)
 {
-    if (level)
-	found_err = 1;
-    if (output == stdout) {
-	fprintf(stdout, "/**INDENT** %s@%d: ", level == 0 ? "Warning" : "Error", line_no);
-	fprintf(stdout, msg, a, b);
-	fprintf(stdout, " */\n");
-    }
-    else {
-	fprintf(stderr, "%s@%d: ", level == 0 ? "Warning" : "Error", line_no);
-	fprintf(stderr, msg, a, b);
-	fprintf(stderr, "\n");
-    }
-}
+    va_list ap;
+    const char *s, *e;
 
-void
-diag3(int level, const char *msg, int a)
-{
     if (level)
 	found_err = 1;
-    if (output == stdout) {
-	fprintf(stdout, "/**INDENT** %s@%d: ", level == 0 ? "Warning" : "Error", line_no);
-	fprintf(stdout, msg, a);
-	fprintf(stdout, " */\n");
-    }
-    else {
-	fprintf(stderr, "%s@%d: ", level == 0 ? "Warning" : "Error", line_no);
-	fprintf(stderr, msg, a);
-	fprintf(stderr, "\n");
-    }
-}
 
-void
-diag2(int level, const char *msg)
-{
-    if (level)
-	found_err = 1;
     if (output == stdout) {
-	fprintf(stdout, "/**INDENT** %s@%d: ", level == 0 ? "Warning" : "Error", line_no);
-	fprintf(stdout, "%s", msg);
-	fprintf(stdout, " */\n");
+	s = "/**INDENT** ";
+	e = " */";
+    } else {
+	s = e = "";
     }
-    else {
-	fprintf(stderr, "%s@%d: ", level == 0 ? "Warning" : "Error", line_no);
-	fprintf(stderr, "%s", msg);
-	fprintf(stderr, "\n");
-    }
+
+    va_start(ap, msg);
+    fprintf(stderr, "%s%s@%d: ", s, level == 0 ? "Warning" : "Error", line_no);
+    vfprintf(stderr, msg, ap);
+    fprintf(stderr, "%s\n", e);
+    va_end(ap);
 }

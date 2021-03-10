@@ -1,5 +1,5 @@
 /* CPP Library. (Directive handling.)
-   Copyright (C) 1986-2016 Free Software Foundation, Inc.
+   Copyright (C) 1986-2018 Free Software Foundation, Inc.
    Contributed by Per Bothner, 1994-95.
    Based on CCCP program by Paul Rubin, June 1986
    Adapted to ANSI C, Richard Stallman, Jan 1987
@@ -188,6 +188,16 @@ static const directive dtable[] =
 DIRECTIVE_TABLE
 };
 #undef D
+
+/* A NULL-terminated array of directive names for use
+   when suggesting corrections for misspelled directives.  */
+#define D(name, t, origin, flags) #name,
+static const char * const directive_names[] = {
+DIRECTIVE_TABLE
+  NULL
+};
+#undef D
+
 #undef DIRECTIVE_TABLE
 
 /* Wrapper struct directive for linemarkers.
@@ -498,8 +508,35 @@ _cpp_handle_directive (cpp_reader *pfile, int indented)
       if (CPP_OPTION (pfile, lang) == CLK_ASM)
 	skip = 0;
       else if (!pfile->state.skipping)
-	cpp_error (pfile, CPP_DL_ERROR, "invalid preprocessing directive #%s",
-		   cpp_token_as_text (pfile, dname));
+	{
+	  const char *unrecognized
+	    = (const char *)cpp_token_as_text (pfile, dname);
+	  const char *hint = NULL;
+
+	  /* Call back into gcc to get a spelling suggestion.  Ideally
+	     we'd just use best_match from gcc/spellcheck.h (and filter
+	     out the uncommon directives), but that requires moving it
+	     to a support library.  */
+	  if (pfile->cb.get_suggestion)
+	    hint = pfile->cb.get_suggestion (pfile, unrecognized,
+					     directive_names);
+
+	  if (hint)
+	    {
+	      rich_location richloc (pfile->line_table, dname->src_loc);
+	      source_range misspelled_token_range
+		= get_range_from_loc (pfile->line_table, dname->src_loc);
+	      richloc.add_fixit_replace (misspelled_token_range, hint);
+	      cpp_error_at (pfile, CPP_DL_ERROR, &richloc,
+			    "invalid preprocessing directive #%s;"
+			    " did you mean #%s?",
+			    unrecognized, hint);
+	    }
+	  else
+	    cpp_error (pfile, CPP_DL_ERROR,
+		       "invalid preprocessing directive #%s",
+		       unrecognized);
+	}
     }
 
   pfile->directive = dir;
@@ -818,7 +855,7 @@ do_include_common (cpp_reader *pfile, enum include_type type)
 			   pfile->directive->name, fname, angle_brackets,
 			   buf);
 
-      _cpp_stack_include (pfile, fname, angle_brackets, type);
+      _cpp_stack_include (pfile, fname, angle_brackets, type, location);
     }
 
   XDELETEVEC (fname);
@@ -1537,6 +1574,8 @@ do_pragma_push_macro (cpp_reader *pfile)
   node = _cpp_lex_identifier (pfile, c->name);
   if (node->type == NT_VOID)
     c->is_undef = 1;
+  else if (node->type == NT_MACRO && (node->flags & NODE_BUILTIN))
+    c->is_builtin = 1;
   else
     {
       defn = cpp_macro_definition (pfile, node);
@@ -2467,6 +2506,11 @@ cpp_pop_definition (cpp_reader *pfile, struct def_pragma_macro *c)
   cpp_hashnode *node = _cpp_lex_identifier (pfile, c->name);
   if (node == NULL)
     return;
+  if (c->is_builtin)
+    {
+      _cpp_restore_special_builtin (pfile, c);
+      return;
+    }
 
   if (pfile->cb.before_define)
     pfile->cb.before_define (pfile);

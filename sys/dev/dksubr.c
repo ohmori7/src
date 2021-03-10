@@ -1,4 +1,4 @@
-/* $NetBSD: dksubr.c,v 1.108 2019/04/21 11:45:08 maya Exp $ */
+/* $NetBSD: dksubr.c,v 1.112 2020/03/01 03:21:54 riastradh Exp $ */
 
 /*-
  * Copyright (c) 1996, 1997, 1998, 1999, 2002, 2008 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: dksubr.c,v 1.108 2019/04/21 11:45:08 maya Exp $");
+__KERNEL_RCSID(0, "$NetBSD: dksubr.c,v 1.112 2020/03/01 03:21:54 riastradh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -144,6 +144,12 @@ dk_open(struct dk_softc *dksc, dev_t dev,
 	 */
 	if (dk->dk_nwedges != 0 && part != RAW_PART) {
 		ret = EBUSY;
+		goto done;
+	}
+
+	/* If no dkdriver attached, bail */
+	if (dkd == NULL) {
+		ret = ENXIO;
 		goto done;
 	}
 
@@ -381,6 +387,7 @@ dk_start(struct dk_softc *dksc, struct buf *bp)
 	mutex_enter(&dksc->sc_iolock);
 
 	if (bp != NULL) {
+		bp->b_ci = curcpu();
 		disk_wait(&dksc->sc_dkdev);
 		bufq_put(dksc->sc_bufq, bp);
 	}
@@ -760,7 +767,7 @@ static volatile int	dk_dumping = 0;
 /* ARGSUSED */
 int
 dk_dump(struct dk_softc *dksc, dev_t dev,
-    daddr_t blkno, void *vav, size_t size)
+    daddr_t blkno, void *vav, size_t size, int flags)
 {
 	const struct dkdriver *dkd = dksc->sc_dkdev.dk_driver;
 	struct disk_geom *dg = &dksc->sc_dkdev.dk_geom;
@@ -783,7 +790,8 @@ dk_dump(struct dk_softc *dksc, dev_t dev,
 	/* ensure that we are not already dumping */
 	if (dk_dumping)
 		return EFAULT;
-	dk_dumping = 1;
+	if ((flags & DK_DUMP_RECURSIVE) == 0)
+		dk_dumping = 1;
 
 	if (dkd->d_dumpblocks == NULL) {
 		DPRINTF(DKDB_DUMP, ("%s: no dumpblocks\n", __func__));
@@ -862,7 +870,8 @@ dk_dump(struct dk_softc *dksc, dev_t dev,
 		va += nblk * lp->d_secsize;
 	}
 
-	dk_dumping = 0;
+	if ((flags & DK_DUMP_RECURSIVE) == 0)
+		dk_dumping = 0;
 
 	return 0;
 }
@@ -990,66 +999,6 @@ dk_makedisklabel(struct dk_softc *dksc)
 		lp->d_partitions[RAW_PART].p_fstype = FS_BSDFFS;
 
 	lp->d_checksum = dkcksum(lp);
-}
-
-/* This function is taken from ccd.c:1.76  --rcd */
-
-/*
- * XXX this function looks too generic for dksubr.c, shouldn't we
- *     put it somewhere better?
- */
-
-/*
- * Lookup the provided name in the filesystem.  If the file exists,
- * is a valid block device, and isn't being used by anyone else,
- * set *vpp to the file's vnode.
- */
-int
-dk_lookup(struct pathbuf *pb, struct lwp *l, struct vnode **vpp)
-{
-	struct nameidata nd;
-	struct vnode *vp;
-	int     error;
-
-	if (l == NULL)
-		return ESRCH;	/* Is ESRCH the best choice? */
-
-	NDINIT(&nd, LOOKUP, FOLLOW, pb);
-	if ((error = vn_open(&nd, FREAD | FWRITE, 0)) != 0) {
-		DPRINTF((DKDB_FOLLOW|DKDB_INIT),
-		    ("%s: vn_open error = %d\n", __func__, error));
-		return error;
-	}
-
-	vp = nd.ni_vp;
-	if (vp->v_type != VBLK) {
-		error = ENOTBLK;
-		goto out;
-	}
-
-	/* Reopen as anonymous vnode to protect against forced unmount. */
-	if ((error = bdevvp(vp->v_rdev, vpp)) != 0)
-		goto out;
-	VOP_UNLOCK(vp);
-	if ((error = vn_close(vp, FREAD | FWRITE, l->l_cred)) != 0) {
-		vrele(*vpp);
-		return error;
-	}
-	if ((error = VOP_OPEN(*vpp, FREAD | FWRITE, l->l_cred)) != 0) {
-		vrele(*vpp);
-		return error;
-	}
-	mutex_enter((*vpp)->v_interlock);
-	(*vpp)->v_writecount++;
-	mutex_exit((*vpp)->v_interlock);
-
-	IFDEBUG(DKDB_VNODE, vprint("dk_lookup: vnode info", *vpp));
-
-	return 0;
-out:
-	VOP_UNLOCK(vp);
-	(void) vn_close(vp, FREAD | FWRITE, l->l_cred);
-	return error;
 }
 
 MODULE(MODULE_CLASS_MISC, dk_subr, NULL);

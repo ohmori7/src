@@ -1,4 +1,4 @@
-/*	$NetBSD: spkr_audio.c,v 1.7 2019/05/08 13:40:17 isaki Exp $	*/
+/*	$NetBSD: spkr_audio.c,v 1.9 2021/02/17 12:37:33 isaki Exp $	*/
 
 /*-
  * Copyright (c) 2016 Nathanial Sloss <nathanialsloss@yahoo.com.au>
@@ -27,10 +27,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: spkr_audio.c,v 1.7 2019/05/08 13:40:17 isaki Exp $");
+__KERNEL_RCSID(0, "$NetBSD: spkr_audio.c,v 1.9 2021/02/17 12:37:33 isaki Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/audioio.h>
 #include <sys/kernel.h>
 #include <sys/errno.h>
 #include <sys/device.h>
@@ -41,7 +42,7 @@ __KERNEL_RCSID(0, "$NetBSD: spkr_audio.c,v 1.7 2019/05/08 13:40:17 isaki Exp $")
 #include <sys/conf.h>
 #include <sys/sysctl.h>
 
-#include <dev/audio/audio_if.h>
+#include <dev/audio/audiovar.h>
 #include <dev/audio/audiobellvar.h>
 
 #include <dev/spkrvar.h>
@@ -70,7 +71,7 @@ spkr_audio_tone(device_t self, u_int xhz, u_int ticks)
 #ifdef SPKRDEBUG
 	aprint_debug_dev(self, "%s: %u %d\n", __func__, xhz, ticks);
 #endif /* SPKRDEBUG */
-	audiobell(sc->sc_audiodev, xhz, ticks * (1000 / hz),
+	audiobell(sc->sc_audiodev, xhz, hztoms(ticks),
 	    sc->sc_spkr.sc_vol, 0);
 }
 
@@ -83,15 +84,19 @@ spkr_audio_rest(device_t self, int ticks)
 	aprint_debug_dev(self, "%s: %d\n", __func__, ticks);
 #endif /* SPKRDEBUG */
 	if (ticks > 0)
-		audiobell(sc->sc_audiodev, 0, ticks * (1000 / hz),
+		audiobell(sc->sc_audiodev, 0, hztoms(ticks),
 		    sc->sc_spkr.sc_vol, 0);
 }
 
 static int
 spkr_audio_probe(device_t parent, cfdata_t cf, void *aux)
 {
+	struct audio_softc *asc = device_private(parent);
 
-	return 1;
+	if ((asc->sc_props & AUDIO_PROP_PLAYBACK))
+		return 1;
+
+	return 0;
 }
 
 static void

@@ -1,4 +1,4 @@
-/* $NetBSD: efi_machdep.c,v 1.3 2018/10/31 14:15:12 jmcneill Exp $ */
+/* $NetBSD: efi_machdep.c,v 1.8 2020/10/22 07:31:15 skrll Exp $ */
 
 /*-
  * Copyright (c) 2018 The NetBSD Foundation, Inc.
@@ -30,17 +30,25 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: efi_machdep.c,v 1.3 2018/10/31 14:15:12 jmcneill Exp $");
+__KERNEL_RCSID(0, "$NetBSD: efi_machdep.c,v 1.8 2020/10/22 07:31:15 skrll Exp $");
 
 #include <sys/param.h>
 #include <uvm/uvm_extern.h>
-#include <machine/cpufunc.h>
+
+#include <arm/cpufunc.h>
 
 #include <arm/arm/efi_runtime.h>
 
+#include <aarch64/machdep.h>
+
+static struct {
+	struct faultbuf	faultbuf;
+	bool		fpu_used;
+} arm_efirt_state;
+
 void
 arm_efirt_md_map_range(vaddr_t va, paddr_t pa, size_t sz, enum arm_efirt_mem_type type)
-{       
+{
 	pt_entry_t attr;
 
 	switch (type) {
@@ -63,10 +71,48 @@ arm_efirt_md_map_range(vaddr_t va, paddr_t pa, size_t sz, enum arm_efirt_mem_typ
 		panic("arm_efirt_md_map_range: unsupported type %d", type);
 	}
 
-	pmapboot_enter(va, pa, sz, L3_SIZE, attr, 0, bootpage_alloc, NULL);
+	pmapboot_enter(va, pa, sz, L3_SIZE, attr, NULL);
 	while (sz >= PAGE_SIZE) {
 		aarch64_tlbi_by_va(va);
 		va += PAGE_SIZE;
 		sz -= PAGE_SIZE;
 	}
+}
+
+int
+arm_efirt_md_enter(void)
+{
+	struct lwp *l = curlwp;
+
+	/* Save FPU state */
+	arm_efirt_state.fpu_used = fpu_used_p(l) != 0;
+	if (arm_efirt_state.fpu_used)
+		fpu_save(l);
+
+	/* Enable FP access (AArch64 UEFI calling convention) */
+	reg_cpacr_el1_write(CPACR_FPEN_ALL);
+	isb();
+
+	/*
+	 * Install custom fault handler. EFI lock is held across calls so
+	 * shared faultbuf is safe here.
+	 */
+	return cpu_set_onfault(&arm_efirt_state.faultbuf);
+}
+
+void
+arm_efirt_md_exit(void)
+{
+	struct lwp *l = curlwp;
+
+	/* Disable FP access */
+	reg_cpacr_el1_write(CPACR_FPEN_NONE);
+	isb();
+
+	/* Restore FPU state */
+	if (arm_efirt_state.fpu_used)
+		fpu_load(l);
+
+	/* Remove custom fault handler */
+	cpu_unset_onfault();
 }

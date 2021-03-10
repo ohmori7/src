@@ -1,11 +1,11 @@
-/*	$NetBSD: ninfo_56.c,v 1.3 2019/01/09 16:55:13 christos Exp $	*/
+/*	$NetBSD: ninfo_56.c,v 1.6 2021/02/19 16:42:17 christos Exp $	*/
 
 /*
  * Copyright (C) Internet Systems Consortium, Inc. ("ISC")
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ * file, you can obtain one at https://mozilla.org/MPL/2.0/.
  *
  * See the COPYRIGHT file distributed with this work for additional
  * information regarding copyright ownership.
@@ -18,7 +18,6 @@
 
 static inline isc_result_t
 fromtext_ninfo(ARGS_FROMTEXT) {
-
 	REQUIRE(type == dns_rdatatype_ninfo);
 
 	UNUSED(type);
@@ -33,7 +32,6 @@ fromtext_ninfo(ARGS_FROMTEXT) {
 
 static inline isc_result_t
 totext_ninfo(ARGS_TOTEXT) {
-
 	UNUSED(tctx);
 
 	REQUIRE(rdata->type == dns_rdatatype_ninfo);
@@ -43,7 +41,6 @@ totext_ninfo(ARGS_TOTEXT) {
 
 static inline isc_result_t
 fromwire_ninfo(ARGS_FROMWIRE) {
-
 	REQUIRE(type == dns_rdatatype_ninfo);
 
 	UNUSED(type);
@@ -57,7 +54,6 @@ fromwire_ninfo(ARGS_FROMWIRE) {
 
 static inline isc_result_t
 towire_ninfo(ARGS_TOWIRE) {
-
 	REQUIRE(rdata->type == dns_rdatatype_ninfo);
 
 	UNUSED(cctx);
@@ -81,7 +77,6 @@ compare_ninfo(ARGS_COMPARE) {
 
 static inline isc_result_t
 fromstruct_ninfo(ARGS_FROMSTRUCT) {
-
 	REQUIRE(type == dns_rdatatype_ninfo);
 
 	return (generic_fromstruct_txt(rdclass, type, source, target));
@@ -89,13 +84,14 @@ fromstruct_ninfo(ARGS_FROMSTRUCT) {
 
 static inline isc_result_t
 tostruct_ninfo(ARGS_TOSTRUCT) {
-	dns_rdata_ninfo_t *txt = target;
+	dns_rdata_ninfo_t *ninfo = target;
 
 	REQUIRE(rdata->type == dns_rdatatype_ninfo);
+	REQUIRE(ninfo != NULL);
 
-	txt->common.rdclass = rdata->rdclass;
-	txt->common.rdtype = rdata->type;
-	ISC_LINK_INIT(&txt->common, link);
+	ninfo->common.rdclass = rdata->rdclass;
+	ninfo->common.rdtype = rdata->type;
+	ISC_LINK_INIT(&ninfo->common, link);
 
 	return (generic_tostruct_txt(rdata, target, mctx));
 }
@@ -104,7 +100,7 @@ static inline void
 freestruct_ninfo(ARGS_FREESTRUCT) {
 	dns_rdata_ninfo_t *ninfo = source;
 
-	REQUIRE(source != NULL);
+	REQUIRE(ninfo != NULL);
 	REQUIRE(ninfo->common.rdtype == dns_rdatatype_ninfo);
 
 	generic_freestruct_txt(source);
@@ -134,7 +130,6 @@ digest_ninfo(ARGS_DIGEST) {
 
 static inline bool
 checkowner_ninfo(ARGS_CHECKOWNER) {
-
 	REQUIRE(type == dns_rdatatype_ninfo);
 
 	UNUSED(name);
@@ -147,7 +142,6 @@ checkowner_ninfo(ARGS_CHECKOWNER) {
 
 static inline bool
 checknames_ninfo(ARGS_CHECKNAMES) {
-
 	REQUIRE(rdata->type == dns_rdatatype_ninfo);
 
 	UNUSED(rdata);
@@ -164,7 +158,6 @@ casecompare_ninfo(ARGS_COMPARE) {
 
 isc_result_t
 dns_rdata_ninfo_first(dns_rdata_ninfo_t *ninfo) {
-
 	REQUIRE(ninfo != NULL);
 	REQUIRE(ninfo->common.rdtype == dns_rdatatype_ninfo);
 
@@ -173,7 +166,6 @@ dns_rdata_ninfo_first(dns_rdata_ninfo_t *ninfo) {
 
 isc_result_t
 dns_rdata_ninfo_next(dns_rdata_ninfo_t *ninfo) {
-
 	REQUIRE(ninfo != NULL);
 	REQUIRE(ninfo->common.rdtype == dns_rdatatype_ninfo);
 
@@ -182,12 +174,10 @@ dns_rdata_ninfo_next(dns_rdata_ninfo_t *ninfo) {
 
 isc_result_t
 dns_rdata_ninfo_current(dns_rdata_ninfo_t *ninfo,
-			dns_rdata_ninfo_string_t *string)
-{
-
+			dns_rdata_ninfo_string_t *string) {
 	REQUIRE(ninfo != NULL);
 	REQUIRE(ninfo->common.rdtype == dns_rdatatype_ninfo);
 
 	return (generic_txt_current(ninfo, string));
 }
-#endif	/* RDATA_GENERIC_NINFO_56_C */
+#endif /* RDATA_GENERIC_NINFO_56_C */

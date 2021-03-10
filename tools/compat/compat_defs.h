@@ -1,4 +1,4 @@
-/*	$NetBSD: compat_defs.h,v 1.114 2018/08/30 12:05:34 christos Exp $	*/
+/*	$NetBSD: compat_defs.h,v 1.118 2021/02/25 13:41:58 christos Exp $	*/
 
 #ifndef	__NETBSD_COMPAT_DEFS_H__
 #define	__NETBSD_COMPAT_DEFS_H__
@@ -52,6 +52,17 @@ typedef unsigned int id_t;
 typedef int socklen_t;
 #endif
 
+#if !HAVE_ENUM_UIO_RW
+enum uio_rw { UIO_READ, UIO_WRITE };
+#endif
+
+#if !HAVE_ENUM_UIO_SEG
+enum uio_seg {
+	UIO_USERSPACE,		/* from user data space */
+	UIO_SYSSPACE		/* from system space */
+};
+#endif
+
 #if !HAVE_U_LONG
 typedef unsigned long u_long;
 #endif
@@ -66,6 +77,22 @@ typedef unsigned int u_int;
 
 #if !HAVE_U_SHORT
 typedef unsigned short u_short;
+#endif
+
+#if !HAVE_UCHAR_T
+typedef unsigned char uchar_t;
+#endif
+
+#if !HAVE_USHORT_T
+typedef unsigned short ushort_t;
+#endif
+
+#if !HAVE_UINT_T
+typedef unsigned int uint_t;
+#endif
+
+#if !HAVE_ULONG_T
+typedef unsigned long ulong_t;
 #endif
 
 /* System headers needed for (re)definitions below. */
@@ -111,6 +138,10 @@ typedef unsigned short u_short;
 
 #if HAVE_RPC_TYPES_H
 #include <rpc/types.h>
+#endif
+
+#if HAVE_SYS_UIO_H
+#include <sys/uio.h>
 #endif
 
 #ifdef _NETBSD_SOURCE
@@ -431,11 +462,10 @@ int __nbcompat_gettemp(char *, int *, int);
 ssize_t pread(int, void *, size_t, off_t);
 #endif
 
+#define heapsort __nbcompat_heapsort
 #if !HAVE_DECL_HEAPSORT
 int heapsort (void *, size_t, size_t, int (*)(const void *, const void *));
 #endif
-/* Make them use our version */
-#  define heapsort __nbcompat_heapsort
 
 char	       *flags_to_string(unsigned long, const char *);
 int		string_to_flags(char **, unsigned long *, unsigned long *);
@@ -524,6 +554,10 @@ int raise_default_signal(int);
 
 #if !HAVE_DECL_REALLOCARR
 int reallocarr(void *, size_t, size_t);
+#endif
+
+#if !HAVE_DECL_REALLOCARRAY
+void *reallocarray(void *, size_t, size_t);
 #endif
 
 #if !HAVE_DECL_SETENV

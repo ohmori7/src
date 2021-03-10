@@ -1,4 +1,4 @@
-/*	$NetBSD: pmap.h,v 1.37 2013/01/07 16:57:28 chs Exp $	*/
+/*	$NetBSD: pmap.h,v 1.40 2020/03/14 14:05:42 ad Exp $	*/
 
 /*	$OpenBSD: pmap.h,v 1.35 2007/12/14 18:32:23 deraadt Exp $	*/
 
@@ -39,7 +39,7 @@
 #include "opt_cputype.h"
 #endif
 
-#include <sys/mutex.h>
+#include <sys/rwlock.h>
 #include <machine/pte.h>
 #include <machine/cpufunc.h>
 
@@ -53,7 +53,7 @@
 struct pmap {
 	struct uvm_object pm_obj;	/* object (lck by object lock) */
 #define	pm_lock	pm_obj.vmobjlock
-	kmutex_t	pm_obj_lock;	/* lock for pm_obj */
+	krwlock_t	pm_obj_lock;	/* lock for pm_obj */
 	struct vm_page	*pm_ptphint;
 	struct vm_page	*pm_pdir_pg;	/* vm_page for pdir */
 	volatile uint32_t *pm_pdir;	/* page dir (read-only after create) */
@@ -83,7 +83,7 @@ struct pv_entry {			/* locked by its list's pvh_lock */
 	struct pmap	*pv_pmap;	/* the pmap */
 	vaddr_t		pv_va;		/* the virtual address + flags */
 #define	PV_VAMASK	(~(PAGE_SIZE - 1))
-#define	PV_KENTER	0x001
+#define	PV_KENTER	__BIT(0)
 
 	struct vm_page	*pv_ptp;	/* the vm_page of the PTP */
 };
@@ -167,10 +167,11 @@ pmap_deactivate(struct lwp *l)
 	/* Nothing. */
 }
 
-static inline void
+static inline bool
 pmap_remove_all(struct pmap *pmap)
 {
 	/* Nothing. */
+	return false;
 }
 
 static inline int

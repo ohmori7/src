@@ -1,4 +1,4 @@
-/* $NetBSD: sunxi_lcdc.c,v 1.5 2019/02/18 02:42:27 jakllsch Exp $ */
+/* $NetBSD: sunxi_lcdc.c,v 1.12 2021/01/27 03:10:20 thorpej Exp $ */
 
 /*-
  * Copyright (c) 2019 Jared D. McNeill <jmcneill@invisible.ca>
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: sunxi_lcdc.c,v 1.5 2019/02/18 02:42:27 jakllsch Exp $");
+__KERNEL_RCSID(0, "$NetBSD: sunxi_lcdc.c,v 1.12 2021/01/27 03:10:20 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -81,7 +81,7 @@ __KERNEL_RCSID(0, "$NetBSD: sunxi_lcdc.c,v 1.5 2019/02/18 02:42:27 jakllsch Exp 
 #define	TCON1_CTL_REG		0x090
 #define	 TCON1_CTL_TCON1_EN			__BIT(31)
 #define	 TCON1_CTL_START_DELAY			__BITS(8,4)
-#define	 TCON1_CTL_TCON1_SRC_SEL		__BIT(1)
+#define	 TCON1_CTL_TCON1_SRC_SEL		__BITS(1,0)
 #define	TCON1_BASIC0_REG	0x094
 #define	TCON1_BASIC1_REG	0x098
 #define	TCON1_BASIC2_REG	0x09c
@@ -106,11 +106,11 @@ enum tcon_type {
 	TYPE_TCON1,
 };
 
-static const struct of_compat_data compat_data[] = {
-	{ "allwinner,sun8i-h3-tcon-tv",		TYPE_TCON1 },
-	{ "allwinner,sun50i-a64-tcon-lcd",	TYPE_TCON0 },
-	{ "allwinner,sun50i-a64-tcon-tv",	TYPE_TCON1 },
-	{ NULL }
+static const struct device_compatible_entry compat_data[] = {
+	{ .compat = "allwinner,sun8i-h3-tcon-tv",	.value = TYPE_TCON1 },
+	{ .compat = "allwinner,sun50i-a64-tcon-lcd",	.value = TYPE_TCON0 },
+	{ .compat = "allwinner,sun50i-a64-tcon-tv",	.value = TYPE_TCON1 },
+	DEVICE_COMPAT_EOL
 };
 
 struct sunxi_lcdc_softc;
@@ -185,6 +185,7 @@ sunxi_lcdc_tcon0_prepare(struct drm_encoder *encoder)
 
 	val = TCON_READ(sc, TCON_GCTL_REG);
 	val |= TCON_GCTL_TCON_EN;
+	val &= ~TCON_GCTL_IO_MAP_SEL;
 	TCON_WRITE(sc, TCON_GCTL_REG, val);
 
 	TCON_WRITE(sc, TCON0_IO_TRI_REG, 0);
@@ -215,22 +216,20 @@ sunxi_lcdc_tcon0_commit(struct drm_encoder *encoder)
 	int error;
 
 	const u_int interlace_p = (mode->flags & DRM_MODE_FLAG_INTERLACE) != 0;
-	const u_int hspw = mode->hsync_end - mode->hsync_start;
-	const u_int hbp = mode->htotal - mode->hsync_start;
-	const u_int vspw = mode->vsync_end - mode->vsync_start;
-	const u_int vbp = mode->vtotal - mode->vsync_start;
-	const u_int vblank_len =
-	    ((mode->vtotal << interlace_p) >> 1) - mode->vdisplay - 2;
-	const u_int start_delay =
-	    vblank_len >= 32 ? 30 : vblank_len - 2;
+	const u_int hspw = mode->crtc_hsync_end - mode->crtc_hsync_start;
+	const u_int hbp = mode->crtc_htotal - mode->crtc_hsync_start;
+	const u_int vspw = mode->crtc_vsync_end - mode->crtc_vsync_start;
+	const u_int vbp = mode->crtc_vtotal - mode->crtc_vsync_start;
+	const u_int vblank_len = (mode->crtc_vtotal - mode->crtc_vdisplay) >> interlace_p;
+	const u_int start_delay = uimin(vblank_len, 30);
 
 	val = TCON0_CTL_TCON0_EN |
 	      __SHIFTIN(start_delay, TCON0_CTL_START_DELAY);
 	TCON_WRITE(sc, TCON0_CTL_REG, val);
 
-	TCON_WRITE(sc, TCON0_BASIC0_REG, ((mode->hdisplay - 1) << 16) | (mode->vdisplay - 1));
-	TCON_WRITE(sc, TCON0_BASIC1_REG, ((mode->htotal - 1) << 16) | (hbp - 1));
-	TCON_WRITE(sc, TCON0_BASIC2_REG, ((mode->vtotal * 2) << 16) | (vbp - 1));
+	TCON_WRITE(sc, TCON0_BASIC0_REG, ((mode->crtc_hdisplay - 1) << 16) | (mode->crtc_vdisplay - 1));
+	TCON_WRITE(sc, TCON0_BASIC1_REG, ((mode->crtc_htotal - 1) << 16) | (hbp - 1));
+	TCON_WRITE(sc, TCON0_BASIC2_REG, ((mode->crtc_vtotal * 2) << 16) | (vbp - 1));
 	TCON_WRITE(sc, TCON0_BASIC3_REG, ((hspw - 1) << 16) | (vspw - 1));
 
 	val = TCON_READ(sc, TCON0_IO_POL_REG);
@@ -270,24 +269,22 @@ sunxi_lcdc_tcon1_commit(struct drm_encoder *encoder)
 	int error;
 
 	const u_int interlace_p = (mode->flags & DRM_MODE_FLAG_INTERLACE) != 0;
-	const u_int hspw = mode->hsync_end - mode->hsync_start;
-	const u_int hbp = mode->htotal - mode->hsync_start;
-	const u_int vspw = mode->vsync_end - mode->vsync_start;
-	const u_int vbp = mode->vtotal - mode->vsync_start;
-	const u_int vblank_len =
-	    ((mode->vtotal << interlace_p) >> 1) - mode->vdisplay - 2;
-	const u_int start_delay =
-	    vblank_len >= 32 ? 30 : vblank_len - 2;
+	const u_int hspw = mode->crtc_hsync_end - mode->crtc_hsync_start;
+	const u_int hbp = mode->crtc_htotal - mode->crtc_hsync_start;
+	const u_int vspw = mode->crtc_vsync_end - mode->crtc_vsync_start;
+	const u_int vbp = mode->crtc_vtotal - mode->crtc_vsync_start;
+	const u_int vblank_len = ((mode->crtc_vtotal - mode->crtc_vdisplay) >> interlace_p) - 2;
+	const u_int start_delay = uimin(vblank_len, 30);
 
 	val = TCON1_CTL_TCON1_EN |
 	      __SHIFTIN(start_delay, TCON1_CTL_START_DELAY);
 	TCON_WRITE(sc, TCON1_CTL_REG, val);
 
-	TCON_WRITE(sc, TCON1_BASIC0_REG, ((mode->hdisplay - 1) << 16) | (mode->vdisplay - 1));
-	TCON_WRITE(sc, TCON1_BASIC1_REG, ((mode->hdisplay - 1) << 16) | (mode->vdisplay - 1));
-	TCON_WRITE(sc, TCON1_BASIC2_REG, ((mode->hdisplay - 1) << 16) | (mode->vdisplay - 1));
-	TCON_WRITE(sc, TCON1_BASIC3_REG, ((mode->htotal - 1) << 16) | (hbp - 1));
-	TCON_WRITE(sc, TCON1_BASIC4_REG, ((mode->vtotal * 2) << 16) | (vbp - 1));
+	TCON_WRITE(sc, TCON1_BASIC0_REG, ((mode->crtc_hdisplay - 1) << 16) | (mode->crtc_vdisplay - 1));
+	TCON_WRITE(sc, TCON1_BASIC1_REG, ((mode->crtc_hdisplay - 1) << 16) | (mode->crtc_vdisplay - 1));
+	TCON_WRITE(sc, TCON1_BASIC2_REG, ((mode->crtc_hdisplay - 1) << 16) | (mode->crtc_vdisplay - 1));
+	TCON_WRITE(sc, TCON1_BASIC3_REG, ((mode->crtc_htotal - 1) << 16) | (hbp - 1));
+	TCON_WRITE(sc, TCON1_BASIC4_REG, ((mode->crtc_vtotal * 2) << 16) | (vbp - 1));
 	TCON_WRITE(sc, TCON1_BASIC5_REG, ((hspw - 1) << 16) | (vspw - 1));
 
 	TCON_WRITE(sc, TCON_GINT1_REG,
@@ -470,7 +467,7 @@ sunxi_lcdc_match(device_t parent, cfdata_t cf, void *aux)
 {
 	struct fdt_attach_args * const faa = aux;
 
-	return of_match_compat_data(faa->faa_phandle, compat_data);
+	return of_compatible_match(faa->faa_phandle, compat_data);
 }
 
 static void
@@ -515,7 +512,7 @@ sunxi_lcdc_attach(device_t parent, device_t self, void *aux)
 		return;
 	}
 	sc->sc_phandle = faa->faa_phandle;
-	sc->sc_type = of_search_compatible(phandle, compat_data)->data;
+	sc->sc_type = of_compatible_lookup(phandle, compat_data)->value;
 	sc->sc_clk_ch[0] = fdtbus_clock_get(phandle, "tcon-ch0");
 	sc->sc_clk_ch[1] = fdtbus_clock_get(phandle, "tcon-ch1");
 
@@ -533,8 +530,8 @@ sunxi_lcdc_attach(device_t parent, device_t self, void *aux)
 	sc->sc_ports.dp_ep_get_data = sunxi_lcdc_ep_get_data;
 	fdt_ports_register(&sc->sc_ports, self, phandle, EP_DRM_ENCODER);
 
-	ih = fdtbus_intr_establish(phandle, 0, IPL_VM, FDT_INTR_MPSAFE,
-	    sunxi_lcdc_intr, sc);
+	ih = fdtbus_intr_establish_xname(phandle, 0, IPL_VM, FDT_INTR_MPSAFE,
+	    sunxi_lcdc_intr, sc, device_xname(self));
 	if (ih == NULL) {
 		aprint_error_dev(self, "couldn't establish interrupt on %s\n",
 		    intrstr);

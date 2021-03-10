@@ -1,4 +1,4 @@
-# $NetBSD: Makefile,v 1.45 2019/02/07 21:38:53 roy Exp $
+# $NetBSD: Makefile,v 1.55 2021/02/25 07:55:53 rin Exp $
 #
 
 WARNS?=		6
@@ -13,8 +13,13 @@ SRCS+=		if.c if-options.c route.c sa.c script.c
 SRCS+=		dhcp-common.c dhcpcd-embedded.c
 SRCS+=		if-bsd.c
 
-# Need to generate this for dependencies
-DPSRCS+=	dhcpcd-embedded.h dhcpcd-embedded.c
+# Disable privilege separation and sandboxing
+# This should be fine for ramdisk based installers
+.if !defined(SMALLPROG)
+CPPFLAGS+=	-DPRIVSEP -DPRIVSEP_USER=\"_dhcpcd\"
+SRCS+=		privsep.c privsep-root.c privsep-inet.c privsep-control.c
+SRCS+=		privsep-bsd.c
+.endif
 
 CPPFLAGS+=	-DHAVE_CONFIG_H -D_OPENBSD_SOURCE
 
@@ -22,23 +27,34 @@ USE_INET?=	yes
 
 .if defined(SMALLPROG)
 CPPFLAGS+=	-DSMALL
-DHCPCD_DEFS=	dhcpcd-definitions-small.conf
 .else
-DHCPCD_DEFS=	dhcpcd-definitions.conf
 CPPFLAGS+=	-DAUTH
 SRCS+=		auth.c
 .endif
 
 .if (${USE_INET} != "no")
-CPPFLAGS+=	-DARP -DINET
-SRCS+=		arp.c bpf.c dhcp.c ipv4.c
+CPPFLAGS+=	-DINET
+SRCS+=		bpf.c dhcp.c ipv4.c
 .if !defined(SMALLPROG)
-CPPFLAGS+=	-DIPV4LL -DARPING
+SRCS+=		privsep-bpf.c
+.endif
+
+.if (${MKLIBCSANITIZER:Uno} == "yes")
+.if (${ACTIVE_CC} == "gcc" && ${HAVE_GCC:U0} == 8)
+COPTS.dhcp.c+=	-Wno-error=sign-conversion
+.endif
+.endif
+
+.if !defined(SMALLPROG)
+CPPFLAGS+=	-DARP
+SRCS+=		arp.c
+CPPFLAGS+=	-DARPING
+CPPFLAGS+=	-DIPV4LL
 SRCS+=		ipv4ll.c
 .endif
 .endif
 
-.if (${USE_INET6} != "no")
+.if (!defined(SMALLPROG) || defined(SMALLPROG_INET6)) && (${USE_INET6} != "no")
 CPPFLAGS+=	-DINET6
 SRCS+=		ipv6.c ipv6nd.c
 # -DSMALL already strips out prefix delegation
@@ -47,7 +63,7 @@ CPPFLAGS+=	-DDHCP6
 SRCS+=		dhcp6.c
 .endif
 
-CPPFLAGS+=	-I${SRCDIR}/include -I${DIST}/src -I${.OBJDIR}
+CPPFLAGS+=	-I${SRCDIR}/include -I${DIST}/src
 
 DPADD+=		${LIBUTIL}
 LDADD+=		-lutil
@@ -61,13 +77,8 @@ FILESMODE_dhcpcd.conf=		644	# -rw-r--r--
 MAN=			dhcpcd.conf.5 dhcpcd.8 
 CLEANFILES=		dhcpcd.conf.5 dhcpcd.8 
 
-dhcpcd-embedded.h:	genembedh ${DHCPCD_DEFS} dhcpcd-embedded.h.in
-	${HOST_SH} ${.ALLSRC} $^ > $@
+COPTS.logerr.c+=    ${${ACTIVE_CC} == "clang" && ${MACHINE_ARCH} == "powerpc":? -O0 :}
 
-dhcpcd-embedded.c:	genembedc ${DHCPCD_DEFS} dhcpcd-embedded.c.in
-	${HOST_SH} ${.ALLSRC} $^ > $@
-
-CLEANFILES+=		dhcpcd-embedded.c dhcpcd-embedded.h
 
 .for f in dhcpcd.conf.5 dhcpcd.8
 ${f}:	${f}.in

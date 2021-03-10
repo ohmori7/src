@@ -1,5 +1,5 @@
 /* Language-dependent hooks for C++.
-   Copyright (C) 2001-2016 Free Software Foundation, Inc.
+   Copyright (C) 2001-2018 Free Software Foundation, Inc.
    Contributed by Alexandre Oliva  <aoliva@redhat.com>
 
 This file is part of GCC.
@@ -79,6 +79,11 @@ static tree cxx_enum_underlying_base_type (const_tree);
 #undef LANG_HOOKS_ENUM_UNDERLYING_BASE_TYPE
 #define LANG_HOOKS_ENUM_UNDERLYING_BASE_TYPE cxx_enum_underlying_base_type
 
+#if CHECKING_P
+#undef LANG_HOOKS_RUN_LANG_SELFTESTS
+#define LANG_HOOKS_RUN_LANG_SELFTESTS selftest::run_cp_tests
+#endif /* #if CHECKING_P */
+
 /* Each front end provides its own lang hook initializer.  */
 struct lang_hooks lang_hooks = LANG_HOOKS_INITIALIZER;
 
@@ -137,10 +142,7 @@ static tree
 cp_eh_personality (void)
 {
   if (!cp_eh_personality_decl)
-    {
-      const char *lang = (pragma_java_exceptions ? "gcj" : "gxx");
-      cp_eh_personality_decl = build_personality_function (lang);
-    }
+    cp_eh_personality_decl = build_personality_function ("gxx");
 
   return cp_eh_personality_decl;
 }
@@ -231,6 +233,28 @@ tree cxx_enum_underlying_base_type (const_tree type)
 
   return underlying_type;
 }
+
+#if CHECKING_P
+
+namespace selftest {
+
+/* Implementation of LANG_HOOKS_RUN_LANG_SELFTESTS for the C++ frontend.  */
+
+void
+run_cp_tests (void)
+{
+  /* Run selftests shared within the C family.  */
+  c_family_tests ();
+
+  /* Additional C++-specific tests.  */
+  cp_pt_c_tests ();
+  cp_tree_c_tests ();
+}
+
+} // namespace selftest
+
+#endif /* #if CHECKING_P */
+
 
 #include "gt-cp-cp-lang.h"
 #include "gtype-cp.h"

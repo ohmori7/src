@@ -1,4 +1,4 @@
-.\"	$NetBSD: ifconfig.8,v 1.116 2018/11/15 04:37:20 ozaki-r Exp $
+.\"	$NetBSD: ifconfig.8,v 1.122 2021/03/09 14:39:43 christos Exp $
 .\"
 .\" Copyright (c) 1983, 1991, 1993
 .\"	The Regents of the University of California.  All rights reserved.
@@ -29,7 +29,7 @@
 .\"
 .\"     @(#)ifconfig.8	8.4 (Berkeley) 6/1/94
 .\"
-.Dd November 15, 2018
+.Dd March 9, 2021
 .Dt IFCONFIG 8
 .Os
 .Sh NAME
@@ -186,6 +186,10 @@ pseudo-device, attach it to
 .Ar iface .
 If not specified, the kernel will attempt to select an interface with
 a subnet matching that of the carp interface.
+.It Cm description Ar description , Cm descr Ar description
+Set a description of the interface. (0-63 characters)
+.It Cm -description , Cm -descr
+Clear the description of the interface.
 .It Cm debug
 Enable driver dependent debugging code; usually, this turns on
 extra console error logging.
@@ -386,7 +390,7 @@ key.
 .Pq IEEE 802.11 devices only
 Enable WEP encryption for IEEE 802.11-based wireless network interfaces
 with the persistent key written in the network card.
-.It Cm nwkey Cm persist: Ns Ar key
+.It Cm nwkey Cm persist : Ns Ar key
 .Pq IEEE 802.11 devices only
 Write the
 .Ar key
@@ -610,6 +614,10 @@ Remove
 from the
 .Xr agr 4
 interface.
+.It Cm eee
+Enable IEEE 802.3az Energy Efficiency Ethernet function.
+.It Cm -eee
+Disable IEEE 802.3az Energy Efficiency Ethernet function.
 .It Cm vltime Ar n
 .Pq inet6 only
 Set valid lifetime for the address.
@@ -695,6 +703,16 @@ support it.
 .It Cm -tso6
 Disable hardware-assisted TCP/IPv6 segmentation on interfaces that
 support it.
+.It Cm vlan-hwfilter
+Enable hardware-assisted VLAN frame filter on interfaces that support it.
+.It Cm -vlan-hwfilter
+Disable hardware-assisted VLAN frame filter on interfaces that support it.
+.It Cm vlan-hwtagging
+Enable hardware-assisted VLAN tag insertion/removal on interfaces that
+support it.
+.It Cm -vlan-hwtagging
+Disable hardware-assisted VLAN tag insertion/removal on interfaces that
+support it.
 .It Cm maxupd Ar n
 If the driver is a
 .Xr pfsync 4
@@ -747,12 +765,17 @@ not appear to be connected to a network,
 .Nm
 will exit with status of 1
 .Pq false ;
-otherwise, it will exit with a
-zero
+otherwise, it will exit with a zero
 .Pq true
 exit status.
-Not all interface drivers support media
-status reporting.
+For interface drivers that do not support media status reporting.
+then if the link state is not reported to be up,
+.Nm
+will exit with a status of 1
+.Pq false ;
+otherwise, it will exit with a zero
+.Pq true
+exit status.
 .Pp
 If the
 .Fl m
@@ -881,6 +904,14 @@ tried to alter an interface's configuration.
 .\" .Xr eon 5 ,
 .Xr rc 8 ,
 .Xr routed 8
+.Sh BUGS
+Due to hardware limitations some of the capabilities cannot be turned on
+and off individually and need to be specified together.
+For example the
+.Xr ixg 4
+driver can't enable separately tcp and udp, or the transmit and receive
+checksumming capabilities.
+Unfortunately the diagnostic messages in this case are lacking.
 .Sh HISTORY
 The
 .Nm

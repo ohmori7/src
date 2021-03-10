@@ -1,4 +1,4 @@
-/*	$NetBSD: atalk.c,v 1.16 2015/06/06 13:08:31 joerg Exp $	*/
+/*	$NetBSD: atalk.c,v 1.19 2020/08/28 07:23:48 ozaki-r Exp $	*/
 
 /*
  * Copyright (c) 1983, 1988, 1993
@@ -34,7 +34,7 @@
 #if 0
 static char sccsid[] = "from @(#)atalk.c	1.1 (Whistle) 6/6/96";
 #else
-__RCSID("$NetBSD: atalk.c,v 1.16 2015/06/06 13:08:31 joerg Exp $");
+__RCSID("$NetBSD: atalk.c,v 1.19 2020/08/28 07:23:48 ozaki-r Exp $");
 #endif
 #endif /* not lint */
 
@@ -61,9 +61,7 @@ __RCSID("$NetBSD: atalk.c,v 1.16 2015/06/06 13:08:31 joerg Exp $");
 #include <stdio.h>
 #include <string.h>
 #include "netstat.h"
-
-struct ddpcb    ddpcb;
-struct socket   sockb;
+#include "prog_ops.h"
 
 static int first = 1;
 
@@ -229,6 +227,8 @@ atalk_print2(const struct sockaddr *sa, const struct sockaddr *mask, int what)
 void
 atalkprotopr(u_long off, const char *name)
 {
+	struct ddpcb ddpcb;
+	struct socket sockb;
 	struct ddpcb *next;
 	struct ddpcb *initial;
 	int width = 22;
@@ -290,8 +290,8 @@ ddp_stats(u_long off, const char *name)
 	if (use_sysctl) {
 		size_t size = sizeof(ddpstat);
 
-		if (sysctlbyname("net.atalk.ddp.stats", ddpstat, &size,
-				 NULL, 0) == -1)
+		if (prog_sysctlbyname("net.atalk.ddp.stats", ddpstat, &size,
+				 NULL, 0) == -1 && errno != ENOMEM)
 			return;
 	} else {
 		warnx("%s stats not available via KVM.", name);

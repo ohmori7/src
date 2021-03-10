@@ -1,5 +1,5 @@
 /* Interprocedural Identical Code Folding pass
-   Copyright (C) 2014-2016 Free Software Foundation, Inc.
+   Copyright (C) 2014-2018 Free Software Foundation, Inc.
 
    Contributed by Jan Hubicka <hubicka@ucw.cz> and Martin Liska <mliska@suse.cz>
 
@@ -410,8 +410,8 @@ func_checker::compare_operand (tree t1, tree t2)
     {
     case CONSTRUCTOR:
       {
-	unsigned length1 = vec_safe_length (CONSTRUCTOR_ELTS (t1));
-	unsigned length2 = vec_safe_length (CONSTRUCTOR_ELTS (t2));
+	unsigned length1 = CONSTRUCTOR_NELTS (t1);
+	unsigned length2 = CONSTRUCTOR_NELTS (t2);
 
 	if (length1 != length2)
 	  return return_false ();
@@ -640,8 +640,8 @@ func_checker::compare_bb (sem_bb *bb1, sem_bb *bb2)
   gimple_stmt_iterator gsi1, gsi2;
   gimple *s1, *s2;
 
-  gsi1 = gsi_start_bb_nondebug (bb1->bb);
-  gsi2 = gsi_start_bb_nondebug (bb2->bb);
+  gsi1 = gsi_start_nondebug_bb (bb1->bb);
+  gsi2 = gsi_start_nondebug_bb (bb2->bb);
 
   while (!gsi_end_p (gsi1))
     {
@@ -992,6 +992,9 @@ func_checker::compare_gimple_asm (const gasm *g1, const gasm *g2)
     return false;
 
   if (gimple_asm_input_p (g1) != gimple_asm_input_p (g2))
+    return false;
+
+  if (gimple_asm_inline_p (g1) != gimple_asm_inline_p (g2))
     return false;
 
   if (gimple_asm_ninputs (g1) != gimple_asm_ninputs (g2))

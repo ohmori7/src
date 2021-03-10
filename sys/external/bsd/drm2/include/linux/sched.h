@@ -1,4 +1,4 @@
-/*	$NetBSD: sched.h,v 1.12 2018/10/23 03:56:47 riastradh Exp $	*/
+/*	$NetBSD: sched.h,v 1.15 2020/07/03 16:23:02 maxv Exp $	*/
 
 /*-
  * Copyright (c) 2013 The NetBSD Foundation, Inc.
@@ -62,7 +62,8 @@ schedule_timeout_uninterruptible(long timeout)
 	if (cold) {
 		unsigned us;
 		if (hz <= 1000) {
-			unsigned ms = hztoms(MIN(timeout, mstohz(INT_MAX)));
+			unsigned ms = hztoms(MIN((unsigned long)timeout,
+			    mstohz(INT_MAX)));
 			us = MIN(ms, INT_MAX/1000)*1000;
 		} else if (hz <= 1000000) {
 			us = MIN(timeout, (INT_MAX/1000000)/hz)*hz*1000000;
@@ -73,10 +74,10 @@ schedule_timeout_uninterruptible(long timeout)
 		return 0;
 	}
 
-	start = hardclock_ticks;
+	start = getticks();
 	/* Caller is expected to loop anyway, so no harm in truncating.  */
 	(void)kpause("loonix", false /*!intr*/, MIN(timeout, INT_MAX), NULL);
-	end = hardclock_ticks;
+	end = getticks();
 
 	remain = timeout - (end - start);
 	return remain > 0 ? remain : 0;
@@ -86,8 +87,7 @@ static inline void
 cond_resched(void)
 {
 
-	if (curcpu()->ci_schedstate.spc_flags & SPCF_SHOULDYIELD)
-		preempt();
+	preempt_point();
 }
 
 #endif  /* _LINUX_SCHED_H_ */

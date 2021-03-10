@@ -51,6 +51,9 @@
 #include <signal.h>
 #include "util/fptr_wlist.h"
 
+/* Enforce a correct include/config.h as I tire of fixin it. */
+#error This code should not be active on NetBSD, please use libevent.
+
 /** compare events in tree, based on timevalue, ptr for uniqueness */
 int mini_ev_cmp(const void* a, const void* b)
 {
@@ -313,7 +316,7 @@ int event_add(struct event* ev, struct timeval* tv)
 		struct timeval *now = ev->ev_base->time_tv;
 		ev->ev_timeout.tv_sec = tv->tv_sec + now->tv_sec;
 		ev->ev_timeout.tv_usec = tv->tv_usec + now->tv_usec;
-		while(ev->ev_timeout.tv_usec > 1000000) {
+		while(ev->ev_timeout.tv_usec >= 1000000) {
 			ev->ev_timeout.tv_usec -= 1000000;
 			ev->ev_timeout.tv_sec++;
 		}

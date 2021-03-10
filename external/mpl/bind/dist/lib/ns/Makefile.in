@@ -11,14 +11,8 @@ srcdir =	@srcdir@
 VPATH =		@srcdir@
 top_srcdir =	@top_srcdir@
 
-# Attempt to disable parallel processing.
-.NOTPARALLEL:
-.NO_PARALLEL:
-
 VERSION=@BIND9_VERSION@
 @BIND9_MAJOR@
-
-@LIBNS_API@
 
 @BIND9_MAKE_INCLUDES@
 
@@ -26,17 +20,18 @@ USE_ISC_SPNEGO = @USE_ISC_SPNEGO@
 
 CINCLUDES =	-I. -I${top_srcdir}/lib/ns -Iinclude \
 		${NS_INCLUDES} ${DNS_INCLUDES} ${ISC_INCLUDES} \
-		@OPENSSL_INCLUDES@ @DST_GSSAPI_INC@
+		${OPENSSL_CFLAGS} @DST_GSSAPI_INC@ \
+		${FSTRM_CFLAGS}
 
 CDEFINES =	-DNAMED_PLUGINDIR=\"${plugindir}\"
 
 CWARNINGS =
 
-ISCLIBS =	../../lib/isc/libisc.@A@ @OPENSSL_LIBS@
+ISCLIBS =	../../lib/isc/libisc.@A@
 
 ISCDEPLIBS =	../../lib/isc/libisc.@A@
 
-DNSLIBS =	../../lib/dns/libdns.@A@ @DNS_CRYPTO_LIBS@
+DNSLIBS =	../../lib/dns/libdns.@A@ @NO_LIBTOOL_DNSLIBS@
 
 DNSDEPLIBS =	../../lib/dns/libdns.@A@
 
@@ -46,11 +41,11 @@ LIBS =		@LIBS@
 OBJS =		client.@O@ hooks.@O@ interfacemgr.@O@ lib.@O@ \
 		listenlist.@O@ log.@O@ notify.@O@ query.@O@ \
 		server.@O@ sortlist.@O@ stats.@O@ update.@O@ \
-		version.@O@ xfrout.@O@
+		version.@O@ xfrout.@O@ pfilter.@O@
 
 SRCS =		client.c hooks.c interfacemgr.c lib.c listenlist.c \
 		log.c notify.c query.c server.c sortlist.c stats.c \
-		update.c version.c xfrout.c
+		update.c version.c xfrout.c pfilter.c
 
 SUBDIRS =	include
 TESTDIRS =	@UNITTESTS@
@@ -65,9 +60,6 @@ version.@O@: version.c
 	${LIBTOOL_MODE_COMPILE} ${CC} ${ALL_CFLAGS} \
 		-DVERSION=\"${VERSION}\" \
 		-DMAJOR=\"${MAJOR}\" \
-		-DLIBINTERFACE=${LIBINTERFACE} \
-		-DLIBREVISION=${LIBREVISION} \
-		-DLIBAGE=${LIBAGE} \
 		-c ${srcdir}/version.c
 
 libns.@SA@: ${OBJS}
@@ -77,8 +69,8 @@ libns.@SA@: ${OBJS}
 libns.la: ${OBJS}
 	${LIBTOOL_MODE_LINK} \
 		${CC} ${ALL_CFLAGS} ${LDFLAGS} -o libns.la -rpath ${libdir} \
-		-version-info ${LIBINTERFACE}:${LIBREVISION}:${LIBAGE} \
-		${OBJS} ${ISCLIBS} @DNS_CRYPTO_LIBS@ ${LIBS}
+		-release "${VERSION}" \
+		${OBJS} ${ISCLIBS} ${DNSLIBS} @DNS_CRYPTO_LIBS@ ${LIBS}
 
 timestamp: libns.@A@
 	touch timestamp

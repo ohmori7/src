@@ -1,10 +1,10 @@
-/*	$NetBSD: dynlist.c,v 1.1.1.7 2018/02/06 01:53:16 christos Exp $	*/
+/*	$NetBSD: dynlist.c,v 1.2 2020/08/11 13:15:42 christos Exp $	*/
 
 /* dynlist.c - dynamic list overlay */
 /* $OpenLDAP$ */
 /* This work is part of OpenLDAP Software <http://www.openldap.org/>.
  *
- * Copyright 2003-2017 The OpenLDAP Foundation.
+ * Copyright 2003-2020 The OpenLDAP Foundation.
  * Portions Copyright 2004-2005 Pierangelo Masarati.
  * Portions Copyright 2008 Emmanuel Dreyfus.
  * All rights reserved.
@@ -23,7 +23,7 @@
  */
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: dynlist.c,v 1.1.1.7 2018/02/06 01:53:16 christos Exp $");
+__RCSID("$NetBSD: dynlist.c,v 1.2 2020/08/11 13:15:42 christos Exp $");
 
 #include "portable.h"
 

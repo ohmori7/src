@@ -1,4 +1,4 @@
-/*	$NetBSD: i915_gem_stolen.c,v 1.11 2018/09/13 08:25:55 mrg Exp $	*/
+/*	$NetBSD: i915_gem_stolen.c,v 1.14 2020/02/14 14:34:58 maya Exp $	*/
 
 /*
  * Copyright © 2008-2012 Intel Corporation
@@ -29,13 +29,13 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: i915_gem_stolen.c,v 1.11 2018/09/13 08:25:55 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: i915_gem_stolen.c,v 1.14 2020/02/14 14:34:58 maya Exp $");
 
-#include <linux/printk.h>
-#include <linux/err.h>
 #include <drm/drmP.h>
 #include <drm/i915_drm.h>
 #include "i915_drv.h"
+
+#include <linux/nbsd-namespace.h>
 
 #define KB(x) ((x) * 1024)
 #define MB(x) (KB(x) * 1024)
@@ -290,11 +290,7 @@ void i915_gem_cleanup_stolen(struct drm_device *dev)
 	if (!drm_mm_initialized(&dev_priv->mm.stolen))
 		return;
 
-#ifdef __NetBSD__
-	linux_mutex_destroy(&dev_priv->mm.stolen_lock);
-#else
 	mutex_destroy(&dev_priv->mm.stolen_lock);
-#endif
 
 	drm_mm_takedown(&dev_priv->mm.stolen);
 }
@@ -308,18 +304,13 @@ static void g4x_get_stolen_reserved(struct drm_i915_private *dev_priv,
 	unsigned long stolen_top = dev_priv->mm.stolen_base +
 		dev_priv->gtt.stolen_size;
 
-	*base = (reg_val & G4X_STOLEN_RESERVED_ADDR2_MASK) << 16;
+	if (!(reg_val & G4X_STOLEN_RESERVED_ADDR2_MASK))
+		return;
 
+	*base = (reg_val & G4X_STOLEN_RESERVED_ADDR2_MASK) << 16;
 	WARN_ON((reg_val & G4X_STOLEN_RESERVED_ADDR1_MASK) < *base);
 
-	/* On these platforms, the register doesn't have a size field, so the
-	 * size is the distance between the base and the top of the stolen
-	 * memory. We also have the genuine case where base is zero and there's
-	 * nothing reserved. */
-	if (*base == 0)
-		*size = 0;
-	else
-		*size = stolen_top - *base;
+	*size = stolen_top - *base;
 }
 
 static void gen6_get_stolen_reserved(struct drm_i915_private *dev_priv,
@@ -420,11 +411,7 @@ int i915_gem_init_stolen(struct drm_device *dev)
 	unsigned long reserved_total, reserved_base = 0, reserved_size;
 	unsigned long stolen_top;
 
-#ifdef __NetBSD__
-	linux_mutex_init(&dev_priv->mm.stolen_lock);
-#else
 	mutex_init(&dev_priv->mm.stolen_lock);
-#endif
 
 #ifdef CONFIG_INTEL_IOMMU
 	if (intel_iommu_gfx_mapped && INTEL_INFO(dev)->gen < 8) {

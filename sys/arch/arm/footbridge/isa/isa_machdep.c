@@ -1,4 +1,4 @@
-/*	$NetBSD: isa_machdep.c,v 1.21 2014/03/26 08:52:00 christos Exp $	*/
+/*	$NetBSD: isa_machdep.c,v 1.23 2020/11/20 18:03:53 thorpej Exp $	*/
 
 /*-
  * Copyright (c) 1996-1998 The NetBSD Foundation, Inc.
@@ -65,7 +65,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: isa_machdep.c,v 1.21 2014/03/26 08:52:00 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: isa_machdep.c,v 1.23 2020/11/20 18:03:53 thorpej Exp $");
 
 #include "opt_irqstats.h"
 
@@ -74,7 +74,7 @@ __KERNEL_RCSID(0, "$NetBSD: isa_machdep.c,v 1.21 2014/03/26 08:52:00 christos Ex
 #include <sys/kernel.h>
 #include <sys/syslog.h>
 #include <sys/device.h>
-#include <sys/malloc.h>
+#include <sys/kmem.h>
 #include <sys/proc.h>
 
 #define _ARM32_BUS_DMA_PRIVATE
@@ -338,10 +338,7 @@ isa_intr_establish(isa_chipset_tag_t ic, int irq, int type, int level, int (*ih_
 #if 0
 	printf("isa_intr_establish(%d, %d, %d)\n", irq, type, level);
 #endif
-	/* no point in sleeping unless someone can free memory. */
-	ih = malloc(sizeof *ih, M_DEVBUF, cold ? M_NOWAIT : M_WAITOK);
-	if (ih == NULL)
-	    return (NULL);
+	ih = kmem_alloc(sizeof *ih, KM_SLEEP);
 
 	if (!LEGAL_IRQ(irq) || type == IST_NONE)
 		panic("intr_establish: bogus irq or type");
@@ -414,7 +411,7 @@ isa_intr_disestablish(isa_chipset_tag_t ic, void *arg)
 
 	restore_interrupts(oldirqstate);
 
-	free(ih, M_DEVBUF);
+	kmem_free(ih, sizeof(*ih));
 
 	if (TAILQ_EMPTY(&(iq->iq_list)))
 		iq->iq_ist = IST_NONE;

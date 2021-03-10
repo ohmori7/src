@@ -1,4 +1,4 @@
-/*	$NetBSD: uaudio.c,v 1.161 2019/06/06 12:59:33 isaki Exp $	*/
+/*	$NetBSD: uaudio.c,v 1.169 2021/02/15 13:39:18 isaki Exp $	*/
 
 /*
  * Copyright (c) 1999, 2012 The NetBSD Foundation, Inc.
@@ -37,7 +37,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: uaudio.c,v 1.161 2019/06/06 12:59:33 isaki Exp $");
+__KERNEL_RCSID(0, "$NetBSD: uaudio.c,v 1.169 2021/02/15 13:39:18 isaki Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_usb.h"
@@ -343,6 +343,8 @@ Static int	uaudio_trigger_input
 	 const audio_params_t *);
 Static int	uaudio_halt_in_dma(void *);
 Static int	uaudio_halt_out_dma(void *);
+Static void	uaudio_halt_in_dma_unlocked(struct uaudio_softc *);
+Static void	uaudio_halt_out_dma_unlocked(struct uaudio_softc *);
 Static int	uaudio_getdev(void *, struct audio_device *);
 Static int	uaudio_mixer_set_port(void *, mixer_ctrl_t *);
 Static int	uaudio_mixer_get_port(void *, mixer_ctrl_t *);
@@ -367,11 +369,11 @@ Static const struct audio_hw_if uaudio_hw_if = {
 	.get_locks		= uaudio_get_locks,
 };
 
-int uaudio_match(device_t, cfdata_t, void *);
-void uaudio_attach(device_t, device_t, void *);
-int uaudio_detach(device_t, int);
-void uaudio_childdet(device_t, device_t);
-int uaudio_activate(device_t, enum devact);
+static int uaudio_match(device_t, cfdata_t, void *);
+static void uaudio_attach(device_t, device_t, void *);
+static int uaudio_detach(device_t, int);
+static void uaudio_childdet(device_t, device_t);
+static int uaudio_activate(device_t, enum devact);
 
 
 
@@ -379,7 +381,7 @@ CFATTACH_DECL2_NEW(uaudio, sizeof(struct uaudio_softc),
     uaudio_match, uaudio_attach, uaudio_detach, uaudio_activate, NULL,
     uaudio_childdet);
 
-int
+static int
 uaudio_match(device_t parent, cfdata_t match, void *aux)
 {
 	struct usbif_attach_arg *uiaa = aux;
@@ -393,7 +395,7 @@ uaudio_match(device_t parent, cfdata_t match, void *aux)
 	return UMATCH_IFACECLASS_IFACESUBCLASS;
 }
 
-void
+static void
 uaudio_attach(device_t parent, device_t self, void *aux)
 {
 	struct uaudio_softc *sc = device_private(self);
@@ -490,7 +492,7 @@ uaudio_attach(device_t parent, device_t self, void *aux)
 	return;
 }
 
-int
+static int
 uaudio_activate(device_t self, enum devact act)
 {
 	struct uaudio_softc *sc = device_private(self);
@@ -504,7 +506,7 @@ uaudio_activate(device_t self, enum devact act)
 	}
 }
 
-void
+static void
 uaudio_childdet(device_t self, device_t child)
 {
 	struct uaudio_softc *sc = device_private(self);
@@ -513,16 +515,19 @@ uaudio_childdet(device_t self, device_t child)
 	sc->sc_audiodev = NULL;
 }
 
-int
+static int
 uaudio_detach(device_t self, int flags)
 {
 	struct uaudio_softc *sc = device_private(self);
 	int rv = 0;
 
+	sc->sc_dying = 1;
+
 	pmf_device_deregister(self);
 
 	/* Wait for outstanding requests to complete. */
-	usbd_delay_ms(sc->sc_udev, UAUDIO_NCHANBUFS * UAUDIO_NFRAMES);
+	uaudio_halt_out_dma_unlocked(sc);
+	uaudio_halt_in_dma_unlocked(sc);
 
 	if (sc->sc_audiodev != NULL)
 		rv = config_detach(sc->sc_audiodev, flags);
@@ -651,7 +656,7 @@ uaudio_dump_cluster(const struct usb_audio_cluster *cl)
 	int cc, i, first;
 
 	cc = UGETW(cl->wChannelConfig);
-	printf("cluster: bNrChannels=%u wChannelConfig=0x%.4x",
+	printf("cluster: bNrChannels=%u wChannelConfig=%#.4x",
 		  cl->bNrChannels, cc);
 	first = TRUE;
 	for (i = 0; cc != 0; i++) {
@@ -915,7 +920,7 @@ uaudio_get_terminal_name(int terminal_type)
 	case UATF_MULTITRACK:	return "UATF_MULTITRACK";
 	case UATF_SYNTHESIZER:	return "UATF_SYNTHESIZER";
 	default:
-		snprintf(tbuf, sizeof(tbuf), "unknown type (0x%.4x)", terminal_type);
+		snprintf(tbuf, sizeof(tbuf), "unknown type (%#.4x)", terminal_type);
 		return tbuf;
 	}
 }
@@ -1066,7 +1071,7 @@ uaudio_feature_name(const struct io_terminal *iot, struct mixerctl *mix)
 	case UATF_MULTITRACK:
 	case 0xffff:
 	default:
-		DPRINTF("'master' for 0x%.4x\n", terminal_type);
+		DPRINTF("'master' for %#.4x\n", terminal_type);
 		return AudioNmaster;
 	}
 	return AudioNmaster;
@@ -1224,7 +1229,7 @@ uaudio_add_processing_updown(struct uaudio_softc *sc,
 	snprintf(mix.ctlname, sizeof(mix.ctlname), "pro%d-mode", d->bUnitId);
 
 	for (i = 0; i < ud->bNrModes; i++) {
-		DPRINTFN(2,"i=%d bm=0x%x\n",
+		DPRINTFN(2,"i=%d bm=%#x\n",
 			    i, UGETW(ud->waModes[i]));
 		/* XXX */
 	}
@@ -1541,7 +1546,7 @@ uaudio_process_as(struct uaudio_softc *sc, const char *tbuf, int *offsp,
 	if (asid->bDescriptorType != UDESC_CS_INTERFACE ||
 	    asid->bDescriptorSubtype != AS_GENERAL)
 		return USBD_INVAL;
-	DPRINTF("asid: bTerminakLink=%d wFormatTag=%d\n",
+	DPRINTF("asid: bTerminalLink=%d wFormatTag=%d\n",
 		 asid->bTerminalLink, UGETW(asid->wFormatTag));
 	offs += asid->bLength;
 	if (offs > size)
@@ -1565,7 +1570,7 @@ uaudio_process_as(struct uaudio_softc *sc, const char *tbuf, int *offsp,
 	if (ed->bDescriptorType != UDESC_ENDPOINT)
 		return USBD_INVAL;
 	DPRINTF("endpoint[0] bLength=%d bDescriptorType=%d "
-		 "bEndpointAddress=%d bmAttributes=0x%x wMaxPacketSize=%d "
+		 "bEndpointAddress=%d bmAttributes=%#x wMaxPacketSize=%d "
 		 "bInterval=%d bRefresh=%d bSynchAddress=%d\n",
 		 ed->bLength, ed->bDescriptorType, ed->bEndpointAddress,
 		 ed->bmAttributes, UGETW(ed->wMaxPacketSize),
@@ -1629,7 +1634,7 @@ uaudio_process_as(struct uaudio_softc *sc, const char *tbuf, int *offsp,
 			return USBD_INVAL;
 		DPRINTF("endpoint[1] bLength=%d "
 			 "bDescriptorType=%d bEndpointAddress=%d "
-			 "bmAttributes=0x%x wMaxPacketSize=%d bInterval=%d "
+			 "bmAttributes=%#x wMaxPacketSize=%d bInterval=%d "
 			 "bRefresh=%d bSynchAddress=%d\n",
 			 epdesc1->bLength, epdesc1->bDescriptorType,
 			 epdesc1->bEndpointAddress, epdesc1->bmAttributes,
@@ -1645,15 +1650,15 @@ uaudio_process_as(struct uaudio_softc *sc, const char *tbuf, int *offsp,
 		}
 		if (UE_GET_XFERTYPE(epdesc1->bmAttributes) != UE_ISOCHRONOUS) {
 			aprint_error_dev(sc->sc_dev,
-			    "invalid endpoint: bmAttributes=0x%x\n",
+			    "invalid endpoint: bmAttributes=%#x\n",
 			     epdesc1->bmAttributes);
 			return USBD_INVAL;
 		}
 		if (epdesc1->bEndpointAddress != ed->bSynchAddress) {
 			aprint_error_dev(sc->sc_dev,
 			    "invalid endpoint addresses: "
-			    "ep[0]->bSynchAddress=0x%x "
-			    "ep[1]->bEndpointAddress=0x%x\n",
+			    "ep[0]->bSynchAddress=%#x "
+			    "ep[1]->bEndpointAddress=%#x\n",
 			    ed->bSynchAddress, epdesc1->bEndpointAddress);
 			return USBD_INVAL;
 		}
@@ -1781,7 +1786,7 @@ uaudio_identify_as(struct uaudio_softc *sc,
 			     id->bNumEndpoints);
 			break;
 		}
-		id = uaudio_find_iface(tbuf, size, &offs,UISUBCLASS_AUDIOSTREAM);
+		id = uaudio_find_iface(tbuf, size, &offs, UISUBCLASS_AUDIOSTREAM);
 		if (id == NULL)
 			break;
 	}
@@ -1795,13 +1800,12 @@ uaudio_identify_as(struct uaudio_softc *sc,
 	}
 
 	/* build audio_format array */
-	sc->sc_formats = kmem_alloc(sizeof(struct audio_format) * sc->sc_nalts,
+	sc->sc_formats = kmem_zalloc(sizeof(struct audio_format) * sc->sc_nalts,
 	    KM_SLEEP);
 	sc->sc_nformats = sc->sc_nalts;
 	for (i = 0; i < sc->sc_nalts; i++) {
 		auf = &sc->sc_formats[i];
 		t1desc = sc->sc_alts[i].asf1desc;
-		auf->driver_data = NULL;
 		if (UE_GET_DIR(sc->sc_alts[i].edesc->bEndpointAddress) == UE_DIR_OUT)
 			auf->mode = AUMODE_PLAY;
 		else
@@ -2168,15 +2172,21 @@ uaudio_halt_out_dma(void *addr)
 	DPRINTF("%s", "enter\n");
 
 	mutex_exit(&sc->sc_intr_lock);
+	uaudio_halt_out_dma_unlocked(sc);
+	mutex_enter(&sc->sc_intr_lock);
+
+	return 0;
+}
+
+Static void
+uaudio_halt_out_dma_unlocked(struct uaudio_softc *sc)
+{
 	if (sc->sc_playchan.pipe != NULL) {
 		uaudio_chan_abort(sc, &sc->sc_playchan);
 		uaudio_chan_free_buffers(sc, &sc->sc_playchan);
 		uaudio_chan_close(sc, &sc->sc_playchan);
 		sc->sc_playchan.intr = NULL;
 	}
-	mutex_enter(&sc->sc_intr_lock);
-
-	return 0;
 }
 
 Static int
@@ -2187,15 +2197,21 @@ uaudio_halt_in_dma(void *addr)
 	DPRINTF("%s", "enter\n");
 
 	mutex_exit(&sc->sc_intr_lock);
+	uaudio_halt_in_dma_unlocked(sc);
+	mutex_enter(&sc->sc_intr_lock);
+
+	return 0;
+}
+
+Static void
+uaudio_halt_in_dma_unlocked(struct uaudio_softc *sc)
+{
 	if (sc->sc_recchan.pipe != NULL) {
 		uaudio_chan_abort(sc, &sc->sc_recchan);
 		uaudio_chan_free_buffers(sc, &sc->sc_recchan);
 		uaudio_chan_close(sc, &sc->sc_recchan);
 		sc->sc_recchan.intr = NULL;
 	}
-	mutex_enter(&sc->sc_intr_lock);
-
-	return 0;
 }
 
 Static int
@@ -3004,7 +3020,8 @@ uaudio_set_format(void *addr, int setmode,
 		raltidx = audio_indexof_format(sc->sc_formats, sc->sc_nformats,
 		    AUMODE_RECORD, rec);
 		/* Transfer should have halted */
-		uaudio_chan_init(&sc->sc_recchan, raltidx, rec, 0);
+		uaudio_chan_init(&sc->sc_recchan, raltidx, rec,
+		    UGETW(sc->sc_alts[raltidx].edesc->wMaxPacketSize));
 	}
 
 	if ((setmode & AUMODE_PLAY) && sc->sc_playchan.altidx != -1) {

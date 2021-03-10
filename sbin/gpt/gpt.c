@@ -35,7 +35,7 @@
 __FBSDID("$FreeBSD: src/sbin/gpt/gpt.c,v 1.16 2006/07/07 02:44:23 marcel Exp $");
 #endif
 #ifdef __RCSID
-__RCSID("$NetBSD: gpt.c,v 1.77 2019/01/27 13:16:05 martin Exp $");
+__RCSID("$NetBSD: gpt.c,v 1.82 2020/05/24 18:42:20 jmcneill Exp $");
 #endif
 
 #include <sys/param.h>
@@ -311,7 +311,7 @@ gpt_mbr(gpt_t gpt, off_t lba, unsigned int *next_index, off_t ext_offset)
 			continue;
 		if (mbr->mbr_part[i].part_typ == MBR_PTYPE_PMBR)
 			pmbr++;
-		else
+		else if ((gpt->flags & GPT_HYBRID) == 0)
 			break;
 	}
 	if (pmbr && i == 4 && lba == 0) {
@@ -589,6 +589,9 @@ gpt_open(const char *dev, int flags, int verbose, off_t mediasz, u_int secsz,
 void
 gpt_close(gpt_t gpt)
 {
+
+	if (gpt == NULL)
+		return;
 
 	if (!(gpt->flags & GPT_MODIFIED) || !(gpt->flags & GPT_SYNC))
 		goto out;
@@ -1012,7 +1015,7 @@ gpt_add_find(gpt_t gpt, struct gpt_find *find, int ch)
 
 int
 gpt_change_ent(gpt_t gpt, const struct gpt_find *find,
-    void (*cfn)(struct gpt_ent *, void *), void *v)
+    void (*cfn)(struct gpt_ent *, void *, int), void *v)
 {
 	map_t m;
 	struct gpt_hdr *hdr;
@@ -1055,20 +1058,47 @@ gpt_change_ent(gpt_t gpt, const struct gpt_find *find,
 			continue;
 
 		/* Change the primary entry. */
-		(*cfn)(ent, v);
+		(*cfn)(ent, v, 0);
 
 		if (gpt_write_primary(gpt) == -1)
 			return -1;
 
 		ent = gpt_ent_backup(gpt, i);
 		/* Change the secondary entry. */
-		(*cfn)(ent, v);
+		(*cfn)(ent, v, 1);
 
 		if (gpt_write_backup(gpt) == -1)
 			return -1;
 
 		gpt_msg(gpt, "Partition %d %s", m->map_index, find->msg);
 	}
+	return 0;
+}
+
+int
+gpt_change_hdr(gpt_t gpt, const struct gpt_find *find,
+    void (*cfn)(struct gpt_hdr *, void *, int), void *v)
+{
+	struct gpt_hdr *hdr;
+
+	if ((hdr = gpt_hdr(gpt)) == NULL)
+		return -1;
+
+	/* Change the primary header. */
+	(*cfn)(hdr, v, 0);
+
+	if (gpt_write_primary(gpt) == -1)
+		return -1;
+
+	hdr = gpt->tpg->map_data;
+	/* Change the secondary header. */
+	(*cfn)(hdr, v, 1);
+
+	if (gpt_write_backup(gpt) == -1)
+		return -1;
+
+	gpt_msg(gpt, "Header %s", find->msg);
+
 	return 0;
 }
 
@@ -1263,7 +1293,7 @@ gpt_uuid_get(gpt_t gpt, gpt_uuid_t *uuid)
 	if (!gpt_uuid_is_nil(*uuid))
 		return -1;
 	if (gpt_uuid_parse(optarg, *uuid) != 0) {
-		gpt_warn(gpt, "Can't parse uuid");
+		gpt_warnx(gpt, "Can't parse uuid/type `%s'", optarg);
 		return -1;
 	}
 	return 0;

@@ -1,5 +1,5 @@
 /* Definitions of target machine for GNU compiler, for IBM S/390.
-   Copyright (C) 2000-2016 Free Software Foundation, Inc.
+   Copyright (C) 2000-2018 Free Software Foundation, Inc.
 
    Contributed by Hartmut Penner (hpenner@de.ibm.com)
 
@@ -47,11 +47,8 @@ extern bool s390_can_use_simple_return_insn (void);
 extern bool s390_can_use_return_insn (void);
 extern void s390_function_profiler (FILE *, int);
 extern void s390_set_has_landing_pad_p (bool);
-extern bool s390_hard_regno_mode_ok (unsigned int, machine_mode);
 extern bool s390_hard_regno_rename_ok (unsigned int, unsigned int);
 extern int s390_class_max_nregs (enum reg_class, machine_mode);
-extern int s390_cannot_change_mode_class (machine_mode, machine_mode,
-					  enum reg_class);
 extern bool s390_function_arg_vector (machine_mode, const_tree);
 extern bool s390_return_addr_from_memory(void);
 #if S390_USE_TARGET_ATTRIBUTE
@@ -74,12 +71,13 @@ extern int s390_const_ok_for_constraint_p (HOST_WIDE_INT, int, const char *);
 extern int s390_const_double_ok_for_constraint_p (rtx, int, const char *);
 extern int s390_single_part (rtx, machine_mode, machine_mode, int);
 extern unsigned HOST_WIDE_INT s390_extract_part (rtx, machine_mode, int);
-extern bool s390_contiguous_bitmask_p (unsigned HOST_WIDE_INT, int, int *, int *);
+extern bool s390_contiguous_bitmask_p (unsigned HOST_WIDE_INT, bool, int, int *, int *);
 extern bool s390_contiguous_bitmask_vector_p (rtx, int *, int *);
 extern bool s390_bytemask_vector_p (rtx, unsigned *);
 extern bool s390_split_ok_p (rtx, rtx, machine_mode, int);
 extern bool s390_overlap_p (rtx, rtx, HOST_WIDE_INT);
 extern bool s390_offset_p (rtx, rtx, rtx);
+extern bool s390_rel_address_ok_p (rtx);
 extern int tls_symbolic_operand (rtx);
 
 extern bool s390_match_ccmode (rtx_insn *, machine_mode);
@@ -113,13 +111,14 @@ extern void s390_expand_vec_strlen (rtx, rtx, rtx);
 extern void s390_expand_vec_movstr (rtx, rtx, rtx);
 extern bool s390_expand_addcc (enum rtx_code, rtx, rtx, rtx, rtx, rtx);
 extern bool s390_expand_insv (rtx, rtx, rtx, rtx);
-extern void s390_expand_cs_hqi (machine_mode, rtx, rtx, rtx,
-				rtx, rtx, bool);
+extern void s390_expand_cs (machine_mode, rtx, rtx, rtx, rtx, rtx, bool);
+extern void s390_expand_atomic_exchange_tdsi (rtx, rtx, rtx);
 extern void s390_expand_atomic (machine_mode, enum rtx_code,
 				rtx, rtx, rtx, bool);
 extern void s390_expand_tbegin (rtx, rtx, rtx, bool);
 extern void s390_expand_vec_compare (rtx, enum rtx_code, rtx, rtx);
 extern void s390_expand_vec_compare_cc (rtx, enum rtx_code, rtx, rtx, bool);
+extern enum rtx_code s390_reverse_condition (machine_mode, enum rtx_code);
 extern void s390_expand_vcond (rtx, rtx, rtx, enum rtx_code, rtx, rtx);
 extern void s390_expand_vec_init (rtx, rtx);
 extern rtx s390_return_addr_rtx (int, rtx);
@@ -134,7 +133,7 @@ extern void s390_split_access_reg (rtx, rtx *, rtx *);
 extern void print_operand_address (FILE *, rtx);
 extern void print_operand (FILE *, rtx, int);
 extern void s390_output_pool_entry (rtx, machine_mode, unsigned int);
-extern int s390_label_align (rtx);
+extern int s390_label_align (rtx_insn *);
 extern int s390_agen_dep_p (rtx_insn *, rtx_insn *);
 extern rtx_insn *s390_load_got (void);
 extern rtx s390_get_thread_pointer (void);

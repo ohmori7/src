@@ -1,4 +1,4 @@
-/* $NetBSD: cycv_gmac.c,v 1.2 2019/02/23 17:18:38 martin Exp $ */
+/* $NetBSD: cycv_gmac.c,v 1.6 2021/01/29 14:12:01 skrll Exp $ */
 
 /*-
  * Copyright (c) 2017 Jared McNeill <jmcneill@invisible.ca>
@@ -30,7 +30,7 @@
 
 #include <sys/cdefs.h>
 
-__KERNEL_RCSID(0, "$NetBSD: cycv_gmac.c,v 1.2 2019/02/23 17:18:38 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: cycv_gmac.c,v 1.6 2021/01/29 14:12:01 skrll Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -38,6 +38,7 @@ __KERNEL_RCSID(0, "$NetBSD: cycv_gmac.c,v 1.2 2019/02/23 17:18:38 martin Exp $")
 #include <sys/intr.h>
 #include <sys/systm.h>
 #include <sys/gpio.h>
+#include <sys/rndsource.h>
 
 #include <net/if.h>
 #include <net/if_ether.h>
@@ -50,7 +51,10 @@ __KERNEL_RCSID(0, "$NetBSD: cycv_gmac.c,v 1.2 2019/02/23 17:18:38 martin Exp $")
 
 #include <dev/fdt/fdtvar.h>
 
-static const char * compatible[] = { "altr,socfpga-stmmac", NULL };
+static const struct device_compatible_entry compat_data[] = {
+	{ .compat = "altr,socfpga-stmmac" },
+	DEVICE_COMPAT_EOL
+};
 
 static int
 cycv_gmac_intr(void *arg)
@@ -63,7 +67,7 @@ cycv_gmac_match(device_t parent, cfdata_t cf, void *aux)
 {
 	struct fdt_attach_args * const faa = aux;
 
-	return of_match_compatible(faa->faa_phandle, compatible);
+	return of_compatible_match(faa->faa_phandle, compat_data);
 }
 
 static void
@@ -128,8 +132,8 @@ cycv_gmac_attach(device_t parent, device_t self, void *aux)
 	aprint_naive("\n");
 	aprint_normal(": GMAC\n");
 
-	if (fdtbus_intr_establish(phandle, 0, IPL_NET, 0,
-				  cycv_gmac_intr, sc) == NULL) {
+	if (fdtbus_intr_establish_xname(phandle, 0, IPL_NET, DWCGMAC_FDT_INTR_MPSAFE,
+	     cycv_gmac_intr, sc, device_xname(sc->sc_dev)) == NULL) {
 		aprint_error_dev(self, "failed to establish interrupt on %s\n",
 				 intrstr);
 		return;

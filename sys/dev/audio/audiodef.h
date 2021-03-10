@@ -1,4 +1,4 @@
-/*	$NetBSD: audiodef.h,v 1.4 2019/06/10 13:49:39 isaki Exp $	*/
+/*	$NetBSD: audiodef.h,v 1.15 2020/09/13 04:14:48 isaki Exp $	*/
 
 /*
  * Copyright (C) 2017 Tetsuya Isaki. All rights reserved.
@@ -29,6 +29,10 @@
 #ifndef _SYS_DEV_AUDIO_AUDIODEF_H_
 #define _SYS_DEV_AUDIO_AUDIODEF_H_
 
+#ifdef _KERNEL_OPT
+#include "opt_audio.h"
+#endif
+
 /* Number of HW buffer's blocks. */
 #define NBLKHW (3)
 
@@ -37,17 +41,6 @@
 
 /* Minimum number of usrbuf's blocks. */
 #define AUMINNOBLK	(3)
-
-/*
- * Hardware blocksize in msec.
- * We use 40 msec as default.  (1 / 40ms) = 25 = 5^2.
- * In this case, the number of frames in a block can be an integer
- * even if the frequency is a multiple of 100 (44100, 48000, etc),
- * or even if 15625Hz (vs(4)).
- */
-#if !defined(AUDIO_BLK_MS)
-#define AUDIO_BLK_MS 40
-#endif
 
 /*
  * Whether the playback mixer use single buffer mode.
@@ -63,6 +56,30 @@
  */
 /* #define AUDIO_SUPPORT_TRACK_VOLUME */
 
+/*
+ * AUDIO_SCALEDOWN()
+ * This macro should be used for audio wave data only.
+ *
+ * The arithmetic shift right (ASR) (in other words, floor()) is good for
+ * this purpose, and will be faster than division on the most platform.
+ * The division (in other words, truncate()) is not so bad alternate for
+ * this purpose, and will be fast enough.
+ * (Using ASR is 1.9 times faster than division on my amd64, and 1.3 times
+ * faster on my m68k.  -- isaki 201801.)
+ *
+ * However, the right shift operator ('>>') for negative integer is
+ * "implementation defined" behavior in C (note that it's not "undefined"
+ * behavior).  So only if implementation defines '>>' as ASR, we use it.
+ */
+#if defined(__GNUC__)
+/* gcc defines '>>' as ASR. */
+#define AUDIO_SCALEDOWN(value, bits)	((value) >> (bits))
+#else
+#define AUDIO_SCALEDOWN(value, bits)	((value) / (1 << (bits)))
+#endif
+
+#if defined(_KERNEL)
+
 /* conversion stage */
 typedef struct {
 	audio_ring_t srcbuf;
@@ -77,7 +94,7 @@ typedef enum {
 	AUDIO_STATE_DRAINING,	/* now draining */
 } audio_state_t;
 
-typedef struct audio_track {
+struct audio_track {
 	/*
 	 * AUMODE_PLAY for playback track, or
 	 * AUMODE_RECORD for recoding track.
@@ -152,7 +169,10 @@ typedef struct audio_track {
 	volatile uint	lock;
 
 	int		id;		/* track id for debug */
-} audio_track_t;
+};
+#endif /* _KERNEL */
+
+typedef struct audio_track audio_track_t;
 
 struct audio_file {
 	struct audio_softc *sc;
@@ -176,8 +196,13 @@ struct audio_file {
 	/* process who wants audio SIGIO. */
 	pid_t		async_audio;
 
+	/* true when closing */
+	bool		dying;
+
 	SLIST_ENTRY(audio_file) entry;
 };
+
+#if defined(_KERNEL)
 
 struct audio_trackmixer {
 	struct audio_softc *sc;
@@ -187,7 +212,16 @@ struct audio_trackmixer {
 
 	int		frames_per_block; /* number of frames in a block */
 
-	u_int		volume;		/* software master volume (0..256) */
+	/*
+	 * software master volume (0..256)
+	 * Must be protected by sc_intr_lock.
+	 */
+	u_int		volume;
+	/*
+	 * Volume recovery timer in auto gain control.
+	 * Must be protected by sc_intr_lock.
+	 */
+	int		voltimer;
 
 	audio_format2_t	mixfmt;
 	void		*mixsample;	/* mixing buf in double-sized int */
@@ -261,8 +295,9 @@ static __inline int
 auring_round(const audio_ring_t *ring, int idx)
 {
 	DIAGNOSTIC_ring(ring);
-	KASSERT(idx >= 0);
-	KASSERT(idx < ring->capacity * 2);
+	KASSERTMSG(idx >= 0, "idx=%d", idx);
+	KASSERTMSG(idx < ring->capacity * 2,
+	    "idx=%d ring->capacity=%d", idx, ring->capacity);
 
 	if (idx < ring->capacity) {
 		return idx;
@@ -289,7 +324,9 @@ auring_tail(const audio_ring_t *ring)
 static __inline aint_t *
 auring_headptr_aint(const audio_ring_t *ring)
 {
-	KASSERT(ring->fmt.stride == sizeof(aint_t) * NBBY);
+	KASSERTMSG(ring->fmt.stride == sizeof(aint_t) * NBBY,
+	    "ring->fmt.stride=%d sizeof(aint_t)*NBBY=%zd",
+	    ring->fmt.stride, sizeof(aint_t) * NBBY);
 
 	return (aint_t *)ring->mem + ring->head * ring->fmt.channels;
 }
@@ -302,7 +339,9 @@ auring_headptr_aint(const audio_ring_t *ring)
 static __inline aint_t *
 auring_tailptr_aint(const audio_ring_t *ring)
 {
-	KASSERT(ring->fmt.stride == sizeof(aint_t) * NBBY);
+	KASSERTMSG(ring->fmt.stride == sizeof(aint_t) * NBBY,
+	    "ring->fmt.stride=%d sizeof(aint_t)*NBBY=%zd",
+	    ring->fmt.stride, sizeof(aint_t) * NBBY);
 
 	return (aint_t *)ring->mem + auring_tail(ring) * ring->fmt.channels;
 }
@@ -406,5 +445,7 @@ auring_get_contig_free(const audio_ring_t *ring)
 		return ring->capacity - ring->used;
 	}
 }
+
+#endif /* _KERNEL */
 
 #endif /* !_SYS_DEV_AUDIO_AUDIODEF_H_ */

@@ -1,4 +1,4 @@
-/* $NetBSD: linux_systrace_args.c,v 1.9 2018/08/10 21:47:15 pgoyette Exp $ */
+/* $NetBSD: linux_systrace_args.c,v 1.11 2020/04/26 19:20:18 thorpej Exp $ */
 
 /*
  * System call argument to DTrace register array converstion.
@@ -1878,20 +1878,20 @@ systrace_args(register_t sysnum, const void *params, uintptr_t *uarg, size_t *n_
 		*n_args = 4;
 		break;
 	}
-	/* linux_sys_set_robust_list */
+	/* sys___futex_set_robust_list */
 	case 311: {
-		const struct linux_sys_set_robust_list_args *p = params;
-		uarg[0] = (intptr_t) SCARG(p, head); /* struct linux_robust_list_head * */
+		const struct sys___futex_set_robust_list_args *p = params;
+		uarg[0] = (intptr_t) SCARG(p, head); /* void * */
 		uarg[1] = SCARG(p, len); /* size_t */
 		*n_args = 2;
 		break;
 	}
-	/* linux_sys_get_robust_list */
+	/* sys___futex_get_robust_list */
 	case 312: {
-		const struct linux_sys_get_robust_list_args *p = params;
-		iarg[0] = SCARG(p, pid); /* int */
-		uarg[1] = (intptr_t) SCARG(p, head); /* struct linux_robust_list_head ** */
-		uarg[2] = (intptr_t) SCARG(p, len); /* size_t * */
+		const struct sys___futex_get_robust_list_args *p = params;
+		iarg[0] = SCARG(p, lwpid); /* lwpid_t */
+		uarg[1] = (intptr_t) SCARG(p, headp); /* void ** */
+		uarg[2] = (intptr_t) SCARG(p, lenp); /* size_t * */
 		*n_args = 3;
 		break;
 	}
@@ -1902,6 +1902,16 @@ systrace_args(register_t sysnum, const void *params, uintptr_t *uarg, size_t *n_
 		uarg[1] = (intptr_t) SCARG(p, path); /* const char * */
 		uarg[2] = (intptr_t) SCARG(p, times); /* struct linux_timespec * */
 		iarg[3] = SCARG(p, flag); /* int */
+		*n_args = 4;
+		break;
+	}
+	/* linux_sys_fallocate */
+	case 324: {
+		const struct linux_sys_fallocate_args *p = params;
+		iarg[0] = SCARG(p, fd); /* int */
+		iarg[1] = SCARG(p, mode); /* int */
+		iarg[2] = SCARG(p, offset); /* off_t */
+		iarg[3] = SCARG(p, len); /* off_t */
 		*n_args = 4;
 		break;
 	}
@@ -4971,11 +4981,11 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
-	/* linux_sys_set_robust_list */
+	/* sys___futex_set_robust_list */
 	case 311:
 		switch(ndx) {
 		case 0:
-			p = "struct linux_robust_list_head *";
+			p = "void *";
 			break;
 		case 1:
 			p = "size_t";
@@ -4984,14 +4994,14 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
-	/* linux_sys_get_robust_list */
+	/* sys___futex_get_robust_list */
 	case 312:
 		switch(ndx) {
 		case 0:
-			p = "int";
+			p = "lwpid_t";
 			break;
 		case 1:
-			p = "struct linux_robust_list_head **";
+			p = "void **";
 			break;
 		case 2:
 			p = "size_t *";
@@ -5014,6 +5024,25 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		case 3:
 			p = "int";
+			break;
+		default:
+			break;
+		};
+		break;
+	/* linux_sys_fallocate */
+	case 324:
+		switch(ndx) {
+		case 0:
+			p = "int";
+			break;
+		case 1:
+			p = "int";
+			break;
+		case 2:
+			p = "off_t";
+			break;
+		case 3:
+			p = "off_t";
 			break;
 		default:
 			break;
@@ -6150,18 +6179,23 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;
-	/* linux_sys_set_robust_list */
+	/* sys___futex_set_robust_list */
 	case 311:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;
-	/* linux_sys_get_robust_list */
+	/* sys___futex_get_robust_list */
 	case 312:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;
 	/* linux_sys_utimensat */
 	case 320:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
+	/* linux_sys_fallocate */
+	case 324:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;

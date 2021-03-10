@@ -1,4 +1,4 @@
-/*	$NetBSD: pcb.h,v 1.29 2018/07/26 09:29:08 maxv Exp $	*/
+/*	$NetBSD: pcb.h,v 1.32 2020/03/17 17:18:49 maxv Exp $	*/
 
 /*
  * Copyright (c) 1998 The NetBSD Foundation, Inc.
@@ -77,6 +77,10 @@
 
 #define	NIOPORTS	1024		/* # of ports we allow to be mapped */
 
+/*
+ * IMPORTANT NOTE: this structure, including the variable-sized FPU state at
+ * the end, must fit within one page.
+ */
 struct pcb {
 	int	  pcb_flags;
 #define	PCB_COMPAT32	0x01
@@ -96,11 +100,12 @@ struct pcb {
 
 	uint32_t pcb_unused[8];		/* unused */
 
-	struct cpu_info *pcb_fpcpu;	/* cpu holding our fp state. */
 	union savefpu	pcb_savefpu __aligned(64); /* floating point state */
 	/* **** DO NOT ADD ANYTHING HERE **** */
 };
+#ifndef __lint__
 __CTASSERT(sizeof(struct pcb) - sizeof (union savefpu) ==  128);
+#endif
 
 #else	/*	__x86_64__	*/
 

@@ -1,4 +1,4 @@
-/*	$NetBSD: xenpmap.h,v 1.41 2019/02/13 06:52:43 cherry Exp $	*/
+/*	$NetBSD: xenpmap.h,v 1.44 2020/05/26 10:10:32 bouyer Exp $	*/
 
 /*
  *
@@ -48,7 +48,7 @@ void xpq_queue_set_ldt(vaddr_t, uint32_t);
 void xpq_queue_tlb_flush(void);
 void xpq_queue_pin_table(paddr_t, int);
 void xpq_queue_unpin_table(paddr_t);
-int  xpq_update_foreign(paddr_t, pt_entry_t, int);
+int  xpq_update_foreign(paddr_t, pt_entry_t, int, u_int);
 void xen_mcast_tlbflush(kcpuset_t *);
 void xen_bcast_tlbflush(void);
 void xen_mcast_invlpg(vaddr_t, kcpuset_t *);
@@ -75,6 +75,10 @@ void xen_kpm_sync(struct pmap *, int);
 #ifdef XENPV
 extern unsigned long *xpmap_phys_to_machine_mapping;
 
+/* MD PMAP flags */
+/* mmu_update with MMU_PT_UPDATE_NO_TRANSLATE */
+#define PMAP_MD_XEN_NOTR	0x01000000
+
 static __inline paddr_t
 xpmap_mtop_masked(paddr_t mpa)
 {
@@ -85,7 +89,7 @@ xpmap_mtop_masked(paddr_t mpa)
 static __inline paddr_t
 xpmap_mtop(paddr_t mpa)
 {
-	return (xpmap_mtop_masked(mpa) | (mpa & ~PG_FRAME));
+	return (xpmap_mtop_masked(mpa) | (mpa & ~PTE_4KFRAME));
 }
 
 static __inline paddr_t
@@ -99,7 +103,7 @@ xpmap_ptom_masked(paddr_t ppa)
 static __inline paddr_t
 xpmap_ptom(paddr_t ppa)
 {
-	return (xpmap_ptom_masked(ppa) | (ppa & ~PG_FRAME));
+	return (xpmap_ptom_masked(ppa) | (ppa & ~PTE_4KFRAME));
 }
 
 static __inline void
@@ -122,7 +126,6 @@ xpmap_ptom_isvalid(paddr_t ppa)
 	    != INVALID_P2M_ENTRY);
 }
 
-#endif /* XENPV */
 
 static inline void
 MULTI_update_va_mapping(
@@ -170,5 +173,9 @@ MULTI_update_va_mapping_otherdomain(
 #if defined(__x86_64__)
 void xen_set_user_pgd(paddr_t);
 #endif
+#endif /* XENPV */
+
+int pmap_enter_gnt(struct pmap *, vaddr_t, vaddr_t, int,
+    const struct gnttab_map_grant_ref *);
 
 #endif /* _XEN_XENPMAP_H_ */

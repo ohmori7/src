@@ -1,4 +1,4 @@
-/*	$NetBSD: usbdi.h,v 1.96 2019/01/27 02:08:42 pgoyette Exp $	*/
+/*	$NetBSD: usbdi.h,v 1.102 2020/02/16 09:40:35 maxv Exp $	*/
 /*	$FreeBSD: src/sys/dev/usb/usbdi.h,v 1.18 1999/11/17 22:33:49 n_hibma Exp $	*/
 
 /*
@@ -143,6 +143,9 @@ usbd_status usbd_request_async(struct usbd_device *, struct usbd_xfer *,
     usb_device_request_t *, void *, usbd_callback);
 usbd_status usbd_do_request_flags(struct usbd_device *, usb_device_request_t *,
     void *, uint16_t, int *, uint32_t);
+usbd_status usbd_do_request_len(struct usbd_device *dev,
+    usb_device_request_t *req, size_t len, void *data, uint16_t flags,
+    int *actlen, uint32_t timeout);
 
 usb_interface_descriptor_t *
     usbd_get_interface_descriptor(struct usbd_interface *);
@@ -185,13 +188,10 @@ int usbd_ratecheck(struct timeval *);
 usbd_status usbd_get_string(struct usbd_device *, int, char *);
 usbd_status usbd_get_string0(struct usbd_device *, int, char *, int);
 
-/* An iterator for descriptors. */
-typedef struct {
-	const uByte *cur;
-	const uByte *end;
-} usbd_desc_iter_t;
-void usb_desc_iter_init(struct usbd_device *, usbd_desc_iter_t *);
-const usb_descriptor_t *usb_desc_iter_next(usbd_desc_iter_t *);
+/* For use by HCI drivers, not USB device drivers */
+void usbd_xfer_schedule_timeout(struct usbd_xfer *);
+bool usbd_xfer_trycomplete(struct usbd_xfer *);
+void usbd_xfer_abort(struct usbd_xfer *);
 
 /* Used to clear endpoint stalls from the softint */
 void usbd_clear_endpoint_stall_task(void *);
@@ -216,9 +216,10 @@ struct usb_task {
 #define	USB_TASKQ_MPSAFE	0x80
 
 void usb_add_task(struct usbd_device *, struct usb_task *, int);
-void usb_rem_task(struct usbd_device *, struct usb_task *);
+bool usb_rem_task(struct usbd_device *, struct usb_task *);
 bool usb_rem_task_wait(struct usbd_device *, struct usb_task *, int,
     kmutex_t *);
+bool usb_task_pending(struct usbd_device *, struct usb_task *);
 #define usb_init_task(t, f, a, fl) ((t)->fun = (f), (t)->arg = (a), (t)->queue = USB_NUM_TASKQS, (t)->flags = (fl))
 
 struct usb_devno {

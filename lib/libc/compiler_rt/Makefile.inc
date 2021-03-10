@@ -1,4 +1,4 @@
-# $NetBSD: Makefile.inc,v 1.35 2017/07/23 09:50:54 martin Exp $
+# $NetBSD: Makefile.inc,v 1.39 2020/09/02 16:22:45 jakllsch Exp $
 
 COMPILER_RT_SRCDIR=	${NETBSDSRCDIR}/sys/external/bsd/compiler_rt/dist
 
@@ -132,7 +132,7 @@ GENERIC_SRCS+= \
 .endif
 
 
-.if ${MACHINE_ARCH} != "aarch64"
+.if ${MACHINE_CPU} != "aarch64"
 GENERIC_SRCS+= \
 	fixunsdfti.c \
 	fixunssfti.c \
@@ -144,6 +144,9 @@ GENERIC_SRCS+= \
 	floatuntidf.c \
 	floatuntisf.c \
 	floatuntixf.c
+.else
+GENERIC_SRCS+= \
+	comparetf2.c
 .endif
 
 # These have h/w instructions which are always used.
@@ -193,7 +196,7 @@ GENERIC_SRCS+= \
 
 # These have h/w instructions which are always used.
 .if ${LIBC_MACHINE_ARCH} != "alpha" && ${LIBC_MACHINE_CPU} != "powerpc64" \
-    && ${LIBC_MACHINE_ARCH} != "aarch64" && ${LIBC_MACHINE_CPU} != "or1k"
+    && ${LIBC_MACHINE_CPU} != "aarch64" && ${LIBC_MACHINE_CPU} != "or1k"
 GENERIC_SRCS+= \
 	clzdi2.c \
 	ctzdi2.c \

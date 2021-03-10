@@ -1,4 +1,4 @@
-/*	$NetBSD: imxclock.c,v 1.7 2014/07/25 07:49:56 hkenken Exp $ */
+/*	$NetBSD: imxclock.c,v 1.9 2020/05/29 12:30:38 rin Exp $ */
 /*
  * Copyright (c) 2009, 2010  Genetec corp.  All rights reserved.
  * Written by Hashimoto Kenichi for Genetec corp.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: imxclock.c,v 1.7 2014/07/25 07:49:56 hkenken Exp $");
+__KERNEL_RCSID(0, "$NetBSD: imxclock.c,v 1.9 2020/05/29 12:30:38 rin Exp $");
 
 #include "opt_imx.h"
 
@@ -59,14 +59,10 @@ static u_int imx_epit_get_timecount(struct timecounter *);
 static int imxclock_intr(void *);
 
 static struct timecounter imx_epit_timecounter = {
-	imx_epit_get_timecount,	/* get_timecount */
-	0,			/* no poll_pps */
-	0xffffffff,		/* counter_mask */
-	0,			/* frequency */
-	"epit",			/* name */
-	100,			/* quality */
-	NULL,			/* prev */
-	NULL,			/* next */
+	.tc_get_timecount = imx_epit_get_timecount,
+	.tc_counter_mask = 0xffffffff,
+	.tc_name = "epit",
+	.tc_quality = 100,
 };
 
 static volatile uint32_t imxclock_base;
@@ -111,7 +107,7 @@ cpu_initclocks(void)
 	bus_space_write_4(imxclock->sc_iot, imxclock->sc_ioh,
 	    EPIT_EPITCR, reg);
 
-	epit1_sc->sc_ih = intr_establish(imxclock->sc_intr, IPL_CLOCK,
+	imxclock->sc_ih = intr_establish(imxclock->sc_intr, IPL_CLOCK,
 	    IST_LEVEL, imxclock_intr, NULL);
 }
 

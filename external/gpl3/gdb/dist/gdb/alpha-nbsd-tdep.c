@@ -1,6 +1,6 @@
 /* Target-dependent code for NetBSD/alpha.
 
-   Copyright (C) 2002-2019 Free Software Foundation, Inc.
+   Copyright (C) 2002-2020 Free Software Foundation, Inc.
 
    Contributed by Wasabi Systems, Inc.
 
@@ -22,6 +22,7 @@
 #include "defs.h"
 #include "frame.h"
 #include "gdbcore.h"
+#include "gdbarch.h"
 #include "osabi.h"
 #include "regcache.h"
 #include "regset.h"
@@ -192,7 +193,7 @@ static const struct tramp_frame alphanbsd_sigtramp_sc1 = {
     { 0x23de0010, 0xffffffff },		/* lda sp, 16(sp) */
     { 0x201f0127, 0xffffffff },		/* lda v0, 295 */
     { 0x00000083, 0xffffffff },		/* call_pal callsys */
-    { TRAMP_SENTINEL_INSN, -1 }
+    { TRAMP_SENTINEL_INSN, ULONGEST_MAX }
   },
   alphanbsd_sigtramp_cache_init
 };
@@ -203,13 +204,13 @@ static const struct tramp_frame alphanbsd_sigtramp_si2 =
   SIGTRAMP_FRAME,
   4,
   {
-    { 0x221e0080, -1 },		/* lda	a0,128(sp) */
-    { 0x201f0134, -1 },		/* lda	v0,308 */
-    { 0x00000083, -1 },		/* callsys */
-    { 0x47e00410, -1 },		/* mov	v0,a0 */
-    { 0x201f0001, -1 },		/* lda	v0,1 */
-    { 0x00000083, -1 },		/* callsys */
-    { TRAMP_SENTINEL_INSN, -1 }
+    { 0x221e0080, ULONGEST_MAX },		/* lda	a0,128(sp) */
+    { 0x201f0134, ULONGEST_MAX },		/* lda	v0,308 */
+    { 0x00000083, ULONGEST_MAX },		/* callsys */
+    { 0x47e00410, ULONGEST_MAX },		/* mov	v0,a0 */
+    { 0x201f0001, ULONGEST_MAX },		/* lda	v0,1 */
+    { 0x00000083, ULONGEST_MAX },		/* callsys */
+    { TRAMP_SENTINEL_INSN, ULONGEST_MAX }
   },
   alphanbsd_sigtramp_cache_init
 };
@@ -220,14 +221,14 @@ static const struct tramp_frame alphanbsd_sigtramp_si4 =
   4,
   {
     { 0x27ba0000, 0xffff0000 },
-    { 0x23bd0000, 0xffff0000 },	/* ldgp	gp,0(ra) */
-    { 0x221e0080, -1 },		/* lda	a0,128(sp) */
-    { 0x201f0134, -1 },		/* lda	v0,308 */
-    { 0x00000083, -1 },		/* callsys */
-    { 0x221fffff, -1 },		/* lda	a0,-1 */
-    { 0x201f0001, -1 },		/* lda	v0,1 */
-    { 0x00000083, -1 },		/* callsys */
-    { TRAMP_SENTINEL_INSN, -1 }
+    { 0x23bd0000, 0xffff0000 },			/* ldgp	gp,0(ra) */
+    { 0x221e0080, ULONGEST_MAX },		/* lda	a0,128(sp) */
+    { 0x201f0134, ULONGEST_MAX },		/* lda	v0,308 */
+    { 0x00000083, ULONGEST_MAX },		/* callsys */
+    { 0x221fffff, ULONGEST_MAX },		/* lda	a0,-1 */
+    { 0x201f0001, ULONGEST_MAX },		/* lda	v0,1 */
+    { 0x00000083, ULONGEST_MAX },		/* callsys */
+    { TRAMP_SENTINEL_INSN, ULONGEST_MAX }
   },
   alphanbsd_sigtramp_cache_init
 };
@@ -328,13 +329,14 @@ alphanbsd_init_abi (struct gdbarch_info info,
   /* Hook into the MDEBUG frame unwinder.  */
   alpha_mdebug_init_abi (info, gdbarch);
 
+  nbsd_init_abi (info, gdbarch);
+
   /* NetBSD/alpha does not provide single step support via ptrace(2); we
      must use software single-stepping.  */
   set_gdbarch_software_single_step (gdbarch, alpha_software_single_step);
   /* NetBSD/alpha has SVR4-style shared libraries.  */
   set_solib_svr4_fetch_link_map_offsets
     (gdbarch, svr4_lp64_fetch_link_map_offsets);
-  set_gdbarch_skip_solib_resolver (gdbarch, nbsd_skip_solib_resolver);
 
 #ifdef notyet
   tdep->dynamic_sigtramp_offset = alphanbsd_sigtramp_offset;
@@ -354,8 +356,9 @@ alphanbsd_init_abi (struct gdbarch_info info,
 }
 
 
+void _initialize_alphanbsd_tdep ();
 void
-_initialize_alphanbsd_tdep (void)
+_initialize_alphanbsd_tdep ()
 {
   gdbarch_register_osabi (bfd_arch_alpha, 0, GDB_OSABI_NETBSD,
                           alphanbsd_init_abi);

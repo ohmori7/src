@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.2 2019/01/27 02:08:45 pgoyette Exp $
+#	$NetBSD: Makefile,v 1.5 2019/09/26 02:01:02 christos Exp $
 
 .include "../Makefile.inc"
 
@@ -10,5 +10,6 @@ CPPFLAGS+=	-DCOMPAT_80
 
 SRCS+=	compat_80_mod.c
 SRCS+=	kern_mod_80.c
+SRCS+=	if_media_80.c
 
 .include <bsd.kmodule.mk>

@@ -1,4 +1,4 @@
-/*	$NetBSD: md.h,v 1.5 2019/06/12 06:20:21 martin Exp $	*/
+/*	$NetBSD: md.h,v 1.8 2020/10/05 12:28:45 martin Exp $	*/
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -76,7 +76,7 @@
 /*
  *  Default filesets to fetch and install during installation
  *  or upgrade. The standard sets are:
- *      base etc comp games man misc tests text xbase xcomp xetc xfont xserver
+ *      base etc comp games man misc rescue tests text xbase xcomp xetc xfont xserver
  */
 
 #define SET_KERNEL_GENERIC	SET_KERNEL_1
@@ -112,3 +112,16 @@ extern struct mbr_bootsel *mbs;
  *  prototypes for MD code.
  */
 
+/*
+ * When we do an UEFI install, we have completely different default
+ * partitions and need to adjust the description at runtime.
+ */
+void x86_md_part_defaults(struct pm_devs*, struct part_usage_info**,
+            size_t *num_usage_infos);
+#define MD_PART_DEFAULTS(A,B,C)	x86_md_part_defaults(A,&(B),&(C))
+
+/* no need to install bootblock if installing for UEFI */
+bool x86_md_need_bootblock(struct install_partition_desc *install);
+#define	MD_NEED_BOOTBLOCK(A)	x86_md_need_bootblock(A)
+
+#define	HAVE_EFI_BOOT		1	/* we support EFI boot partitions */

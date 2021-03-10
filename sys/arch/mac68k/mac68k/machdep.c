@@ -1,4 +1,4 @@
-/*	$NetBSD: machdep.c,v 1.352 2017/11/07 14:56:03 christos Exp $	*/
+/*	$NetBSD: machdep.c,v 1.360 2021/02/26 10:54:12 rin Exp $	*/
 
 /*
  * Copyright (c) 1988 University of Utah.
@@ -74,16 +74,19 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.352 2017/11/07 14:56:03 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.360 2021/02/26 10:54:12 rin Exp $");
 
 #include "opt_adb.h"
+#include "opt_compat_netbsd.h"
 #include "opt_copy_symtab.h"
 #include "opt_ddb.h"
 #include "opt_ddbparam.h"
 #include "opt_kgdb.h"
+#include "opt_mac68k.h"
 #include "opt_modular.h"
-#include "opt_compat_netbsd.h"
+
 #include "akbd.h"
+#include "genfb.h"
 #include "macfb.h"
 #include "zsc.h"
 
@@ -315,7 +318,7 @@ consinit(void)
 		cninit();
 		init = 1;
 	} else {
-#if NAKBD > 0 && NMACFB > 0
+#if NAKBD > 0 && (NMACFB + NGENFB) > 0
 		/*
 		 * XXX  This is an evil hack on top of an evil hack!
 		 *
@@ -413,7 +416,7 @@ cpu_startup(void)
 	phys_map = uvm_km_suballoc(kernel_map, &minaddr, &maxaddr,
 	    VM_PHYS_SIZE, 0, false, NULL);
 
-	format_bytes(pbuf, sizeof(pbuf), ptoa(uvmexp.free));
+	format_bytes(pbuf, sizeof(pbuf), ptoa(uvm_availmem(false)));
 	printf("avail memory = %s\n", pbuf);
 
 	/*
@@ -811,7 +814,7 @@ int	get_top_of_ram(void);
 int
 get_top_of_ram(void)
 {
-	return ((mac68k_machine.mach_memsize * (1024 * 1024)) - 4096);
+	return ((mac68k_machine.mach_memsize * (1024 * 1024)) - PAGE_SIZE);
 }
 
 /*
@@ -901,7 +904,11 @@ getenvvars(u_long flag, char *buf)
 	 */
 	mac68k_machine.machineid = machineid = getenv("MACHINEID");
 	mac68k_machine.mach_processor = getenv("PROCESSOR");
+#ifndef MAC68K_MEMSIZE
 	mac68k_machine.mach_memsize = getenv("MEMSIZE");
+#else
+	mac68k_machine.mach_memsize = MAC68K_MEMSIZE;
+#endif
 	mac68k_machine.do_graybars = getenv("GRAYBARS");
 	mac68k_machine.serial_boot_echo = getenv("SERIALECHO");
 	mac68k_machine.serial_console = getenv("SERIALCONSOLE");
@@ -2325,7 +2332,7 @@ check_video(const char *id, u_long limit, u_long maxm)
 			addr += 32768;
 		}
 		if (mac68k_machine.do_graybars) {
-			printf("  %s internal video at addr 0x%p (phys 0x%p), ",
+			printf("  %s internal video at addr %p (phys %p), ",
 			    id, (void *)mac68k_video.mv_log,
 			    (void *)mac68k_video.mv_phys);
 			printf("len 0x%x.\n", mac68k_video.mv_len);
@@ -2470,7 +2477,7 @@ get_mapping(void)
 		 * Tell the user what we know.
 		 */
 		if (mac68k_machine.do_graybars)
-			printf("On-board video at addr 0x%p (phys 0x%p), "
+			printf("On-board video at addr %p (phys %p), "
 			    "len 0x%x.\n",
 			    (void *)mac68k_video.mv_kvaddr,
 			    (void *)mac68k_video.mv_phys,
@@ -2596,9 +2603,9 @@ get_mapping(void)
 					    mac68k_video.mv_kvaddr);
 			}
 		} else if (mac68k_machine.do_graybars) {
-			printf("  Video address = 0x%p\n",
+			printf("  Video address = %p\n",
 			    (void *)mac68k_video.mv_kvaddr);
-			printf("  Int video starts at 0x%p\n",
+			printf("  Int video starts at %p\n",
 			    (void *)mac68k_video.mv_log);
 			printf("  Length = 0x%x (%d) bytes\n",
 			    mac68k_video.mv_len, mac68k_video.mv_len);

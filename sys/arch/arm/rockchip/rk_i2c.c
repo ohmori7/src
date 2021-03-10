@@ -1,4 +1,4 @@
-/* $NetBSD: rk_i2c.c,v 1.4 2018/09/02 10:07:17 jmcneill Exp $ */
+/* $NetBSD: rk_i2c.c,v 1.10 2021/01/27 03:10:19 thorpej Exp $ */
 
 /*-
  * Copyright (c) 2018 Jared McNeill <jmcneill@invisible.ca>
@@ -28,7 +28,7 @@
 
 #include <sys/cdefs.h>
 
-__KERNEL_RCSID(0, "$NetBSD: rk_i2c.c,v 1.4 2018/09/02 10:07:17 jmcneill Exp $");
+__KERNEL_RCSID(0, "$NetBSD: rk_i2c.c,v 1.10 2021/01/27 03:10:19 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -100,9 +100,9 @@ __KERNEL_RCSID(0, "$NetBSD: rk_i2c.c,v 1.4 2018/09/02 10:07:17 jmcneill Exp $");
 #define	RKI2C_TXDATA(n)		(0x100 + (n) * 4)
 #define	RKI2C_RXDATA(n)		(0x200 + (n) * 4)
 
-static const char * const compatible[] = {
-	"rockchip,rk3399-i2c",
-	NULL
+static const struct device_compatible_entry compat_data[] = {
+	{ .compat = "rockchip,rk3399-i2c" },
+	DEVICE_COMPAT_EOL
 };
 
 struct rk_i2c_softc {
@@ -115,8 +115,6 @@ struct rk_i2c_softc {
 	u_int			sc_clkfreq;
 
 	struct i2c_controller	sc_ic;
-	kmutex_t		sc_lock;
-	kcondvar_t		sc_cv;
 };
 
 #define	RD4(sc, reg)				\
@@ -159,24 +157,6 @@ rk_i2c_init(struct rk_i2c_softc *sc)
 	WR4(sc, RKI2C_CON, 0);
 	WR4(sc, RKI2C_IEN, 0);
 	WR4(sc, RKI2C_IPD, RD4(sc, RKI2C_IPD));
-}
-
-static int
-rk_i2c_acquire_bus(void *priv, int flags)
-{
-	struct rk_i2c_softc * const sc = priv;
-
-	mutex_enter(&sc->sc_lock);
-
-	return 0;
-}
-
-static void
-rk_i2c_release_bus(void *priv, int flags)
-{
-	struct rk_i2c_softc * const sc = priv;
-
-	mutex_exit(&sc->sc_lock);
 }
 
 static int
@@ -244,8 +224,8 @@ rk_i2c_stop(struct rk_i2c_softc *sc)
 }
 
 static int
-rk_i2c_write(struct rk_i2c_softc *sc, i2c_addr_t addr, const uint8_t *buf,
-    size_t buflen, int flags, bool send_start)
+rk_i2c_write(struct rk_i2c_softc *sc, i2c_addr_t addr, const uint8_t *cmd,
+    size_t cmdlen, const uint8_t *buf, size_t buflen, int flags, bool send_start)
 {
 	union {
 		uint8_t data8[32];
@@ -254,8 +234,10 @@ rk_i2c_write(struct rk_i2c_softc *sc, i2c_addr_t addr, const uint8_t *buf,
 	uint32_t con;
 	u_int mode;
 	int error;
+	size_t len;
 
-	if (buflen > 31)
+	len = cmdlen + buflen;
+	if (len > 31)
 		return EINVAL;
 
 	mode = RKI2C_CON_I2C_MODE_TX;
@@ -267,10 +249,15 @@ rk_i2c_write(struct rk_i2c_softc *sc, i2c_addr_t addr, const uint8_t *buf,
 
 	/* Transmit data. Slave address goes in the lower 8 bits of TXDATA0 */
 	txdata.data8[0] = addr << 1;
-	memcpy(&txdata.data8[1], buf, buflen);
+	memcpy(&txdata.data8[1], cmd, cmdlen);
+	memcpy(&txdata.data8[1 + cmdlen], buf, buflen);
+#if _BYTE_ORDER == _BIG_ENDIAN
+	for (int i = 0; i < howmany(len + 1, 4); i++)
+		LE32TOH(txdata.data32[i]);
+#endif
 	bus_space_write_region_4(sc->sc_bst, sc->sc_bsh, RKI2C_TXDATA(0),
-	    txdata.data32, howmany(buflen + 1, 4));
-	WR4(sc, RKI2C_MTXCNT, __SHIFTIN(buflen + 1, RKI2C_MTXCNT_MTXCNT));
+	    txdata.data32, howmany(len + 1, 4));
+	WR4(sc, RKI2C_MTXCNT, __SHIFTIN(len + 1, RKI2C_MTXCNT_MTXCNT));
 
 	if ((error = rk_i2c_wait(sc, RKI2C_IPD_MBTFIPD)) != 0)
 		return error;
@@ -281,7 +268,7 @@ rk_i2c_write(struct rk_i2c_softc *sc, i2c_addr_t addr, const uint8_t *buf,
 static int
 rk_i2c_read(struct rk_i2c_softc *sc, i2c_addr_t addr,
     const uint8_t *cmd, size_t cmdlen, uint8_t *buf,
-    size_t buflen, int flags, bool send_start)
+    size_t buflen, int flags, bool send_start, bool last_ack)
 {
 	uint32_t rxdata[8];
 	uint32_t con, mrxaddr, mrxraddr;
@@ -293,24 +280,27 @@ rk_i2c_read(struct rk_i2c_softc *sc, i2c_addr_t addr,
 	if (cmdlen > 3)
 		return EINVAL;
 
-	mode = RKI2C_CON_I2C_MODE_RTX;
-	con = RKI2C_CON_I2C_EN | RKI2C_CON_ACK | __SHIFTIN(mode, RKI2C_CON_I2C_MODE);
+	mode = send_start ? RKI2C_CON_I2C_MODE_RTX : RKI2C_CON_I2C_MODE_RX;
+	con = RKI2C_CON_I2C_EN | __SHIFTIN(mode, RKI2C_CON_I2C_MODE);
 	WR4(sc, RKI2C_CON, con);
 
 	if (send_start && (error = rk_i2c_start(sc)) != 0)
 		return error;
 
-	mrxaddr = __SHIFTIN((addr << 1) | 1, RKI2C_MRXADDR_SADDR) |
-	    RKI2C_MRXADDR_ADDLVLD;
-	WR4(sc, RKI2C_MRXADDR, mrxaddr);
-	for (n = 0, mrxraddr = 0; n < cmdlen; n++) {
-		mrxraddr |= cmd[n] << (n * 8);
-		mrxraddr |= (RKI2C_MRXRADDR_ADDLVLD << n);
+	if (send_start) {
+		mrxaddr = __SHIFTIN((addr << 1) | 1, RKI2C_MRXADDR_SADDR) |
+		    RKI2C_MRXADDR_ADDLVLD;
+		WR4(sc, RKI2C_MRXADDR, mrxaddr);
+		for (n = 0, mrxraddr = 0; n < cmdlen; n++) {
+			mrxraddr |= cmd[n] << (n * 8);
+			mrxraddr |= (RKI2C_MRXRADDR_ADDLVLD << n);
+		}
+		WR4(sc, RKI2C_MRXRADDR, mrxraddr);
 	}
-	WR4(sc, RKI2C_MRXRADDR, mrxraddr);
 
-	/* Acknowledge last byte read */
-	con |= RKI2C_CON_ACK;
+	if (last_ack) {
+		con |= RKI2C_CON_ACK;
+	}
 	WR4(sc, RKI2C_CON, con);
 
 	/* Receive data. Slave address goes in the lower 8 bits of MRXADDR */
@@ -318,8 +308,19 @@ rk_i2c_read(struct rk_i2c_softc *sc, i2c_addr_t addr,
 	if ((error = rk_i2c_wait(sc, RKI2C_IPD_MBRFIPD)) != 0)
 		return error;
 
+#if 0
 	bus_space_read_region_4(sc->sc_bst, sc->sc_bsh, RKI2C_RXDATA(0),
 	    rxdata, howmany(buflen, 4));
+#else
+	for (n = 0; n < roundup(buflen, 4); n += 4)
+		rxdata[n/4] = RD4(sc, RKI2C_RXDATA(n/4));
+#endif
+
+#if _BYTE_ORDER == _BIG_ENDIAN
+	for (int i = 0; i < howmany(buflen, 4); i++)
+		HTOLE32(rxdata[i]);
+#endif
+
 	memcpy(buf, rxdata, buflen);
 
 	return 0;
@@ -333,21 +334,24 @@ rk_i2c_exec(void *priv, i2c_op_t op, i2c_addr_t addr,
 	bool send_start = true;
 	int error;
 
-	KASSERT(mutex_owned(&sc->sc_lock));
-
 	if (I2C_OP_READ_P(op)) {
-		error = rk_i2c_read(sc, addr, cmdbuf, cmdlen, buf, buflen, flags, send_start);
-	} else {
-		if (cmdlen > 0) {
-			error = rk_i2c_write(sc, addr, cmdbuf, cmdlen, flags, send_start);
+		uint8_t *databuf = buf;
+		while (buflen > 0) {
+			const size_t datalen = uimin(buflen, 32);
+			const bool last_ack = datalen == buflen;
+			error = rk_i2c_read(sc, addr, cmdbuf, cmdlen, databuf, datalen, flags, send_start, last_ack);
 			if (error != 0)
-				goto done;
+				break;
+			databuf += datalen;
+			buflen -= datalen;
 			send_start = false;
+			cmdbuf = NULL;
+			cmdlen = 0;
 		}
-		error = rk_i2c_write(sc, addr, buf, buflen, flags, send_start);
+	} else {
+		error = rk_i2c_write(sc, addr, cmdbuf, cmdlen, buf, buflen, flags, send_start);
 	}
 
-done:
 	if (error != 0 || I2C_OP_STOP_P(op))
 		rk_i2c_stop(sc);
 
@@ -357,24 +361,12 @@ done:
 	return error;
 }
 
-static i2c_tag_t
-rk_i2c_get_tag(device_t dev)
-{
-	struct rk_i2c_softc * const sc = device_private(dev);
-
-	return &sc->sc_ic;
-}
-
-static const struct fdtbus_i2c_controller_func rk_i2c_funcs = {
-	.get_tag = rk_i2c_get_tag,
-};
-
 static int
 rk_i2c_match(device_t parent, cfdata_t cf, void *aux)
 {
 	struct fdt_attach_args * const faa = aux;
 
-	return of_match_compatible(faa->faa_phandle, compatible);
+	return of_compatible_match(faa->faa_phandle, compat_data);
 }
 
 static void
@@ -413,9 +405,6 @@ rk_i2c_attach(device_t parent, device_t self, void *aux)
 		return;
 	}
 
-	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_SCHED);
-	cv_init(&sc->sc_cv, "rkiic");
-
 	aprint_naive("\n");
 	aprint_normal(": Rockchip I2C (%u Hz)\n", sc->sc_clkfreq);
 
@@ -423,12 +412,11 @@ rk_i2c_attach(device_t parent, device_t self, void *aux)
 
 	rk_i2c_init(sc);
 
+	iic_tag_init(&sc->sc_ic);
 	sc->sc_ic.ic_cookie = sc;
-	sc->sc_ic.ic_acquire_bus = rk_i2c_acquire_bus;
-	sc->sc_ic.ic_release_bus = rk_i2c_release_bus;
 	sc->sc_ic.ic_exec = rk_i2c_exec;
 
-	fdtbus_register_i2c_controller(self, phandle, &rk_i2c_funcs);
+	fdtbus_register_i2c_controller(&sc->sc_ic, phandle);
 
 	fdtbus_attach_i2cbus(self, phandle, &sc->sc_ic, iicbus_print);
 }

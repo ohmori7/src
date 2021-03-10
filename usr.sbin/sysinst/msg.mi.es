@@ -1,4 +1,4 @@
-/*	$NetBSD: msg.mi.es,v 1.12 2019/06/12 06:20:18 martin Exp $	*/
+/*	$NetBSD: msg.mi.es,v 1.29 2020/11/04 14:29:40 martin Exp $	*/
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -146,9 +146,6 @@ message heads
 
 message sectors
 {sectores}
-
-message fs_isize
-{tamaño promedio del fichero (bytes)}
 
 message mountpoint
 {punto de montaje (o 'ninguno')}
@@ -405,12 +402,6 @@ message label_offset_tail		{inicio ($2)}
 message invalid_sector_number
 {Número mal formado}
 
-message Select_file_system_block_size
-{Seleccione el tamaño de bloque del sistema de archivos}
-
-message Select_file_system_fragment_size
-{Seleccione el tamaño de fragmento del sistema de archivos}
-
 message packname
 {Por favor entroduzca un nombre para el disco NetBSD}
 
@@ -511,8 +502,12 @@ instalaciones.  Puede escoger para instalar sólo los conjuntos esenciales
 seleccionar de entre los conjuntos de distribución opcionales.
 }
 
+/* Called with: 			Example
+ *  $0 = sets suffix			.tgz
+ *  $1 = URL protocol used		ftp
+ */
 message ftpsource
-{Lo siguiente son el sitio %s, directorio, usuario y contraseña que se
+{Lo siguiente son el sitio $1, directorio, usuario y contraseña que se
 usarán.  Si «usuario» es «ftp», no se necesita contraseña..
 
 }
@@ -523,9 +518,12 @@ message email
 message dev
 {dispositivo}
 
+/* Called with: 			Example
+ *  $0 = sets suffix			.tgz
+ */
 message nfssource
 {Introduzca el servidor nfs y el directorio del servidor donde se encuentre
-la distribución.  Recuerde: el directorio debe contener los archivos .tgz y
+la distribución.  Recuerde: el directorio debe contener los archivos $0 y
 debe ser montable por nfs.
 
 }
@@ -537,12 +535,26 @@ en el directorio raíz de los disquetes.
 
 }
 
+/* Called with: 			Example
+ *  $0 = sets suffix			.tgz
+ */
 message cdromsource
 {Introduzca el dispositivo de CDROM a usar y el directorio del CDROM
 donde se encuentre la distribución.
-Recuerde, el directorio debe contener los archivos .tgz.
+Recuerde, el directorio debe contener los archivos $0.
 
 }
+
+message No_cd_found
+{Could not locate a CD medium in any drive with the distribution sets! 
+Enter the correct data manually, or insert a disk and retry. 
+}
+
+message abort_install
+{Cancel installation}
+
+message source_sel_retry
+{Back to source selection & retry}
 
 message Available_cds
 {Available CDs}
@@ -554,16 +566,22 @@ message cd_path_not_found
 {The installation sets have not been found at the default location on this
 CD. Please check device and path name.}
 
+/* Called with: 			Example
+ *  $0 = sets suffix			.tgz
+ */
 message localfssource
 {Introduzca el dispositivo local desmontado y el directorio de ese
 dispositivo donde se encuentre la distribución. 
-Recuerde, el directorio debe contener los archivos .tgz.
+Recuerde, el directorio debe contener los archivos $0.
 
 }
 
+/* Called with: 			Example
+ *  $0 = sets suffix			.tgz
+ */
 message localdir
 {Introduzca el directorio local ya montado donde se encuentre la distribución.
-Recuerde, el directorio debe contener los archivos .tgz.
+Recuerde, el directorio debe contener los archivos $0.
 
 }
 
@@ -668,8 +686,11 @@ Instalación interrumpida.}
 message delete_xfer_file
 {A eliminar después de la instalación}
 
+/* Called with: 			Example
+ *  $0 = set name			base
+ */
 message notarfile
-{El conjunto %s no existe.}
+{El conjunto $0 no existe.}
 
 message endtarok
 {Todos los conjuntos de distribución han sido desempaquetados
@@ -816,6 +837,9 @@ message set_system
 message set_compiler
 {Herramientas del compilador}
 
+message set_dtb
+{Devicetree hardware descriptions}
+
 message set_games
 {Juegos}
 
@@ -827,6 +851,9 @@ message set_misc
 
 message set_modules
 {Kernel Modules}
+
+message set_rescue
+{Recovery tools}
 
 message set_tests
 {Programas de prueba}
@@ -1024,8 +1051,16 @@ message Set_Sizes {Establecer los tamaños de las particiones NetBSD}
  */
 message Use_Default_Parts {Use default partition sizes}
 
+/* Called with:				Example
+ *  $0 = current partitioning name	Master Boot Record (MBR)
+ *  $1 = short version of $0		MBR
+ */
+message Use_Different_Part_Scheme
+{Delete everything, use different partitions (not $1)}
+
 message Gigabytes {Gigabytes}
 message Megabytes {Megabytes}
+message Bytes {Bytes}
 message Cylinders {Cilindros}
 message Sectors {Sectores}
 message Select_medium {Seleccione el medio}
@@ -1192,24 +1227,9 @@ paquetes binarios.  Por favor verifique el camino a los paquetes y
 reinténtelo de nuevo.}
 message failed {Error}
 
-message notsupported {Operación no admitida!}
 message askfsmountadv {Punto de montaje o 'raid' o 'CGD' o 'lvm'?}
 message partman {Partición extendida}
-message editbsdpart {Editar particiones NetBSD}
 message editpart {Editar particiones}
-message editmbr {Editar y guardar MBR}
-message switchgpt {Cambiar a GPT}
-message switchmbr {Cambiar a MBR}
-message renamedisk {Establece el nombre del disco}
-message fmtasraid {Formato como RAID}
-message fmtaslvm {Formato como LVM PV}
-message encrypt {Cifrar}
-message setbootable {La bandera de arranque}
-message erase {Borrado seguro}
-message undo {Deshacer los cambios}
-message unconfig {Desconfigurar}
-message edit {Editar}
-message doumount {Fuerza umount}
 
 message fremove {QUITAR}
 message remove {Quitar}
@@ -1237,11 +1257,17 @@ message swap_display	{swap}
  *  $1 = swap partition name		my_swap
  */
 message Auto_add_swap_part
-{A swap partition (named $1) seems to exist on $0. 
+{A swap partition (named $1) 
+seems to exist on $0. 
 Do you want to use that?}
 
 message parttype_disklabel {BSD disklabel}
 message parttype_disklabel_short {disklabel}
+/*
+ * This is used on architectures with MBR above disklabel when there is
+ * no MBR on a disk.
+ */
+message parttype_only_disklabel {disklabel (NetBSD only)}
 
 message select_part_scheme
 {The disk seems not to have been partitioned before. Please select
@@ -1273,6 +1299,7 @@ message dl_type_invalid	{Invalid file system type code (0 .. 255)}
 message	cancel		{Cancel}
 
 message	out_of_range	{Invalid value}
+message	invalid_guid	{Invalid GUID}
 
 message	reedit_partitions	{Re-edit}
 message abort_installation	{Abort installation}
@@ -1288,7 +1315,7 @@ message	mp_already_exists	{$0 already defined!}
 
 message ptnsize_replace_existing
 {This is an already existing partition. 
-To change it's size, the partition will need to be deleted and later
+To change its size, the partition will need to be deleted and later
 recreated.  All data in this partition will be lost.
 
 Would you like to delete this partition and continue?}
@@ -1299,6 +1326,25 @@ message ptn_type		{tipo}
 message ptn_start		{inicio}
 message ptn_size		{tamaño}
 message ptn_end			{fin}
+
+message ptn_bsize		{tamaño bloque}
+message ptn_fsize		{tamaño frag}
+message ptn_isize		{tam prom archi}
+
+/* Called with:                         Example
+ *  $0 = avg file size in byte          1200
+ */
+message ptn_isize_bytes		{$0 bytes (para número de inodos)}
+message ptn_isize_dflt		{4 fragmentos}
+
+message Select_file_system_block_size
+{Seleccione el tamaño de bloque del sistema de archivos}
+
+message Select_file_system_fragment_size
+{Seleccione el tamaño de fragmento del sistema de archivos}
+
+message ptn_isize_prompt
+{tamaño promedio del fichero (bytes)}
 
 message No_free_space {Sin espacio libre}
 message Invalid_numeric {Número no válido!}
@@ -1314,13 +1360,14 @@ message free_space_line {Espacio en $0..$1 $3 (tamaño $2 $3)\n}
 
 message	fs_type_ffsv2	{FFSv2}
 message	fs_type_ffs	{FFS}
+message fs_type_ext2old	{Linux Ext2 (old)}
 message	other_fs_type	{Other type}
 
 message	editpack	{Edit name of the disk}
 message	edit_disk_pack_hdr
 {The name of the disk is arbitrary. 
-It is usefull to tell various disks apart. 
-It may alse be used when auto-crating dk(4) "wedges" for this disk. 
+It is useful for distinguishing between multiple disks.
+It may also be used when auto-creating dk(4) "wedges" for this disk.
 
 Enter disk name}
 
@@ -1435,6 +1482,9 @@ message newfs_flag	{N}
 message ptn_install	{instalar}
 message ptn_instflag_desc	{(I)nstalar, }
 
+message clone_flag	{C}
+message clone_flag_desc	{, (C)lone}
+
 message parttype_gpt {Guid Partition Table (GPT)}
 message parttype_gpt_short {GPT}
 
@@ -1457,3 +1507,19 @@ message	gpt_flag_desc	{, (B)ootable}
  *  $0 = file system type		FFSv2
  */
 message size_ptn_not_mounted		{(Other: $0)}
+
+message running_system			{current system}
+
+message clone_from_elsewhere		{Clone external partition(s)}
+message select_foreign_part
+{Please select an external source partition:}
+message select_source_hdr
+{Your currently selected source partitions are:}
+message clone_with_data			{Clone with data}
+message	select_source_add		{Add another partition}
+message clone_target_end		{Add at end}
+message clone_target_hdr
+{Insert cloned partitions before:}
+message clone_target_disp		{cloned partition(s)}
+message clone_src_done
+{Source selection OK, proceed to target selection}

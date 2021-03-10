@@ -1,4 +1,4 @@
-/*	$NetBSD: md.h,v 1.3 2019/06/12 06:20:19 martin Exp $	*/
+/*	$NetBSD: md.h,v 1.6 2020/06/10 16:26:33 tsutsui Exp $	*/
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -48,7 +48,8 @@
 #define PART_BOOT		(5 * 1024 * 1024)	/* 5MB boot partition */
 #define PART_BOOT_MIN		(1 * 1024 * 1024)	/* 1MB minimum */
 #define	PART_BOOT_TYPE		FS_EX2FS
-#define	PART_BOOT_MOUNT		"/stand"
+#define	PART_BOOT_SUBT		1			/* use "old" ext2 */
+#define	PART_BOOT_MOUNT		"/ext2"
 
 /* default partition size */
 #define DEFSWAPRAM	32	/* Assume at least this RAM for swap calc */
@@ -69,7 +70,7 @@
 /*
  *  Default filesets to fetch and install during installation
  *  or upgrade. The standard sets are:
- *      base etc comp games man misc tests text xbase xcomp xetc xfont xserver
+ *      base etc comp games man misc rescue tests text xbase xcomp xetc xfont xserver
  */
 #define SET_KERNEL_1_NAME	"kern-GENERIC"
 #define MD_SETS_SELECTED	SET_KERNEL_1, SET_SYSTEM, SET_X11_NOSERVERS

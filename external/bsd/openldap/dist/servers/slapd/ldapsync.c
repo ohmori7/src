@@ -1,10 +1,10 @@
-/*	$NetBSD: ldapsync.c,v 1.1.1.6 2018/02/06 01:53:15 christos Exp $	*/
+/*	$NetBSD: ldapsync.c,v 1.2 2020/08/11 13:15:39 christos Exp $	*/
 
 /* ldapsync.c -- LDAP Content Sync Routines */
 /* $OpenLDAP$ */
 /* This work is part of OpenLDAP Software <http://www.openldap.org/>.
  *
- * Copyright 2003-2017 The OpenLDAP Foundation.
+ * Copyright 2003-2020 The OpenLDAP Foundation.
  * Portions Copyright 2003 IBM Corporation.
  * All rights reserved.
  *
@@ -18,7 +18,7 @@
  */
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: ldapsync.c,v 1.1.1.6 2018/02/06 01:53:15 christos Exp $");
+__RCSID("$NetBSD: ldapsync.c,v 1.2 2020/08/11 13:15:39 christos Exp $");
 
 #include "portable.h"
 

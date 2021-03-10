@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile.inc,v 1.10 2018/11/11 22:50:06 mrg Exp $
+#	$NetBSD: Makefile.inc,v 1.12 2019/09/26 08:03:59 mrg Exp $
 
 .ifndef _EXTERNAL_GPL3_GCC_USR_BIN_MAKEFILE_INC_
 _EXTERNAL_GPL3_GCC_USR_BIN_MAKEFILE_INC_=1
@@ -90,8 +90,12 @@ VER_CPPFLAGS=	-DBASEVER="\"${BASEVER}"\" \
 		-DPKGVERSION=$(G_PKGVERSION_s) \
 		-DBUGURL=$(G_BUGURL_s)
 
-CPPFLAGS.version.c+=	${VER_CPPFLAGS}
-version.c: ${GCCARCH}/defs.mk ${TOP}/tools/gcc/gcc-version.mk
+VERFILES=	cppbuiltin.c c-cppbuiltin.c gcc.c version.c
+
+.for _f in ${VERFILES}
+CPPFLAGS.${_f} +=	${VER_CPPFLAGS}
+${_f}: ${GCCARCH}/defs.mk ${TOP}/tools/gcc/gcc-version.mk
+.endfor
 
 .include "${GCCARCH}/defs.mk"
 

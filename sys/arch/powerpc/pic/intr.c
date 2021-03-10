@@ -1,4 +1,4 @@
-/*	$NetBSD: intr.c,v 1.26 2018/09/03 16:29:26 riastradh Exp $ */
+/*	$NetBSD: intr.c,v 1.31 2021/03/06 07:24:24 rin Exp $ */
 
 /*-
  * Copyright (c) 2007 Michael Lorenz
@@ -26,14 +26,17 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: intr.c,v 1.26 2018/09/03 16:29:26 riastradh Exp $");
+#define __INTR_PRIVATE
 
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD: intr.c,v 1.31 2021/03/06 07:24:24 rin Exp $");
+
+#ifdef _KERNEL_OPT
 #include "opt_interrupt.h"
 #include "opt_multiprocessor.h"
 #include "opt_pic.h"
-
-#define __INTR_PRIVATE
+#include "opt_ppcarch.h"
+#endif
 
 #include <sys/param.h>
 #include <sys/cpu.h>
@@ -60,12 +63,19 @@ __KERNEL_RCSID(0, "$NetBSD: intr.c,v 1.26 2018/09/03 16:29:26 riastradh Exp $");
 
 #define	PIC_VIRQ_LEGAL_P(x)	((u_int)(x) < NVIRQ)
 
+#if defined(PPC_IBM4XX) && !defined(PPC_IBM440)
+/* eieio is implemented as sync */
+#define REORDER_PROTECT() __asm volatile("sync")
+#else
+#define REORDER_PROTECT() __asm volatile("sync; eieio")
+#endif
+
 struct pic_ops *pics[MAX_PICS];
 int num_pics = 0;
 int max_base = 0;
 uint8_t	virq_map[NIRQ];
 imask_t virq_mask = HWIRQ_MASK;
-imask_t	imask[NIPL];
+static imask_t imask[NIPL];
 int	primary_pic = 0;
 
 static int	fakeintr(void *);
@@ -190,8 +200,8 @@ intr_establish_xname(int hwirq, int type, int ipl, int (*ih_fun)(void *),
 		break;
 	}
 	if (is->is_hand == NULL) {
-		snprintf(is->is_source, sizeof(is->is_source), "irq %d",
-		    is->is_hwirq);
+		snprintf(is->is_source, sizeof(is->is_source), "%s %d",
+		    pic->pic_name, is->is_hwirq);
 		evcnt_attach_dynamic(&is->is_ev, EVCNT_TYPE_INTR, NULL,
 		    pic->pic_name, is->is_source);
 	}
@@ -608,11 +618,11 @@ splraise(int ncpl)
 	int ocpl;
 
 	if (ncpl == ci->ci_cpl) return ncpl;
-	__asm volatile("sync; eieio");	/* don't reorder.... */
+	REORDER_PROTECT();
 	ocpl = ci->ci_cpl;
 	KASSERT(ncpl < NIPL);
 	ci->ci_cpl = uimax(ncpl, ocpl);
-	__asm volatile("sync; eieio");	/* reorder protect */
+	REORDER_PROTECT();
 	__insn_barrier();
 	return ocpl;
 }
@@ -635,12 +645,12 @@ splx(int ncpl)
 	struct cpu_info *ci = curcpu();
 
 	__insn_barrier();
-	__asm volatile("sync; eieio");	/* reorder protect */
+	REORDER_PROTECT();
 	ci->ci_cpl = ncpl;
 	if (have_pending_intr_p(ci, ncpl))
 		pic_do_pending_int();
 
-	__asm volatile("sync; eieio");	/* reorder protect */
+	REORDER_PROTECT();
 }
 
 int
@@ -650,12 +660,12 @@ spllower(int ncpl)
 	int ocpl;
 
 	__insn_barrier();
-	__asm volatile("sync; eieio");	/* reorder protect */
+	REORDER_PROTECT();
 	ocpl = ci->ci_cpl;
 	ci->ci_cpl = ncpl;
 	if (have_pending_intr_p(ci, ncpl))
 		pic_do_pending_int();
-	__asm volatile("sync; eieio");	/* reorder protect */
+	REORDER_PROTECT();
 	return ocpl;
 }
 
@@ -879,3 +889,5 @@ interrupt_distribute_handler(const char *intrid, const kcpuset_t *newset,
 {
 	return EOPNOTSUPP;
 }
+
+#undef REORDER_PROTECT

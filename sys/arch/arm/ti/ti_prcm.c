@@ -1,4 +1,4 @@
-/* $NetBSD: ti_prcm.c,v 1.1 2017/10/26 23:28:15 jmcneill Exp $ */
+/* $NetBSD: ti_prcm.c,v 1.4 2020/06/03 14:56:09 jmcneill Exp $ */
 
 /*-
  * Copyright (c) 2017 Jared McNeill <jmcneill@invisible.ca>
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ti_prcm.c,v 1.1 2017/10/26 23:28:15 jmcneill Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ti_prcm.c,v 1.4 2020/06/03 14:56:09 jmcneill Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -228,30 +228,46 @@ ti_prcm_get_hwmod(const int phandle, u_int index)
 {
 	struct ti_prcm_clk *tc;
 	const char *hwmods, *p;
-	int len, resid;
+	int len, resid, hwmod_phandle;
 	u_int n;
 
 	KASSERTMSG(prcm_softc != NULL, "prcm driver not attached");
 
-	hwmods = fdtbus_get_prop(phandle, "ti,hwmods", &len);
-	if (len <= 0)
-		return NULL;
+	/* If this node does not have a ti,hwmods property, try the parent */
+	hwmod_phandle = of_hasprop(phandle, "ti,hwmods") ? phandle : OF_parent(phandle);
 
-	p = hwmods;
-	for (n = 0, resid = len; resid > 0; n++) {
-		if (n == index) {
-			tc = ti_prcm_clock_find(prcm_softc, p);
-			if (tc == NULL) {
-				aprint_error_dev(prcm_softc->sc_dev,
-				    "no hwmod with name '%s'\n", p);
-				return NULL;
+	/* Lookup clock by "ti,hwmods" name (old method) */
+	hwmods = fdtbus_get_prop(hwmod_phandle, "ti,hwmods", &len);
+	if (len > 0) {
+		p = hwmods;
+		for (n = 0, resid = len; resid > 0; n++) {
+			if (n == index) {
+				tc = ti_prcm_clock_find(prcm_softc, p);
+				if (tc == NULL) {
+					aprint_error_dev(prcm_softc->sc_dev,
+					    "no hwmod with name '%s'\n", p);
+					return NULL;
+				}
+				KASSERT(tc->type == TI_PRCM_HWMOD);
+				return &tc->base;
 			}
-			KASSERT(tc->type == TI_PRCM_HWMOD);
-			return &tc->base;
+			resid -= strlen(p);
+			p += strlen(p) + 1;
 		}
-		resid -= strlen(p);
-		p += strlen(p) + 1;
 	}
 
-	return NULL;
+	/* Find clock resource */
+	return fdtbus_clock_get_index(hwmod_phandle, index);
+}
+
+int
+ti_prcm_enable_hwmod(const int phandle, u_int index)
+{
+	struct clk *clk;
+
+	clk = ti_prcm_get_hwmod(phandle, index);
+	if (clk == NULL)
+		return ENOENT;
+
+	return clk_enable(clk);
 }

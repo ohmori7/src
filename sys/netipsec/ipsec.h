@@ -1,4 +1,4 @@
-/*	$NetBSD: ipsec.h,v 1.88 2019/06/12 22:23:50 christos Exp $	*/
+/*	$NetBSD: ipsec.h,v 1.91 2020/08/28 06:20:44 ozaki-r Exp $	*/
 /*	$FreeBSD: ipsec.h,v 1.2.4.2 2004/02/14 22:23:23 bms Exp $	*/
 /*	$KAME: ipsec.h,v 1.53 2001/11/20 08:32:38 itojun Exp $	*/
 
@@ -275,9 +275,9 @@ void ipsec_pcbdisconn(struct inpcbpolicy *);
 void ipsec_invalpcbcacheall(void);
 
 struct inpcb;
-int ipsec4_output(struct mbuf *, struct inpcb *, int, u_long *, bool *, bool *);
+int ipsec4_output(struct mbuf *, struct inpcb *, int, u_long *, bool *, bool *, bool *);
 
-int ipsec_ip_input(struct mbuf *, bool);
+int ipsec_ip_input_checkpolicy(struct mbuf *, bool);
 void ipsec_mtu(struct mbuf *, int *);
 #ifdef INET6
 void ipsec6_udp_cksum(struct mbuf *);
@@ -318,7 +318,7 @@ void ipsec4_common_input(struct mbuf *m, int, int);
 int ipsec4_common_input_cb(struct mbuf *, struct secasvar *, int, int);
 int ipsec4_process_packet(struct mbuf *, const struct ipsecrequest *, u_long *);
 int ipsec_process_done(struct mbuf *, const struct ipsecrequest *,
-    struct secasvar *);
+    struct secasvar *, int);
 
 struct mbuf *m_clone(struct mbuf *);
 struct mbuf *m_makespace(struct mbuf *, int, int, int *);

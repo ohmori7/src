@@ -1,4 +1,4 @@
-/*	$NetBSD: ninepuffs.c,v 1.26 2019/05/20 08:55:31 ozaki-r Exp $	*/
+/*	$NetBSD: ninepuffs.c,v 1.33 2020/06/14 00:30:20 uwe Exp $	*/
 
 /*
  * Copyright (c) 2007  Antti Kantee.  All Rights Reserved.
@@ -31,7 +31,7 @@
 
 #include <sys/cdefs.h>
 #ifndef lint
-__RCSID("$NetBSD: ninepuffs.c,v 1.26 2019/05/20 08:55:31 ozaki-r Exp $");
+__RCSID("$NetBSD: ninepuffs.c,v 1.33 2020/06/14 00:30:20 uwe Exp $");
 #endif /* !lint */
 
 #include <sys/types.h>
@@ -42,6 +42,7 @@ __RCSID("$NetBSD: ninepuffs.c,v 1.26 2019/05/20 08:55:31 ozaki-r Exp $");
 
 #include <assert.h>
 #include <err.h>
+#include <errno.h>
 #include <netdb.h>
 #include <pwd.h>
 #include <puffs.h>
@@ -52,46 +53,83 @@ __RCSID("$NetBSD: ninepuffs.c,v 1.26 2019/05/20 08:55:31 ozaki-r Exp $");
 #include "ninepuffs.h"
 #include "nineproto.h"
 
-#define DEFPORT_9P 564
+#define DEFPORT_9P "564" /* "9pfs", but don't depend on it being in services */
 
 __dead static void
 usage(void)
 {
 
-	fprintf(stderr, "usage: %s [-su] [-o mntopts] [-p port] "
+	fprintf(stderr, "usage: %s [-46su] [-o mntopts] [-p port] "
 	    "[user@]server[:path] mountpoint\n", getprogname());
+	fprintf(stderr, "       %s -c [-su] [-o mntopts] device mountpoint\n",
+	    getprogname());
 	exit(1);
 }
 
 /*
- * TCPv4 connection to 9P file server, forget IL and IPv6 for now.
+ * TCP connection to 9P file server.
  * Return connected socket or exit with error.
  */
 static int
-serverconnect(const char *addr, unsigned short port)
+serverconnect(const char *hostname, const char *portname, int family)
 {
-	struct sockaddr_in mysin;
-	struct hostent *he;
-	int s;
+	int ret;
 
-	he = gethostbyname2(addr, AF_INET);
-	if (he == NULL) {
-		herror("gethostbyname");
-		exit(1);
+	struct addrinfo hints;
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = family;
+	hints.ai_socktype = SOCK_STREAM;
+
+	if (portname == NULL) {
+		portname = DEFPORT_9P;
+		hints.ai_flags |= AI_NUMERICSERV;
 	}
 
-	s = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+	struct addrinfo *ai0;
+	ret = getaddrinfo(hostname, portname, &hints, &ai0);
+	if (ret != 0)
+		errx(EXIT_FAILURE, "%s", gai_strerror(ret));
+
+	int s = -1;
+	const char *cause = NULL;
+	for (struct addrinfo *ai = ai0; ai != NULL; ai = ai->ai_next) {
+		s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+		if (s < 0) {
+			cause = "socket";
+			continue;
+		}
+
+		const int opt = 1;
+		ret = setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &opt, sizeof(opt));
+		if (ret < 0) {
+			cause = "SO_NOSIGPIPE";
+			continue;
+		}
+
+		ret = connect(s, ai->ai_addr, ai->ai_addrlen);
+		if (ret < 0) {
+			close(s);
+			s = -1;
+			cause = "connect";
+			continue;
+		}
+	}
+
+	if (s < 0)
+		err(EXIT_FAILURE, "%s", cause);
+
+	freeaddrinfo(ai0);
+	return s;
+}
+
+static int
+open_cdev(const char *path)
+{
+	int s;
+
+	s = open(path, O_RDWR, 0);
 	if (s == -1)
-		err(1, "socket");
-
-	memset(&mysin, 0, sizeof(struct sockaddr_in));
-	mysin.sin_family = AF_INET;
-	mysin.sin_port = htons(port);
-	memcpy(&mysin.sin_addr, he->h_addr, sizeof(struct in_addr));
-
-	if (connect(s, (struct sockaddr *)&mysin, sizeof(mysin)) == -1)
-		err(1, "connect");
-
+		err(1, "%s", path);
 	return s;
 }
 
@@ -103,12 +141,14 @@ main(int argc, char *argv[])
 	struct puffs_ops *pops;
 	struct puffs_node *pn_root;
 	mntoptparse_t mp;
+	int family;
 	const char *user, *srvhost, *srvpath;
 	char *p;
-	unsigned short port;
+	const char *port;
 	int mntflags, pflags, ch;
 	int detach;
-	int protover = P9PROTO_VERSION;
+	int protover;
+	int server;
 
 	setprogname(argv[0]);
 
@@ -117,10 +157,32 @@ main(int argc, char *argv[])
 
 	mntflags = pflags = 0;
 	detach = 1;
-	port = DEFPORT_9P;
+#ifdef INET6
+	family = AF_UNSPEC;
+#else
+	family = AF_INET;
+#endif
+	port = NULL;
+	protover = P9PROTO_VERSION;
+	server = P9P_SERVER_TCP;
 
-	while ((ch = getopt(argc, argv, "o:p:su")) != -1) {
+	while ((ch = getopt(argc, argv, "46co:p:su")) != -1) {
 		switch (ch) {
+		case '4':
+			family = AF_INET;
+			break;
+		case '6':
+#ifdef INET6
+			family = AF_INET6;
+			break;
+#else
+			errno = EPFNOSUPPORT;
+			err(EXIT_FAILURE, "IPv6");
+			/* NOTREACHED */
+#endif
+		case 'c':
+			server = P9P_SERVER_CDEV;
+			break;
 		case 'o':
 			mp = getmntopts(optarg, puffsmopts, &mntflags, &pflags);
 			if (mp == NULL)
@@ -128,7 +190,7 @@ main(int argc, char *argv[])
 			freemntopts(mp);
 			break;
 		case 'p':
-			port = atoi(optarg);
+			port = optarg;
 			break;
 		case 's':
 			detach = 0;
@@ -183,6 +245,7 @@ main(int argc, char *argv[])
 	p9p.maxreq = P9P_DEFREQLEN;
 	p9p.nextfid = 1;
 	p9p.protover = protover;
+	p9p.server = server;
 
 	/* user@ */
 	if ((p = strchr(argv[0], '@')) != NULL) {
@@ -199,18 +262,43 @@ main(int argc, char *argv[])
 		user = pw->pw_name;
 	}
 
-	/* :/mountpath */
-	if ((p = strchr(srvhost, ':')) != NULL) {
-		*p = '\0';
-		srvpath = p+1;
-		if (*srvpath != '/')
-			errx(1, "%s is not an absolute path", srvpath);
-	} else {
-		srvpath = "/";
+	/* [host] or [host]:/path with square brackets around host */
+	if (server == P9P_SERVER_TCP && *srvhost == '[') {
+		++srvhost;
+		if ((p = strchr(srvhost, ']')) == NULL)
+			errx(EXIT_FAILURE, "Missing bracket after the host name");
+		*p++ = '\0';
+		if (*p == '\0')		/* [host] */
+			srvpath = "/";
+		else if (*p == ':')	/* [host]:path */
+			srvpath = p+1;
+		else			/* [foo]bar */
+			errx(EXIT_FAILURE, "Invalid brackets in the host name");
+
+	} else { /* host or host:/path without brackets around host */
+		if ((p = strchr(srvhost, ':')) != NULL) {
+			*p = '\0';
+			srvpath = p+1;
+		} else {
+			srvpath = "/";
+		}
 	}
 
-	p9p.servsock = serverconnect(srvhost, port);
+	if (*srvpath == '\0')
+		errx(1, "Empty path");
+	if (*srvpath != '/')
+		errx(1, "%s: Not an absolute path", srvpath);
+
+
+	if (p9p.server == P9P_SERVER_TCP) {
+		p9p.servsock = serverconnect(srvhost, port, family);
+	} else {
+		/* path to a vio9p(4) device, e.g., /dev/vio9p0 */
+		p9p.servsock = open_cdev(argv[0]);
+	}
+
 	if ((pn_root = p9p_handshake(pu, user, srvpath)) == NULL) {
+		close(p9p.servsock);
 		puffs_exit(pu, 1);
 		exit(1);
 	}
@@ -232,6 +320,8 @@ main(int argc, char *argv[])
 
 	if (puffs_mainloop(pu) == -1)
 		err(1, "mainloop");
+	close(p9p.servsock);
+	puffs_exit(pu, 1);
 
 	return 0;
 }

@@ -1,4 +1,4 @@
-/* $NetBSD: ixgbe_api.c,v 1.22 2018/12/06 13:25:02 msaitoh Exp $ */
+/* $NetBSD: ixgbe_api.c,v 1.24 2020/01/03 12:59:46 pgoyette Exp $ */
 
 /******************************************************************************
   SPDX-License-Identifier: BSD-3-Clause
@@ -1106,6 +1106,19 @@ s32 ixgbe_set_vlvf(struct ixgbe_hw *hw, u32 vlan, u32 vind, bool vlan_on,
 }
 
 /**
+ *  ixgbe_toggle_txdctl - Toggle VF's queues
+ *  @hw: pointer to hardware structure
+ *  @vind: VMDq pool index
+ *
+ *  Enable and disable each queue in VF.
+ */
+s32 ixgbe_toggle_txdctl(struct ixgbe_hw *hw, u32 vind)
+{
+	return ixgbe_call_func(hw, hw->mac.ops.toggle_txdctl, (hw,
+			       vind), IXGBE_NOT_IMPLEMENTED);
+}
+
+/**
  *  ixgbe_fc_enable - Enable flow control
  *  @hw: pointer to hardware structure
  *
@@ -1368,8 +1381,8 @@ s32 ixgbe_bypass_rw(struct ixgbe_hw *hw, u32 cmd, u32 *status)
  * ixgbe_bypass_valid_rd - Verify valid return from bit-bang.
  *
  * If we send a write we can't be sure it took until we can read back
- * that same register.  It can be a problem as some of the feilds may
- * for valid reasons change inbetween the time wrote the register and
+ * that same register.  It can be a problem as some of the fields may
+ * for valid reasons change in-between the time wrote the register and
  * we read it again to verify.  So this function check everything we
  * can check and then assumes it worked.
  *
@@ -1383,7 +1396,7 @@ bool ixgbe_bypass_valid_rd(struct ixgbe_hw *hw, u32 in_reg, u32 out_reg)
 }
 
 /**
- *  ixgbe_bypass_set - Set a bypass field in the FW CTRL Regiter.
+ *  ixgbe_bypass_set - Set a bypass field in the FW CTRL Register.
  *  @hw: pointer to hardware structure
  *  @cmd: The control word we are setting.
  *  @event: The event we are setting in the FW.  This also happens to

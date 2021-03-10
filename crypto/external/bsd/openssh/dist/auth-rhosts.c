@@ -1,5 +1,5 @@
-/*	$NetBSD: auth-rhosts.c,v 1.10 2019/01/27 02:08:33 pgoyette Exp $	*/
-/* $OpenBSD: auth-rhosts.c,v 1.49 2018/07/09 21:35:50 markus Exp $ */
+/*	$NetBSD: auth-rhosts.c,v 1.13 2021/03/05 17:47:15 christos Exp $	*/
+/* $OpenBSD: auth-rhosts.c,v 1.53 2020/10/18 11:32:01 djm Exp $ */
 
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -17,7 +17,7 @@
  */
 
 #include "includes.h"
-__RCSID("$NetBSD: auth-rhosts.c,v 1.10 2019/01/27 02:08:33 pgoyette Exp $");
+__RCSID("$NetBSD: auth-rhosts.c,v 1.13 2021/03/05 17:47:15 christos Exp $");
 #include <sys/types.h>
 #include <sys/stat.h>
 
@@ -38,7 +38,6 @@ __RCSID("$NetBSD: auth-rhosts.c,v 1.10 2019/01/27 02:08:33 pgoyette Exp $");
 #include "sshkey.h"
 #include "servconf.h"
 #include "canohost.h"
-#include "sshkey.h"
 #include "hostfile.h"
 #include "auth.h"
 
@@ -222,9 +221,9 @@ auth_rhosts2(struct passwd *pw, const char *client_user, const char *hostname,
 	 * are no system-wide files.
 	 */
 	if (!rhosts_files[rhosts_file_index] &&
-	    stat(_PATH_RHOSTS_EQUIV, &st) < 0 &&
-	    stat(_PATH_SSH_HOSTS_EQUIV, &st) < 0) {
-		debug3("%s: no hosts access files exist", __func__);
+	    stat(_PATH_RHOSTS_EQUIV, &st) == -1 &&
+	    stat(_PATH_SSH_HOSTS_EQUIV, &st) == -1) {
+		debug3_f("no hosts access files exist");
 		return 0;
 	}
 
@@ -233,7 +232,7 @@ auth_rhosts2(struct passwd *pw, const char *client_user, const char *hostname,
 	 * shosts.equiv.
 	 */
 	if (pw->pw_uid == 0)
-		debug3("%s: root user, ignoring system hosts files", __func__);
+		debug3_f("root user, ignoring system hosts files");
 	else {
 		if (check_rhosts_file(_PATH_RHOSTS_EQUIV, hostname, ipaddr,
 		    client_user, pw->pw_name)) {
@@ -253,7 +252,7 @@ auth_rhosts2(struct passwd *pw, const char *client_user, const char *hostname,
 	 * Check that the home directory is owned by root or the user, and is
 	 * not group or world writable.
 	 */
-	if (stat(pw->pw_dir, &st) < 0) {
+	if (stat(pw->pw_dir, &st) == -1) {
 		logit("Rhosts authentication refused for %.100s: "
 		    "no home directory %.200s", pw->pw_name, pw->pw_dir);
 		auth_debug_add("Rhosts authentication refused for %.100s: "
@@ -278,7 +277,7 @@ auth_rhosts2(struct passwd *pw, const char *client_user, const char *hostname,
 		/* Check users .rhosts or .shosts. */
 		snprintf(buf, sizeof buf, "%.500s/%.100s",
 			 pw->pw_dir, rhosts_files[rhosts_file_index]);
-		if (stat(buf, &st) < 0)
+		if (stat(buf, &st) == -1)
 			continue;
 
 		/*
@@ -299,8 +298,9 @@ auth_rhosts2(struct passwd *pw, const char *client_user, const char *hostname,
 		 * Check if we have been configured to ignore .rhosts
 		 * and .shosts files.
 		 */
-		if ((pw->pw_uid == 0 && options.ignore_root_rhosts) ||
-		    (pw->pw_uid != 0 && options.ignore_rhosts)) {
+		if (options.ignore_rhosts == IGNORE_RHOSTS_YES ||
+		    (options.ignore_rhosts == IGNORE_RHOSTS_SHOSTS &&
+		    strcmp(rhosts_files[rhosts_file_index], ".shosts") != 0)) {
 			auth_debug_add("Server has been configured to "
 			    "ignore %.100s.", rhosts_files[rhosts_file_index]);
 			continue;

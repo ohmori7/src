@@ -1,4 +1,4 @@
-/* $NetBSD: thinkpad_acpi.c,v 1.46 2016/04/03 10:36:00 mlelstv Exp $ */
+/* $NetBSD: thinkpad_acpi.c,v 1.49 2021/01/29 15:49:55 thorpej Exp $ */
 
 /*-
  * Copyright (c) 2007 Jared D. McNeill <jmcneill@invisible.ca>
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: thinkpad_acpi.c,v 1.46 2016/04/03 10:36:00 mlelstv Exp $");
+__KERNEL_RCSID(0, "$NetBSD: thinkpad_acpi.c,v 1.49 2021/01/29 15:49:55 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -161,10 +161,10 @@ CFATTACH_DECL3_NEW(thinkpad, sizeof(thinkpad_softc_t),
     thinkpad_match, thinkpad_attach, thinkpad_detach, NULL, NULL, NULL,
     DVF_DETACH_SHUTDOWN);
 
-static const char * const thinkpad_ids[] = {
-	"IBM0068",
-	"LEN0068",
-	NULL
+static const struct device_compatible_entry compat_data[] = {
+	{ .compat = "IBM0068" },
+	{ .compat = "LEN0068" },
+	DEVICE_COMPAT_EOL
 };
 
 static int
@@ -172,11 +172,10 @@ thinkpad_match(device_t parent, cfdata_t match, void *opaque)
 {
 	struct acpi_attach_args *aa = (struct acpi_attach_args *)opaque;
 	ACPI_INTEGER ver;
+	int ret;
 
-	if (aa->aa_node->ad_type != ACPI_TYPE_DEVICE)
-		return 0;
-
-	if (!acpi_match_hid(aa->aa_node->ad_devinfo, thinkpad_ids))
+	ret = acpi_compatible_match(aa, compat_data);
+	if (ret == 0)
 		return 0;
 
 	/* We only support hotkey version 0x0100 */
@@ -188,7 +187,7 @@ thinkpad_match(device_t parent, cfdata_t match, void *opaque)
 		return 0;
 
 	/* Cool, looks like we're good to go */
-	return 1;
+	return ret;
 }
 
 static void
@@ -565,7 +564,7 @@ thinkpad_mask_init(thinkpad_softc_t *sc, uint32_t mask)
 
 	for (i = 0; i < 32; i++) {
 		param[0].Integer.Value = i + 1;
-		param[1].Integer.Value = (((1 << i) & mask) != 0);
+		param[1].Integer.Value = ((__BIT(i) & mask) != 0);
 
 		rv = AcpiEvaluateObject(sc->sc_node->ad_handle, "MHKM",
 		    &params, NULL);
@@ -702,6 +701,13 @@ thinkpad_fan_refresh(struct sysmon_envsys *sme, envsys_data_t *edata)
 		edata->state = ENVSYS_SINVALID;
 		return;
 	}
+
+	/*
+	 * Extract the low bytes from buffers
+	 */
+	lo = ((uint8_t *)&lo)[0];
+	hi = ((uint8_t *)&hi)[0];
+
 	rpm = ((((int)hi) << 8) | ((int)lo));
 	if (rpm < 0) {
 		edata->state = ENVSYS_SINVALID;

@@ -33,7 +33,7 @@
 
 #ifdef _KERNEL
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: npf_os.c,v 1.11 2019/02/27 21:37:24 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: npf_os.c,v 1.21 2021/01/27 17:39:13 christos Exp $");
 
 #ifdef _KERNEL_OPT
 #include "pf.h"
@@ -50,6 +50,7 @@ __KERNEL_RCSID(0, "$NetBSD: npf_os.c,v 1.11 2019/02/27 21:37:24 mrg Exp $");
 #include <sys/kmem.h>
 #include <sys/lwp.h>
 #include <sys/module.h>
+#include <sys/pserialize.h>
 #include <sys/socketvar.h>
 #include <sys/uio.h>
 
@@ -83,6 +84,11 @@ MODULE(MODULE_CLASS_MISC, npf, "bpf");
 MODULE(MODULE_CLASS_DRIVER, npf, "bpf");
 #endif
 
+#define	NPF_IOCTL_DATA_LIMIT	(4 * 1024 * 1024)
+
+static int	npf_pfil_register(bool);
+static void	npf_pfil_unregister(bool);
+
 static int	npf_dev_open(dev_t, int, int, lwp_t *);
 static int	npf_dev_close(dev_t, int, int, lwp_t *);
 static int	npf_dev_ioctl(dev_t, u_long, void *, int, lwp_t *);
@@ -104,11 +110,11 @@ const struct cdevsw npf_cdevsw = {
 	.d_flag = D_OTHER | D_MPSAFE
 };
 
-static const char *	npf_ifop_getname(ifnet_t *);
-static ifnet_t *	npf_ifop_lookup(const char *);
-static void		npf_ifop_flush(void *);
-static void *		npf_ifop_getmeta(const ifnet_t *);
-static void		npf_ifop_setmeta(ifnet_t *, void *);
+static const char *	npf_ifop_getname(npf_t *, ifnet_t *);
+static ifnet_t *	npf_ifop_lookup(npf_t *, const char *);
+static void		npf_ifop_flush(npf_t *, void *);
+static void *		npf_ifop_getmeta(npf_t *, const ifnet_t *);
+static void		npf_ifop_setmeta(npf_t *, ifnet_t *, void *);
 
 static const unsigned	nworkers = 1;
 
@@ -135,33 +141,21 @@ npf_fini(void)
 	devsw_detach(NULL, &npf_cdevsw);
 #endif
 	npf_pfil_unregister(true);
-	npf_destroy(npf);
-	npf_sysfini();
+	npfk_destroy(npf);
+	npfk_sysfini();
 	return 0;
 }
 
-#if 1
-/*
- * When npf_init() is static and inlined into npf_modcmd() directly (either
- * by the human or GCC 7), then GCC 7 on 32 bit sparc do * something wrong
- * and CPUs hang up.  Making it not static works for some reason.
- *
- * Revert this when the real problem is found.
- */
-int npf_init(void);
-int
-#else
 static int
-#endif
 npf_init(void)
 {
 	npf_t *npf;
 	int error = 0;
 
-	error = npf_sysinit(nworkers);
+	error = npfk_sysinit(nworkers);
 	if (error)
 		return error;
-	npf = npf_create(0, NULL, &kern_ifops);
+	npf = npfk_create(0, NULL, &kern_ifops, NULL);
 	npf_setkernctx(npf);
 	npf_pfil_register(true);
 
@@ -231,9 +225,29 @@ npf_stats_export(npf_t *npf, void *data)
 	int error;
 
 	fullst = kmem_alloc(NPF_STATS_SIZE, KM_SLEEP);
-	npf_stats(npf, fullst); /* will zero the buffer */
+	npfk_stats(npf, fullst); /* will zero the buffer */
 	error = copyout(fullst, uptr, NPF_STATS_SIZE);
 	kmem_free(fullst, NPF_STATS_SIZE);
+	return error;
+}
+
+/*
+ * npfctl_switch: enable or disable packet inspection.
+ */
+static int
+npfctl_switch(void *data)
+{
+	const bool onoff = *(int *)data ? true : false;
+	int error;
+
+	if (onoff) {
+		/* Enable: add pfil hooks. */
+		error = npf_pfil_register(false);
+	} else {
+		/* Disable: remove pfil hooks. */
+		npf_pfil_unregister(false);
+		error = 0;
+	}
 	return error;
 }
 
@@ -241,6 +255,7 @@ static int
 npf_dev_ioctl(dev_t dev, u_long cmd, void *data, int flag, lwp_t *l)
 {
 	npf_t *npf = npf_getkernctx();
+	nvlist_t *req, *resp;
 	int error;
 
 	/* Available only for super-user. */
@@ -250,35 +265,47 @@ npf_dev_ioctl(dev_t dev, u_long cmd, void *data, int flag, lwp_t *l)
 	}
 
 	switch (cmd) {
-	case IOC_NPF_TABLE:
-		error = npfctl_table(npf, data);
-		break;
-	case IOC_NPF_RULE:
-		error = npfctl_rule(npf, cmd, data);
-		break;
-	case IOC_NPF_STATS:
-		error = npf_stats_export(npf, data);
-		break;
-	case IOC_NPF_SAVE:
-		error = npfctl_save(npf, cmd, data);
-		break;
-	case IOC_NPF_SWITCH:
-		error = npfctl_switch(data);
-		break;
-	case IOC_NPF_LOAD:
-		error = npfctl_load(npf, cmd, data);
-		break;
-	case IOC_NPF_CONN_LOOKUP:
-		error = npfctl_conn_lookup(npf, cmd, data);
-		break;
 	case IOC_NPF_VERSION:
 		*(int *)data = NPF_VERSION;
-		error = 0;
+		return 0;
+	case IOC_NPF_SWITCH:
+		return npfctl_switch(data);
+	case IOC_NPF_TABLE:
+		return npfctl_table(npf, data);
+	case IOC_NPF_STATS:
+		return npf_stats_export(npf, data);
+	case IOC_NPF_LOAD:
+	case IOC_NPF_SAVE:
+	case IOC_NPF_RULE:
+	case IOC_NPF_CONN_LOOKUP:
+	case IOC_NPF_TABLE_REPLACE:
+		/* nvlist_ref_t argument, handled below */
 		break;
 	default:
-		error = ENOTTY;
-		break;
+		return EINVAL;
 	}
+
+	error = nvlist_copyin(data, &req, NPF_IOCTL_DATA_LIMIT);
+	if (__predict_false(error)) {
+#ifdef __NetBSD__
+		/* Until the version bump. */
+		if (cmd != IOC_NPF_SAVE) {
+			return error;
+		}
+		req = nvlist_create(0);
+#else
+		return error;
+#endif
+	}
+	resp = nvlist_create(0);
+
+	if ((error = npfctl_run_op(npf, cmd, req, resp)) == 0) {
+		error = nvlist_copyout(data, resp);
+	}
+
+	nvlist_destroy(resp);
+	nvlist_destroy(req);
+
 	return error;
 }
 
@@ -297,8 +324,16 @@ npf_dev_read(dev_t dev, struct uio *uio, int flag)
 bool
 npf_autounload_p(void)
 {
+	if (npf_active_p())
+		return false;
+
 	npf_t *npf = npf_getkernctx();
-	return !npf_pfil_registered_p() && npf_default_pass(npf);
+
+	npf_config_enter(npf);
+	bool pass = npf_default_pass(npf);
+	npf_config_exit(npf);
+
+	return pass;
 }
 
 /*
@@ -306,41 +341,41 @@ npf_autounload_p(void)
  */
 
 static const char *
-npf_ifop_getname(ifnet_t *ifp)
+npf_ifop_getname(npf_t *npf __unused, ifnet_t *ifp)
 {
 	return ifp->if_xname;
 }
 
 static ifnet_t *
-npf_ifop_lookup(const char *name)
+npf_ifop_lookup(npf_t *npf __unused, const char *name)
 {
 	return ifunit(name);
 }
 
 static void
-npf_ifop_flush(void *arg)
+npf_ifop_flush(npf_t *npf __unused, void *arg)
 {
 	ifnet_t *ifp;
 
 	KERNEL_LOCK(1, NULL);
 	IFNET_GLOBAL_LOCK();
 	IFNET_WRITER_FOREACH(ifp) {
-		ifp->if_pf_kif = arg;
+		ifp->if_npf_private = arg;
 	}
 	IFNET_GLOBAL_UNLOCK();
 	KERNEL_UNLOCK_ONE(NULL);
 }
 
 static void *
-npf_ifop_getmeta(const ifnet_t *ifp)
+npf_ifop_getmeta(npf_t *npf __unused, const ifnet_t *ifp)
 {
-	return ifp->if_pf_kif;
+	return ifp->if_npf_private;
 }
 
 static void
-npf_ifop_setmeta(ifnet_t *ifp, void *arg)
+npf_ifop_setmeta(npf_t *npf __unused, ifnet_t *ifp, void *arg)
 {
-	ifp->if_pf_kif = arg;
+	ifp->if_npf_private = arg;
 }
 
 #ifdef _KERNEL
@@ -349,10 +384,10 @@ npf_ifop_setmeta(ifnet_t *ifp, void *arg)
  * Wrapper of the main packet handler to pass the kernel NPF context.
  */
 static int
-npfkern_packet_handler(void *arg, struct mbuf **mp, ifnet_t *ifp, int di)
+npfos_packet_handler(void *arg, struct mbuf **mp, ifnet_t *ifp, int di)
 {
 	npf_t *npf = npf_getkernctx();
-	return npf_packet_handler(npf, mp, ifp, di);
+	return npfk_packet_handler(npf, mp, ifp, di);
 }
 
 /*
@@ -366,11 +401,11 @@ npf_ifhook(void *arg, unsigned long cmd, void *arg2)
 
 	switch (cmd) {
 	case PFIL_IFNET_ATTACH:
-		npf_ifmap_attach(npf, ifp);
+		npfk_ifmap_attach(npf, ifp);
 		npf_ifaddr_sync(npf, ifp);
 		break;
 	case PFIL_IFNET_DETACH:
-		npf_ifmap_detach(npf, ifp);
+		npfk_ifmap_detach(npf, ifp);
 		npf_ifaddr_flush(npf, ifp);
 		break;
 	}
@@ -391,6 +426,7 @@ npf_ifaddrhook(void *arg, u_long cmd, void *arg2)
 	case SIOCAIFADDR_IN6:
 	case SIOCDIFADDR_IN6:
 #endif
+		KASSERT(ifa != NULL);
 		break;
 	default:
 		return;
@@ -401,7 +437,7 @@ npf_ifaddrhook(void *arg, u_long cmd, void *arg2)
 /*
  * npf_pfil_register: register pfil(9) hooks.
  */
-int
+static int
 npf_pfil_register(bool init)
 {
 	npf_t *npf = npf_getkernctx();
@@ -445,12 +481,12 @@ npf_pfil_register(bool init)
 
 	/* Packet IN/OUT handlers for IP layer. */
 	if (npf_ph_inet) {
-		error = pfil_add_hook(npfkern_packet_handler, npf,
+		error = pfil_add_hook(npfos_packet_handler, npf,
 		    PFIL_ALL, npf_ph_inet);
 		KASSERT(error == 0);
 	}
 	if (npf_ph_inet6) {
-		error = pfil_add_hook(npfkern_packet_handler, npf,
+		error = pfil_add_hook(npfos_packet_handler, npf,
 		    PFIL_ALL, npf_ph_inet6);
 		KASSERT(error == 0);
 	}
@@ -470,7 +506,7 @@ out:
 /*
  * npf_pfil_unregister: unregister pfil(9) hooks.
  */
-void
+static void
 npf_pfil_unregister(bool fini)
 {
 	npf_t *npf = npf_getkernctx();
@@ -484,11 +520,11 @@ npf_pfil_unregister(bool fini)
 		    PFIL_IFADDR, npf_ph_if);
 	}
 	if (npf_ph_inet) {
-		(void)pfil_remove_hook(npfkern_packet_handler, npf,
+		(void)pfil_remove_hook(npfos_packet_handler, npf,
 		    PFIL_ALL, npf_ph_inet);
 	}
 	if (npf_ph_inet6) {
-		(void)pfil_remove_hook(npfkern_packet_handler, npf,
+		(void)pfil_remove_hook(npfos_packet_handler, npf,
 		    PFIL_ALL, npf_ph_inet6);
 	}
 	pfil_registered = false;
@@ -497,8 +533,70 @@ npf_pfil_unregister(bool fini)
 }
 
 bool
-npf_pfil_registered_p(void)
+npf_active_p(void)
 {
 	return pfil_registered;
 }
+
+#endif
+
+#ifdef __NetBSD__
+
+/*
+ * Epoch-Based Reclamation (EBR) wrappers: in NetBSD, we rely on the
+ * passive serialization mechanism (see pserialize(9) manual page),
+ * which provides sufficient guarantees for NPF.
+ */
+
+ebr_t *
+npf_ebr_create(void)
+{
+	return pserialize_create();
+}
+
+void
+npf_ebr_destroy(ebr_t *ebr)
+{
+	pserialize_destroy(ebr);
+}
+
+void
+npf_ebr_register(ebr_t *ebr)
+{
+	KASSERT(ebr != NULL); (void)ebr;
+}
+
+void
+npf_ebr_unregister(ebr_t *ebr)
+{
+	KASSERT(ebr != NULL); (void)ebr;
+}
+
+int
+npf_ebr_enter(ebr_t *ebr)
+{
+	KASSERT(ebr != NULL); (void)ebr;
+	return pserialize_read_enter();
+}
+
+void
+npf_ebr_exit(ebr_t *ebr, int s)
+{
+	KASSERT(ebr != NULL); (void)ebr;
+	pserialize_read_exit(s);
+}
+
+void
+npf_ebr_full_sync(ebr_t *ebr)
+{
+	pserialize_perform(ebr);
+}
+
+bool
+npf_ebr_incrit_p(ebr_t *ebr)
+{
+	KASSERT(ebr != NULL); (void)ebr;
+	return pserialize_in_read_section();
+}
+
 #endif

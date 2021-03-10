@@ -2,7 +2,7 @@
 #
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# file, you can obtain one at https://mozilla.org/MPL/2.0/.
 #
 # See the COPYRIGHT file distributed with this work for additional
 # information regarding copyright ownership.
@@ -244,6 +244,28 @@ idna_enabled_test() {
     idna_test "$text" "+idnin +noidnout"   "xn--nxasmq6b.com" "xn--nxasmq6b.com."
     idna_test "$text" "+idnin +idnout"     "xn--nxasmq6b.com" "βόλοσ.com."
 
+    # Test of valid A-label in locale that cannot display it
+    #
+    # +noidnout: The string is sent as-is to the server and the returned qname
+    #            is displayed in the same form.
+    # +idnout:   The string is sent as-is to the server and the returned qname
+    #            is displayed as the corresponding A-label.
+    #
+    # The "+[no]idnout" flag has no effect in these cases.
+    saved_LC_ALL="${LC_ALL}"
+    LC_ALL="C"
+    text="Checking valid A-label in C locale"
+    label="xn--nxasmq6b.com"
+    if command -v idn2 >/dev/null && ! idn2 -d "$label" >/dev/null 2>/dev/null; then
+	idna_test "$text" ""                   "$label" "$label."
+	idna_test "$text" "+noidnin +noidnout" "$label" "$label."
+	idna_test "$text" "+noidnin +idnout"   "$label" "$label."
+	idna_test "$text" "+idnin +noidnout"   "$label" "$label."
+	idna_test "$text" "+idnin +idnout"     "$label" "$label."
+	idna_test "$text" "+noidnin +idnout"   "$label" "$label."
+    fi
+    LC_ALL="${saved_LC_ALL}"
+
 
 
     # Tests of invalid A-labels
@@ -313,8 +335,10 @@ idna_enabled_test() {
     # when they are received in DNS responses to ensure no IDNA2003 fallbacks
     # are in place.
     #
-    # Note that an invalid U-label is accepted even when +idnin is in effect
-    # because "xn--19g" is valid Punycode.
+    # Note that "+idnin +noidnout" is not tested because libidn2 2.2.0+ parses
+    # Punycode more strictly than older versions and thus dig fails with that
+    # combination of options with libidn2 2.2.0+ but succeeds with older
+    # versions.
     #
     # +noidnout: "dig" should send the ACE string to the server and display the
     #            returned qname.
@@ -326,7 +350,6 @@ idna_enabled_test() {
     idna_test "$text" ""                   "xn--19g" "xn--19g."
     idna_test "$text" "+noidnin +noidnout" "xn--19g" "xn--19g."
     idna_fail "$text" "+noidnin +idnout"   "xn--19g"
-    idna_test "$text" "+idnin   +noidnout" "xn--19g" "xn--19g."
     idna_fail "$text" "+idnin   +idnout"   "xn--19g"
 }
 

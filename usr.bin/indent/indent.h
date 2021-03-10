@@ -1,4 +1,4 @@
-/*	$NetBSD: indent.h,v 1.1 2019/04/04 15:27:35 kamil Exp $	*/
+/*	$NetBSD: indent.h,v 1.5 2021/03/07 11:32:05 rillig Exp $	*/
 
 /*-
  * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
@@ -30,11 +30,14 @@
 
 #if 0
 #if defined(__NetBSD__)
-__RCSID("$NetBSD: indent.h,v 1.1 2019/04/04 15:27:35 kamil Exp $");
+__RCSID("$NetBSD: indent.h,v 1.5 2021/03/07 11:32:05 rillig Exp $");
 #elif defined(__FreeBSD__)
 __FBSDID("$FreeBSD: head/usr.bin/indent/indent.h 336333 2018-07-16 05:46:50Z pstef $");
 #endif
 #endif
+
+#include "indent_codes.h"
+#include "indent_globs.h"
 
 #ifndef nitems
 #define nitems(array) (sizeof (array) / sizeof (array[0]))
@@ -47,13 +50,14 @@ int	compute_label_target(void);
 int	count_spaces(int, char *);
 int	count_spaces_until(int, char *, char *);
 void	init_constant_tt(void);
-int	lexi(struct parser_state *);
-void	diag2(int, const char *);
-void	diag3(int, const char *, int);
-void	diag4(int, const char *, int, int);
+#ifdef debug
+const char *token_type_name(token_type);
+#endif
+token_type lexi(struct parser_state *);
+void	diag(int, const char *, ...) __printflike(2, 3);
 void	dump_line(void);
 void	fill_buffer(void);
-void	parse(int);
+void	parse(token_type);
 void	pr_comment(void);
 void	set_defaults(void);
 void	set_option(char *);

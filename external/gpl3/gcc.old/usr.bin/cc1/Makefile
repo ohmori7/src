@@ -1,7 +1,8 @@
-#	$NetBSD: Makefile,v 1.6 2018/11/11 22:50:06 mrg Exp $
+#	$NetBSD: Makefile,v 1.9 2020/08/19 07:48:02 mrg Exp $
 
 PROG=		cc1
-SRCS=		${G_C_OBJS:S,c-family/,,:S,c/,,:Nlibcpp.a:.o=.c} main.c ${PROG}-checksum.c
+SRCS=		${G_C_OBJS:S,c-family/,,:S,c/,,:S,known-headers.o,known-headers.cc,:S,c-spellcheck.o,c-spellcheck.cc,:Nlibcpp.a:.o=.c}
+SRCS+=		main.c ${PROG}-checksum.c
 CPPFLAGS+=	-DPREFIX=\"/usr\"
 
 .include "../Makefile.backend"
@@ -28,11 +29,8 @@ CHECKSUM_OBJS=	${BACKENDOBJ}/libbackend.a \
 # XXX check this out, probably need it for plugins?
 # LDFLAGS+=	-rdynamic
 
-# VER_CPPFLAGS from Makefile.inc
-CPPFLAGS.c-cppbuiltin.c=	${VER_CPPFLAGS}
-c-cppbuiltin.c: ${GCCARCH}/defs.mk
-
 COPTS.c-ada-spec.c=	-Wno-stack-protector
+COPTS.c-attribs.c=	-Wno-stack-protector
 COPTS.c-aux-info.c=	-Wno-stack-protector
 COPTS.c-common.c=	-Wno-stack-protector
 COPTS.c-cppbuiltin.c=	-Wno-stack-protector
@@ -44,6 +42,9 @@ COPTS.c-opts.c=		-Wno-stack-protector
 COPTS.c-ppoutput.c=	-Wno-stack-protector
 COPTS.c-pragma.c=	-Wno-stack-protector
 COPTS.c-typeck.c=	-Wno-stack-protector
+
+COPTS.c-cppbuiltin.c+=	${${ACTIVE_CC} == "gcc" && ${HAVE_GCC:U0} == 8:? -Wno-error=format-overflow :}
+COPTS.c-typeck.c+=	${${ACTIVE_CC} == "gcc" && ${HAVE_GCC:U0} == 8:? -Wno-error=format-overflow :}
 
 CPPFLAGS.default-c.c+=	-I${BACKENDOBJ}
 
@@ -60,6 +61,10 @@ COPTS.c-ada-spec.c+=-O0
 COPTS.cilk.c+=-O0
 COPTS.c-ubsan.c+=-O0
 COPTS.cc1-checksum.c+=-O0
+.endif
+
+.if ${MACHINE_ARCH} == "mipseb" || ${MACHINE_ARCH} == "mipsel"
+COPTS.c-common.c+=-O3
 .endif
 
 LDADD+=	${LIBMPC} ${LIBMPFR} ${LIBGMP} -lintl -lz -lm

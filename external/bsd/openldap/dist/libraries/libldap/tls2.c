@@ -1,10 +1,10 @@
-/*	$NetBSD: tls2.c,v 1.1.1.5 2018/02/06 01:53:08 christos Exp $	*/
+/*	$NetBSD: tls2.c,v 1.2 2020/08/11 13:15:38 christos Exp $	*/
 
 /* tls.c - Handle tls/ssl. */
 /* $OpenLDAP$ */
 /* This work is part of OpenLDAP Software <http://www.openldap.org/>.
  *
- * Copyright 1998-2017 The OpenLDAP Foundation.
+ * Copyright 1998-2020 The OpenLDAP Foundation.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -19,7 +19,7 @@
  */
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: tls2.c,v 1.1.1.5 2018/02/06 01:53:08 christos Exp $");
+__RCSID("$NetBSD: tls2.c,v 1.2 2020/08/11 13:15:38 christos Exp $");
 
 #include "portable.h"
 #include "ldap_config.h"
@@ -122,6 +122,10 @@ ldap_int_tls_destroy( struct ldapoptions *lo )
 	if ( lo->ldo_tls_dhfile ) {
 		LDAP_FREE( lo->ldo_tls_dhfile );
 		lo->ldo_tls_dhfile = NULL;
+	}
+	if ( lo->ldo_tls_ecname ) {
+		LDAP_FREE( lo->ldo_tls_ecname );
+		lo->ldo_tls_ecname = NULL;
 	}
 	if ( lo->ldo_tls_cacertfile ) {
 		LDAP_FREE( lo->ldo_tls_cacertfile );
@@ -237,6 +241,10 @@ ldap_int_tls_init_ctx( struct ldapoptions *lo, int is_server )
 		lts.lt_dhfile = LDAP_STRDUP( lts.lt_dhfile );
 		__atoe( lts.lt_dhfile );
 	}
+	if ( lts.lt_ecname ) {
+		lts.lt_ecname = LDAP_STRDUP( lts.lt_ecname );
+		__atoe( lts.lt_ecname );
+	}
 #endif
 	lo->ldo_tls_ctx = ti->ti_ctx_new( lo );
 	if ( lo->ldo_tls_ctx == NULL ) {
@@ -262,6 +270,7 @@ error_exit:
 	LDAP_FREE( lts.lt_crlfile );
 	LDAP_FREE( lts.lt_cacertdir );
 	LDAP_FREE( lts.lt_dhfile );
+	LDAP_FREE( lts.lt_ecname );
 #endif
 	return rc;
 }
@@ -325,7 +334,7 @@ update_flags( Sockbuf *sb, tls_session * ssl, int rc )
  */
 
 static int
-ldap_int_tls_connect( LDAP *ld, LDAPConn *conn )
+ldap_int_tls_connect( LDAP *ld, LDAPConn *conn, const char *host )
 {
 	Sockbuf *sb = conn->lconn_sb;
 	int	err;
@@ -369,6 +378,10 @@ ldap_int_tls_connect( LDAP *ld, LDAPConn *conn )
 #ifdef HAVE_WINSOCK
 	errno = WSAGetLastError();
 #endif
+
+	if ( err == 0 ) {
+		err = ldap_pvt_tls_check_hostname( ld, ssl, host );
+	}
 
 	if ( err < 0 )
 	{
@@ -500,7 +513,15 @@ ldap_pvt_tls_check_hostname( LDAP *ld, void *s, const char *name_in )
 {
 	tls_session *session = s;
 
-	return tls_imp->ti_session_chkhost( ld, session, name_in );
+	if (ld->ld_options.ldo_tls_require_cert != LDAP_OPT_X_TLS_NEVER &&
+	    ld->ld_options.ldo_tls_require_cert != LDAP_OPT_X_TLS_ALLOW) {
+		ld->ld_errno = tls_imp->ti_session_chkhost( ld, session, name_in );
+		if (ld->ld_errno != LDAP_SUCCESS) {
+			return ld->ld_errno;
+		}
+	}
+
+	return LDAP_SUCCESS;
 }
 
 int
@@ -639,6 +660,10 @@ ldap_pvt_tls_get_option( LDAP *ld, int option, void *arg )
 		*(char **)arg = lo->ldo_tls_dhfile ?
 			LDAP_STRDUP( lo->ldo_tls_dhfile ) : NULL;
 		break;
+	case LDAP_OPT_X_TLS_ECNAME:
+		*(char **)arg = lo->ldo_tls_ecname ?
+			LDAP_STRDUP( lo->ldo_tls_ecname ) : NULL;
+		break;
 	case LDAP_OPT_X_TLS_CRLFILE:	/* GnuTLS only */
 		*(char **)arg = lo->ldo_tls_crlfile ?
 			LDAP_STRDUP( lo->ldo_tls_crlfile ) : NULL;
@@ -740,27 +765,31 @@ ldap_pvt_tls_set_option( LDAP *ld, int option, void *arg )
 		return 0;
 	case LDAP_OPT_X_TLS_CACERTFILE:
 		if ( lo->ldo_tls_cacertfile ) LDAP_FREE( lo->ldo_tls_cacertfile );
-		lo->ldo_tls_cacertfile = arg ? LDAP_STRDUP( (char *) arg ) : NULL;
+		lo->ldo_tls_cacertfile = (arg && *(char *)arg) ? LDAP_STRDUP( (char *) arg ) : NULL;
 		return 0;
 	case LDAP_OPT_X_TLS_CACERTDIR:
 		if ( lo->ldo_tls_cacertdir ) LDAP_FREE( lo->ldo_tls_cacertdir );
-		lo->ldo_tls_cacertdir = arg ? LDAP_STRDUP( (char *) arg ) : NULL;
+		lo->ldo_tls_cacertdir = (arg && *(char *)arg) ? LDAP_STRDUP( (char *) arg ) : NULL;
 		return 0;
 	case LDAP_OPT_X_TLS_CERTFILE:
 		if ( lo->ldo_tls_certfile ) LDAP_FREE( lo->ldo_tls_certfile );
-		lo->ldo_tls_certfile = arg ? LDAP_STRDUP( (char *) arg ) : NULL;
+		lo->ldo_tls_certfile = (arg && *(char *)arg) ? LDAP_STRDUP( (char *) arg ) : NULL;
 		return 0;
 	case LDAP_OPT_X_TLS_KEYFILE:
 		if ( lo->ldo_tls_keyfile ) LDAP_FREE( lo->ldo_tls_keyfile );
-		lo->ldo_tls_keyfile = arg ? LDAP_STRDUP( (char *) arg ) : NULL;
+		lo->ldo_tls_keyfile = (arg && *(char *)arg) ? LDAP_STRDUP( (char *) arg ) : NULL;
 		return 0;
 	case LDAP_OPT_X_TLS_DHFILE:
 		if ( lo->ldo_tls_dhfile ) LDAP_FREE( lo->ldo_tls_dhfile );
-		lo->ldo_tls_dhfile = arg ? LDAP_STRDUP( (char *) arg ) : NULL;
+		lo->ldo_tls_dhfile = (arg && *(char *)arg) ? LDAP_STRDUP( (char *) arg ) : NULL;
+		return 0;
+	case LDAP_OPT_X_TLS_ECNAME:
+		if ( lo->ldo_tls_ecname ) LDAP_FREE( lo->ldo_tls_ecname );
+		lo->ldo_tls_ecname = (arg && *(char *)arg) ? LDAP_STRDUP( (char *) arg ) : NULL;
 		return 0;
 	case LDAP_OPT_X_TLS_CRLFILE:	/* GnuTLS only */
 		if ( lo->ldo_tls_crlfile ) LDAP_FREE( lo->ldo_tls_crlfile );
-		lo->ldo_tls_crlfile = arg ? LDAP_STRDUP( (char *) arg ) : NULL;
+		lo->ldo_tls_crlfile = (arg && *(char *)arg) ? LDAP_STRDUP( (char *) arg ) : NULL;
 		return 0;
 	case LDAP_OPT_X_TLS_REQUIRE_CERT:
 		if ( !arg ) return -1;
@@ -788,7 +817,7 @@ ldap_pvt_tls_set_option( LDAP *ld, int option, void *arg )
 #endif
 	case LDAP_OPT_X_TLS_CIPHER_SUITE:
 		if ( lo->ldo_tls_ciphersuite ) LDAP_FREE( lo->ldo_tls_ciphersuite );
-		lo->ldo_tls_ciphersuite = arg ? LDAP_STRDUP( (char *) arg ) : NULL;
+		lo->ldo_tls_ciphersuite = (arg && *(char *)arg) ? LDAP_STRDUP( (char *) arg ) : NULL;
 		return 0;
 
 	case LDAP_OPT_X_TLS_PROTOCOL_MIN:
@@ -799,7 +828,7 @@ ldap_pvt_tls_set_option( LDAP *ld, int option, void *arg )
 		if ( ld != NULL )
 			return -1;
 		if ( lo->ldo_tls_randfile ) LDAP_FREE (lo->ldo_tls_randfile );
-		lo->ldo_tls_randfile = arg ? LDAP_STRDUP( (char *) arg ) : NULL;
+		lo->ldo_tls_randfile = (arg && *(char *)arg) ? LDAP_STRDUP( (char *) arg ) : NULL;
 		break;
 	case LDAP_OPT_X_TLS_NEWCTX:
 		if ( !arg ) return -1;
@@ -819,7 +848,7 @@ ldap_int_tls_start ( LDAP *ld, LDAPConn *conn, LDAPURLDesc *srv )
 	Sockbuf *sb;
 	char *host;
 	void *ssl;
-	int ret;
+	int ret, async;
 #ifdef LDAP_USE_NON_BLOCKING_TLS
 	struct timeval start_time_tv, tv, tv0;
 	ber_socket_t	sd = AC_SOCKET_ERROR;
@@ -846,8 +875,12 @@ ldap_int_tls_start ( LDAP *ld, LDAPConn *conn, LDAPURLDesc *srv )
 	/*
 	 * Use non-blocking io during SSL Handshake when a timeout is configured
 	 */
+	async = LDAP_BOOL_GET( &ld->ld_options, LDAP_BOOL_CONNECT_ASYNC );
 	if ( ld->ld_options.ldo_tm_net.tv_sec >= 0 ) {
-		ber_sockbuf_ctrl( ld->ld_sb, LBER_SB_OPT_SET_NONBLOCK, sb );
+		if ( !async ) {
+			/* if async, this has already been set */
+			ber_sockbuf_ctrl( sb, LBER_SB_OPT_SET_NONBLOCK, (void*)1 );
+		}
 		ber_sockbuf_ctrl( sb, LBER_SB_OPT_GET_FD, &sd );
 		tv = ld->ld_options.ldo_tm_net;
 		tv0 = tv;
@@ -862,96 +895,78 @@ ldap_int_tls_start ( LDAP *ld, LDAPConn *conn, LDAPURLDesc *srv )
 #endif /* LDAP_USE_NON_BLOCKING_TLS */
 
 	ld->ld_errno = LDAP_SUCCESS;
-	ret = ldap_int_tls_connect( ld, conn );
+	ret = ldap_int_tls_connect( ld, conn, host );
 
+	 /* this mainly only happens for non-blocking io
+	  * but can also happen when the handshake is too
+	  * big for a single network message.
+	  */
+	while ( ret > 0 ) {
 #ifdef LDAP_USE_NON_BLOCKING_TLS
-	while ( ret > 0 ) { /* this should only happen for non-blocking io */
-		int wr=0;
+		if ( async ) {
+			struct timeval curr_time_tv, delta_tv;
+			int wr=0;
 
-		if ( sb->sb_trans_needs_read ) {
-			wr=0;
-		} else if ( sb->sb_trans_needs_write ) {
-			wr=1;
-		}
-		Debug( LDAP_DEBUG_TRACE, "ldap_int_tls_start: ldap_int_tls_connect needs %s\n",
-				wr ? "write": "read", 0, 0);
+			if ( sb->sb_trans_needs_read ) {
+				wr=0;
+			} else if ( sb->sb_trans_needs_write ) {
+				wr=1;
+			}
+			Debug1( LDAP_DEBUG_TRACE, "ldap_int_tls_start: ldap_int_tls_connect needs %s\n",
+					wr ? "write": "read" );
 
-		ret = ldap_int_poll( ld, sd, &tv, wr);
-		if ( ret < 0 ) {
-			ld->ld_errno = LDAP_TIMEOUT;
-			break;
-		} else {
-			/* ldap_int_poll called ldap_pvt_ndelay_off */
-			ber_sockbuf_ctrl( ld->ld_sb, LBER_SB_OPT_SET_NONBLOCK, sb );
-			ret = ldap_int_tls_connect( ld, conn );
-			if ( ret > 0 ) { /* need to call tls_connect once more */
-				struct timeval curr_time_tv, delta_tv;
-
-				/* This is mostly copied from result.c:wait4msg(), should
-				 * probably be moved into a separate function */
+			/* This is mostly copied from result.c:wait4msg(), should
+			 * probably be moved into a separate function */
 #ifdef HAVE_GETTIMEOFDAY
-				gettimeofday( &curr_time_tv, NULL );
+			gettimeofday( &curr_time_tv, NULL );
 #else /* ! HAVE_GETTIMEOFDAY */
-				time( &curr_time_tv.tv_sec );
-				curr_time_tv.tv_usec = 0;
+			time( &curr_time_tv.tv_sec );
+			curr_time_tv.tv_usec = 0;
 #endif /* ! HAVE_GETTIMEOFDAY */
 
-				/* delta = curr - start */
-				delta_tv.tv_sec = curr_time_tv.tv_sec - start_time_tv.tv_sec;
-				delta_tv.tv_usec = curr_time_tv.tv_usec - start_time_tv.tv_usec;
-				if ( delta_tv.tv_usec < 0 ) {
-					delta_tv.tv_sec--;
-					delta_tv.tv_usec += 1000000;
-				}
+			/* delta = curr - start */
+			delta_tv.tv_sec = curr_time_tv.tv_sec - start_time_tv.tv_sec;
+			delta_tv.tv_usec = curr_time_tv.tv_usec - start_time_tv.tv_usec;
+			if ( delta_tv.tv_usec < 0 ) {
+				delta_tv.tv_sec--;
+				delta_tv.tv_usec += 1000000;
+			}
 
-				/* tv0 < delta ? */
-				if ( ( tv0.tv_sec < delta_tv.tv_sec ) ||
-					 ( ( tv0.tv_sec == delta_tv.tv_sec ) &&
-					   ( tv0.tv_usec < delta_tv.tv_usec ) ) )
-				{
-					ret = -1;
-					ld->ld_errno = LDAP_TIMEOUT;
-					break;
-				} else {
-					/* timeout -= delta_time */
-					tv0.tv_sec -= delta_tv.tv_sec;
-					tv0.tv_usec -= delta_tv.tv_usec;
-					if ( tv0.tv_usec < 0 ) {
-						tv0.tv_sec--;
-						tv0.tv_usec += 1000000;
-					}
-					start_time_tv.tv_sec = curr_time_tv.tv_sec;
-					start_time_tv.tv_usec = curr_time_tv.tv_usec;
-				}
-				tv = tv0;
-				Debug( LDAP_DEBUG_TRACE, "ldap_int_tls_start: ld %p %ld s %ld us to go\n",
-					(void *)ld, (long) tv.tv_sec, (long) tv.tv_usec );
+			/* tv0 < delta ? */
+			if ( ( tv0.tv_sec < delta_tv.tv_sec ) ||
+				 ( ( tv0.tv_sec == delta_tv.tv_sec ) &&
+				   ( tv0.tv_usec < delta_tv.tv_usec ) ) )
+			{
+				ret = -1;
+				ld->ld_errno = LDAP_TIMEOUT;
+				break;
+			}
+			/* timeout -= delta_time */
+			tv0.tv_sec -= delta_tv.tv_sec;
+			tv0.tv_usec -= delta_tv.tv_usec;
+			if ( tv0.tv_usec < 0 ) {
+				tv0.tv_sec--;
+				tv0.tv_usec += 1000000;
+			}
+			start_time_tv.tv_sec = curr_time_tv.tv_sec;
+			start_time_tv.tv_usec = curr_time_tv.tv_usec;
+			tv = tv0;
+			Debug3( LDAP_DEBUG_TRACE, "ldap_int_tls_start: ld %p %ld s %ld us to go\n",
+				(void *)ld, (long) tv.tv_sec, (long) tv.tv_usec );
+			ret = ldap_int_poll( ld, sd, &tv, wr);
+			if ( ret < 0 ) {
+				ld->ld_errno = LDAP_TIMEOUT;
+				break;
 			}
 		}
-	}
-	if ( ld->ld_options.ldo_tm_net.tv_sec >= 0 ) {
-		ber_sockbuf_ctrl( ld->ld_sb, LBER_SB_OPT_SET_NONBLOCK, NULL );
-	}
 #endif /* LDAP_USE_NON_BLOCKING_TLS */
+		ret = ldap_int_tls_connect( ld, conn, host );
+	}
 
 	if ( ret < 0 ) {
 		if ( ld->ld_errno == LDAP_SUCCESS )
 			ld->ld_errno = LDAP_CONNECT_ERROR;
 		return (ld->ld_errno);
-	}
-
-	ssl = ldap_pvt_tls_sb_ctx( sb );
-	assert( ssl != NULL );
-
-	/* 
-	 * compare host with name(s) in certificate
-	 */
-	if (ld->ld_options.ldo_tls_require_cert != LDAP_OPT_X_TLS_NEVER &&
-	    ld->ld_options.ldo_tls_require_cert != LDAP_OPT_X_TLS_ALLOW) {
-		ld->ld_errno = ldap_pvt_tls_check_hostname( ld, ssl, host );
-		if (ld->ld_errno != LDAP_SUCCESS) {
-			return ld->ld_errno;
-		}
 	}
 
 	return LDAP_SUCCESS;

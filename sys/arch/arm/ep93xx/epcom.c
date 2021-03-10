@@ -1,4 +1,4 @@
-/*	$NetBSD: epcom.c,v 1.30 2015/04/13 21:18:41 riastradh Exp $ */
+/*	$NetBSD: epcom.c,v 1.32 2020/11/20 18:03:52 thorpej Exp $ */
 /*
  * Copyright (c) 1998, 1999, 2001, 2002, 2004 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -73,7 +73,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: epcom.c,v 1.30 2015/04/13 21:18:41 riastradh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: epcom.c,v 1.32 2020/11/20 18:03:52 thorpej Exp $");
 
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
@@ -103,7 +103,7 @@ __KERNEL_RCSID(0, "$NetBSD: epcom.c,v 1.30 2015/04/13 21:18:41 riastradh Exp $")
 #include <sys/file.h>
 #include <sys/device.h>
 #include <sys/kernel.h>
-#include <sys/malloc.h>
+#include <sys/kmem.h>
 #include <sys/tty.h>
 #include <sys/uio.h>
 #include <sys/vnode.h>
@@ -213,14 +213,9 @@ epcom_attach_subr(struct epcom_softc *sc)
 	tp->t_hwiflow = epcomhwiflow;
 
 	sc->sc_tty = tp;
-	sc->sc_rbuf = malloc(EPCOM_RING_SIZE << 1, M_DEVBUF, M_NOWAIT);
+	sc->sc_rbuf = kmem_alloc(EPCOM_RING_SIZE << 1, KM_SLEEP);
 	sc->sc_rbput = sc->sc_rbget = sc->sc_rbuf;
 	sc->sc_rbavail = EPCOM_RING_SIZE;
-	if (sc->sc_rbuf == NULL) {
-		printf("%s: unable to allocate ring buffer\n",
-		    device_xname(sc->sc_dev));
-		return;
-	}
 	sc->sc_ebuf = sc->sc_rbuf + (EPCOM_RING_SIZE << 1);
 	sc->sc_tbc = 0;
 

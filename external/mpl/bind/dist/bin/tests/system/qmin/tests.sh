@@ -4,7 +4,7 @@
 #
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# file, you can obtain one at https://mozilla.org/MPL/2.0/.
 #
 # See the COPYRIGHT file distributed with this work for additional
 # information regarding copyright ownership.
@@ -109,7 +109,7 @@ if [ $ret != 0 ]; then echo_i "failed"; fi
 status=`expr $status + $ret`
 
 n=`expr $n + 1`
-echo_i "query for .good is properly minimized when qname-minimization is on ($n)"
+echo_i "query for .good is properly minimized when qname-minimization is in strict mode ($n)"
 ret=0
 $CLEANQL
 $RNDCCMD 10.53.0.6 flush
@@ -143,6 +143,37 @@ if [ $ret != 0 ]; then echo_i "failed"; fi
 status=`expr $status + $ret`
 
 n=`expr $n + 1`
+echo_i "query for .good is properly minimized when qname-minimization is in relaxed mode ($n)"
+ret=0
+$CLEANQL
+$RNDCCMD 10.53.0.7 flush
+$DIG $DIGOPTS icky.icky.icky.ptang.zoop.boing.good. @10.53.0.7 > dig.out.test$n
+grep "status: NOERROR" dig.out.test$n > /dev/null || ret=1
+grep "icky.icky.icky.ptang.zoop.boing.good. 1	IN A	192.0.2.1" dig.out.test$n > /dev/null || ret=1
+sleep 1
+sort ans2/query.log > ans2/query.log.sorted
+cat << __EOF | $DIFF ans2/query.log.sorted - > /dev/null || ret=1
+ADDR _.boing.good.
+ADDR _.zoop.boing.good.
+ADDR a.bit.longer.ns.name.good.
+ADDR a.bit.longer.ns.name.good.
+ADDR ns2.good.
+ADDR ns3.good.
+ADDR ns3.good.
+__EOF
+cat << __EOF | $DIFF ans3/query.log - > /dev/null || ret=1
+ADDR _.ptang.zoop.boing.good.
+ADDR _.icky.ptang.zoop.boing.good.
+__EOF
+cat << __EOF | $DIFF ans4/query.log - > /dev/null || ret=1
+ADDR _.icky.icky.ptang.zoop.boing.good.
+ADDR icky.icky.icky.ptang.zoop.boing.good.
+__EOF
+for ans in ans2 ans3 ans4; do mv -f $ans/query.log query-$ans-$n.log 2>/dev/null || true; done
+if [ $ret != 0 ]; then echo_i "failed"; fi
+status=`expr $status + $ret`
+
+n=`expr $n + 1`
 echo_i "query for .bad fails when qname-minimization is in strict mode ($n)"
 ret=0
 $CLEANQL
@@ -161,7 +192,7 @@ if [ $ret != 0 ]; then echo_i "failed"; fi
 status=`expr $status + $ret`
 
 n=`expr $n + 1`
-echo_i "query for .bad succeds when qname-minimization is in relaxed mode ($n)"
+echo_i "query for .bad succeeds when qname-minimization is in relaxed mode ($n)"
 ret=0
 $CLEANQL
 $RNDCCMD 10.53.0.7 flush
@@ -171,17 +202,22 @@ grep "icky.icky.icky.ptang.zoop.boing.bad. 1 IN A	192.0.2.1" dig.out.test$n > /d
 sleep 1
 sort ans2/query.log > ans2/query.log.sorted
 cat << __EOF | $DIFF ans2/query.log.sorted - > /dev/null || ret=1
+ADDR _.boing.bad.
+ADDR _.zoop.boing.bad.
 ADDR a.bit.longer.ns.name.bad.
 ADDR a.bit.longer.ns.name.bad.
-ADDR icky.icky.icky.ptang.zoop.boing.bad.
 ADDR ns2.bad.
 ADDR ns3.bad.
 ADDR ns3.bad.
-NS bad.
-NS boing.bad.
 __EOF
-echo "ADDR icky.icky.icky.ptang.zoop.boing.bad." | $DIFF ans3/query.log - > /dev/null || ret=1
-echo "ADDR icky.icky.icky.ptang.zoop.boing.bad." | $DIFF ans4/query.log - > /dev/null || ret=1
+cat << __EOF | $DIFF ans3/query.log - > /dev/null || ret=1
+ADDR _.ptang.zoop.boing.bad.
+ADDR _.icky.ptang.zoop.boing.bad.
+__EOF
+cat << __EOF | $DIFF ans4/query.log - > /dev/null || ret=1
+ADDR _.icky.icky.ptang.zoop.boing.bad.
+ADDR icky.icky.icky.ptang.zoop.boing.bad.
+__EOF
 for ans in ans2 ans3 ans4; do mv -f $ans/query.log query-$ans-$n.log 2>/dev/null || true; done
 if [ $ret != 0 ]; then echo_i "failed"; fi
 status=`expr $status + $ret`
@@ -207,7 +243,7 @@ status=`expr $status + $ret`
 $RNDCCMD 10.53.0.6 flush
 
 n=`expr $n + 1`
-echo_i "query for .ugly succeds when qname-minimization is in relaxed mode ($n)"
+echo_i "query for .ugly succeeds when qname-minimization is in relaxed mode ($n)"
 ret=0
 $CLEANQL
 $RNDCCMD 10.53.0.7 flush
@@ -215,17 +251,17 @@ $DIG $DIGOPTS icky.icky.icky.ptang.zoop.boing.ugly. @10.53.0.7 > dig.out.test$n
 grep "status: NOERROR" dig.out.test$n > /dev/null || ret=1
 grep "icky.icky.icky.ptang.zoop.boing.ugly. 1	IN A	192.0.2.1" dig.out.test$n > /dev/null || ret=1
 sleep 1
+
 sort ans2/query.log > ans2/query.log.sorted
-cat << __EOF | $DIFF ans2/query.log.sorted - > /dev/null || ret=1
+cat << __EOF | $DIFF ans2/query.log.sorted - > /dev/null || cat ans2/query.log.sorted
+ADDR _.boing.ugly.
+ADDR _.boing.ugly.
 ADDR a.bit.longer.ns.name.ugly.
 ADDR a.bit.longer.ns.name.ugly.
 ADDR icky.icky.icky.ptang.zoop.boing.ugly.
 ADDR ns2.ugly.
 ADDR ns3.ugly.
 ADDR ns3.ugly.
-NS boing.ugly.
-NS boing.ugly.
-NS ugly.
 __EOF
 echo "ADDR icky.icky.icky.ptang.zoop.boing.ugly." | $DIFF ans3/query.log - > /dev/null || ret=1
 echo "ADDR icky.icky.icky.ptang.zoop.boing.ugly." | $DIFF ans4/query.log - > /dev/null || ret=1
@@ -276,7 +312,7 @@ if [ $ret != 0 ]; then echo_i "failed"; fi
 status=`expr $status + $ret`
 
 n=`expr $n + 1`
-echo_i "query for .ip6.arpa succeds and skips on proper boundaries when qname-minimization is on ($n)"
+echo_i "query for .ip6.arpa succeeds and skips on proper boundaries when qname-minimization is on ($n)"
 ret=0
 $CLEANQL
 $RNDCCMD 10.53.0.6 flush
@@ -347,6 +383,17 @@ __EOF
 for ans in ans2; do mv -f $ans/query.log query-$ans-$n.log 2>/dev/null || true; done
 if [ $ret != 0 ]; then echo_i "failed"; fi
 status=`expr $status + $ret`
+
+n=`expr $n + 1`
+echo_i "qname minimization resolves unusual ip6.arpa. names ($n)"
+ret=0
+$CLEANQL
+$DIG $DIGOPTS test1.test2.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.9.0.9.4.1.1.1.1.8.2.6.0.1.0.0.2.ip6.arpa. txt @10.53.0.7 > dig.out.test$n 2>&1
+grep "status: NOERROR" dig.out.test$n > /dev/null || ret=1
+# Expected output in dig.out.test$n:
+# ;; ANSWER SECTION:
+# test1.test2.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.9.0.9.4.1.1.1.1.8.2.6.0.1.0.0.2.ip6.arpa. 1 IN TXT "long_ip6_name"
+grep 'ip6\.arpa.*TXT.*long_ip6_name' dig.out.test$n > /dev/null || ret=1
 
 echo_i "exit status: $status"
 [ $status -eq 0 ] || exit 1

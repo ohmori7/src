@@ -1,7 +1,7 @@
 /* Language-independent diagnostic subroutines for the GNU Compiler
    Collection that are only for use in the compilers proper and not
    the driver or other programs.
-   Copyright (C) 1999-2016 Free Software Foundation, Inc.
+   Copyright (C) 1999-2018 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -25,8 +25,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree.h"
 #include "diagnostic.h"
 #include "tree-pretty-print.h"
+#include "gimple-pretty-print.h"
 #include "tree-diagnostic.h"
-#include "dumpfile.h" /* TDF_DIAGNOSTIC */
 #include "langhooks.h"
 #include "intl.h"
 
@@ -102,7 +102,7 @@ maybe_unwind_expanded_macro_loc (diagnostic_context *context,
                                  source_location where)
 {
   const struct line_map *map;
-  vec<loc_map_pair> loc_vec = vNULL;
+  auto_vec<loc_map_pair> loc_vec;
   unsigned ix;
   loc_map_pair loc, *iter;
 
@@ -219,8 +219,6 @@ maybe_unwind_expanded_macro_loc (diagnostic_context *context,
                                 "in expansion of macro %qs",
                                 linemap_map_get_macro_name (iter->map));
       }
-
-  loc_vec.release ();
 }
 
 /*  This is a diagnostic finalizer implementation that is aware of
@@ -245,9 +243,10 @@ virt_loc_aware_diagnostic_finalizer (diagnostic_context *context,
 }
 
 /* Default tree printer.   Handles declarations only.  */
-static bool
+bool
 default_tree_printer (pretty_printer *pp, text_info *text, const char *spec,
-		      int precision, bool wide, bool set_locus, bool hash)
+		      int precision, bool wide, bool set_locus, bool hash,
+		      bool *, const char **)
 {
   tree t;
 
@@ -268,7 +267,7 @@ default_tree_printer (pretty_printer *pp, text_info *text, const char *spec,
 
     case 'D':
       t = va_arg (*text->args_ptr, tree);
-      if (TREE_CODE (t) == VAR_DECL && DECL_HAS_DEBUG_EXPR_P (t))
+      if (VAR_P (t) && DECL_HAS_DEBUG_EXPR_P (t))
 	t = DECL_DEBUG_EXPR (t);
       break;
 
@@ -277,8 +276,13 @@ default_tree_printer (pretty_printer *pp, text_info *text, const char *spec,
       t = va_arg (*text->args_ptr, tree);
       break;
 
+    case 'G':
+      percent_G_format (text);
+      return true;
+
     case 'K':
-      percent_K_format (text);
+      t = va_arg (*text->args_ptr, tree);
+      percent_K_format (text, t);
       return true;
 
     default:
@@ -296,7 +300,7 @@ default_tree_printer (pretty_printer *pp, text_info *text, const char *spec,
       pp_string (pp, n);
     }
   else
-    dump_generic_node (pp, t, 0, TDF_DIAGNOSTIC, 0);
+    dump_generic_node (pp, t, 0, TDF_SLIM, 0);
 
   return true;
 }

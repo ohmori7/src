@@ -1,5 +1,5 @@
 /* Command line option handling.
-   Copyright (C) 2002-2016 Free Software Foundation, Inc.
+   Copyright (C) 2002-2018 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -110,6 +110,10 @@ struct cl_option
   enum cl_var_type var_type;
   /* Value or bit-mask with which to set a field.  */
   HOST_WIDE_INT var_value;
+  /* Range info minimum, or -1.  */
+  int range_min;
+  /* Range info maximum, or -1.  */
+  int range_max;
 };
 
 /* Records that the state of an option consists of SIZE bytes starting
@@ -200,8 +204,9 @@ extern const unsigned int cl_enums_count;
 #define CL_ERR_MISSING_ARG	(1 << 1) /* Argument required but missing.  */
 #define CL_ERR_WRONG_LANG	(1 << 2) /* Option for wrong language.  */
 #define CL_ERR_UINT_ARG		(1 << 3) /* Bad unsigned integer argument.  */
-#define CL_ERR_ENUM_ARG		(1 << 4) /* Bad enumerated argument.  */
-#define CL_ERR_NEGATIVE		(1 << 5) /* Negative form of option
+#define CL_ERR_INT_RANGE_ARG	(1 << 4) /* Bad unsigned integer argument.  */
+#define CL_ERR_ENUM_ARG		(1 << 5) /* Bad enumerated argument.  */
+#define CL_ERR_NEGATIVE		(1 << 6) /* Negative form of option
 					    not permitted (together
 					    with OPT_SPECIAL_unknown).  */
 
@@ -359,7 +364,7 @@ bool handle_generated_option (struct gcc_options *opts,
 			      size_t opt_index, const char *arg, int value,
 			      unsigned int lang_mask, int kind, location_t loc,
 			      const struct cl_option_handlers *handlers,
-			      diagnostic_context *dc);
+			      bool generated_p, diagnostic_context *dc);
 void generate_option (size_t opt_index, const char *arg, int value,
 		      unsigned int lang_mask,
 		      struct cl_decoded_option *decoded);
@@ -384,6 +389,8 @@ extern void print_ignored_options (void);
 extern void handle_common_deferred_options (void);
 unsigned int parse_sanitizer_options (const char *, location_t, int,
 				      unsigned int, int, bool);
+
+unsigned int parse_no_sanitize_attribute (char *value);
 extern bool common_handle_option (struct gcc_options *opts,
 				  struct gcc_options *opts_set,
 				  const struct cl_decoded_option *decoded,
@@ -422,10 +429,14 @@ extern const struct sanitizer_opts_s
   const char *const name;
   unsigned int flag;
   size_t len;
+  bool can_recover;
 } sanitizer_opts[];
 
 extern void add_misspelling_candidates (auto_vec<char *> *candidates,
 					const struct cl_option *option,
 					const char *base_option);
+extern const char *candidates_list_and_hint (const char *arg, char *&str,
+					     const auto_vec <const char *> &
+					     candidates);
 
 #endif

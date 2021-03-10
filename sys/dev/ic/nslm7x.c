@@ -1,4 +1,4 @@
-/*	$NetBSD: nslm7x.c,v 1.72 2018/11/30 05:49:23 msaitoh Exp $ */
+/*	$NetBSD: nslm7x.c,v 1.74 2020/09/07 00:32:28 mrg Exp $ */
 
 /*-
  * Copyright (c) 2000 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: nslm7x.c,v 1.72 2018/11/30 05:49:23 msaitoh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: nslm7x.c,v 1.74 2020/09/07 00:32:28 mrg Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -2156,6 +2156,7 @@ static const struct wb_product wbsio_products[] = {
     { WBSIO_ID_NCT6793D,    "NCT6793D", nct6779d_sensors, NULL },
     { WBSIO_ID_NCT6795D,    "NCT6795D", nct6779d_sensors, NULL },
     { WBSIO_ID_NCT6796D,    "NCT6796D", nct6779d_sensors, NULL },
+    { WBSIO_ID_NCT6798D,    "NCT6798D", nct6779d_sensors, NULL },
     { 0, NULL, NULL, NULL }
 };
 
@@ -2555,7 +2556,8 @@ wb_attach(struct lm_softc *sc)
 	DPRINTF(("%s: winbond chip id 0x%x\n", __func__, sc->chipid));
 
 	if ((prod = wb_lookup(sc, wb_products, sc->chipid)) != NULL) {
-		switch (prod->str[0]) {
+		model = prod->str;
+		switch (model[0]) {
 		case 'W':
 			vendor = "Winbond";
 			break;
@@ -2569,7 +2571,6 @@ wb_attach(struct lm_softc *sc)
 			aprint_error_dev(dev, "Unknown model (%s)\n", model);
 			return -1;
 		}
-		model = prod->str;
 		sensors = prod->sensors;
 		sc->refresh_sensor_data = wb_refresh_sensor_data;
 		if (prod->extattach != NULL)

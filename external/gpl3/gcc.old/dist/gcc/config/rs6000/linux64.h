@@ -1,6 +1,6 @@
 /* Definitions of target machine for GNU compiler,
    for 64 bit PowerPC linux.
-   Copyright (C) 2000-2016 Free Software Foundation, Inc.
+   Copyright (C) 2000-2018 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -85,7 +85,7 @@ extern int dot_symbols;
 #undef	RS6000_ABI_NAME
 #define	RS6000_ABI_NAME "linux"
 
-#define INVALID_64BIT "-m%s not supported in this configuration"
+#define INVALID_64BIT "%<-m%s%> not supported in this configuration"
 #define INVALID_32BIT INVALID_64BIT
 
 #ifdef LINUX64_DEFAULT_ABI_ELFv2
@@ -292,12 +292,12 @@ extern int dot_symbols;
 
 /* PowerPC64 Linux word-aligns FP doubles when -malign-power is given.  */
 #undef  ADJUST_FIELD_ALIGN
-#define ADJUST_FIELD_ALIGN(FIELD, COMPUTED) \
-  (rs6000_special_adjust_field_align_p ((FIELD), (COMPUTED))		\
+#define ADJUST_FIELD_ALIGN(FIELD, TYPE, COMPUTED) \
+  (rs6000_special_adjust_field_align_p ((TYPE), (COMPUTED))		\
    ? 128								\
    : (TARGET_64BIT							\
       && TARGET_ALIGN_NATURAL == 0					\
-      && TYPE_MODE (strip_array_types (TREE_TYPE (FIELD))) == DFmode)	\
+      && TYPE_MODE (strip_array_types (TYPE)) == DFmode)		\
    ? MIN ((COMPUTED), 32)						\
    : (COMPUTED))
 
@@ -340,7 +340,7 @@ extern int dot_symbols;
    registers and memory.  FIRST is nonzero if this is the only
    element.  */
 #define BLOCK_REG_PADDING(MODE, TYPE, FIRST) \
-  (!(FIRST) ? upward : FUNCTION_ARG_PADDING (MODE, TYPE))
+  (!(FIRST) ? PAD_UPWARD : targetm.calls.function_arg_padding (MODE, TYPE))
 
 /* Linux doesn't support saving and restoring 64-bit regs in a 32-bit
    process.  */
@@ -395,7 +395,8 @@ extern int dot_symbols;
 #define CPP_OS_DEFAULT_SPEC "%(cpp_os_linux) %(include_extra)"
 
 #undef  LINK_SHLIB_SPEC
-#define LINK_SHLIB_SPEC "%{shared:-shared} %{!shared: %{static:-static}}"
+#define LINK_SHLIB_SPEC "%{shared:-shared} %{!shared: %{static:-static}} \
+  %{static-pie:-static -pie --no-dynamic-linker -z text}"
 
 #undef  LIB_DEFAULT_SPEC
 #define LIB_DEFAULT_SPEC "%(lib_linux)"
@@ -470,13 +471,15 @@ extern int dot_symbols;
 #endif
 
 #define LINK_OS_LINUX_SPEC32 LINK_OS_LINUX_EMUL32 " %{!shared: %{!static: \
-  %{rdynamic:-export-dynamic} \
-  -dynamic-linker " GNU_USER_DYNAMIC_LINKER32 "}} \
+  %{!static-pie: \
+    %{rdynamic:-export-dynamic} \
+    -dynamic-linker " GNU_USER_DYNAMIC_LINKER32 "}}} \
   %(link_os_extra_spec32)"
 
 #define LINK_OS_LINUX_SPEC64 LINK_OS_LINUX_EMUL64 " %{!shared: %{!static: \
-  %{rdynamic:-export-dynamic} \
-  -dynamic-linker " GNU_USER_DYNAMIC_LINKER64 "}} \
+  %{!static-pie: \
+    %{rdynamic:-export-dynamic} \
+    -dynamic-linker " GNU_USER_DYNAMIC_LINKER64 "}}} \
   %(link_os_extra_spec64)"
 
 #undef  TOC_SECTION_ASM_OP
@@ -489,7 +492,7 @@ extern int dot_symbols;
 #define MINIMAL_TOC_SECTION_ASM_OP \
   (TARGET_64BIT						\
    ? "\t.section\t\".toc1\",\"aw\""			\
-   : ((TARGET_RELOCATABLE || flag_pic)			\
+   : (flag_pic						\
       ? "\t.section\t\".got2\",\"aw\""			\
       : "\t.section\t\".got1\",\"aw\""))
 
@@ -585,7 +588,6 @@ extern int dot_symbols;
 			&& ! TARGET_NO_FP_IN_TOC)))			\
 	       || (!TARGET_64BIT					\
 		   && !TARGET_NO_FP_IN_TOC				\
-		   && !TARGET_RELOCATABLE				\
 		   && SCALAR_FLOAT_MODE_P (GET_MODE (X))		\
 		   && BITS_PER_WORD == HOST_BITS_PER_INT)))))
 
@@ -594,7 +596,7 @@ extern int dot_symbols;
    true if the symbol may be affected by dynamic relocations.  */
 #undef	ASM_PREFERRED_EH_DATA_FORMAT
 #define	ASM_PREFERRED_EH_DATA_FORMAT(CODE, GLOBAL) \
-  ((TARGET_64BIT || flag_pic || TARGET_RELOCATABLE)			\
+  (TARGET_64BIT || flag_pic						\
    ? (((GLOBAL) ? DW_EH_PE_indirect : 0) | DW_EH_PE_pcrel		\
       | (TARGET_64BIT ? DW_EH_PE_udata8 : DW_EH_PE_sdata4))		\
    : DW_EH_PE_absptr)
@@ -635,3 +637,9 @@ extern int dot_symbols;
   || (TARGET_GLIBC_MAJOR == 2 && TARGET_GLIBC_MINOR >= 19)
 #define RS6000_GLIBC_ATOMIC_FENV 1
 #endif
+
+/* The IEEE 128-bit emulator is only built on Linux systems.  Flag that we
+   should enable the type handling for KFmode on VSX systems even if we are not
+   enabling the __float128 keyword.  */
+#undef	TARGET_FLOAT128_ENABLE_TYPE
+#define TARGET_FLOAT128_ENABLE_TYPE 1

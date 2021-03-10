@@ -1,4 +1,4 @@
-/*	$NetBSD: install.c,v 1.7 2019/06/15 08:20:33 martin Exp $	*/
+/*	$NetBSD: install.c,v 1.20 2020/11/04 14:29:40 martin Exp $	*/
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -34,6 +34,7 @@
 
 /* install.c -- system installation. */
 
+#include <sys/param.h>
 #include <stdio.h>
 #include <curses.h>
 #include "defs.h"
@@ -49,16 +50,35 @@ static bool
 write_all_parts(struct install_partition_desc *install)
 {
 	struct disk_partitions **allparts, *parts;
+#ifndef NO_CLONES
+	struct selected_partition *src;
+#endif
 	size_t num_parts, i, j;
 	bool found, res;
 
 	/* pessimistic assumption: all partitions on different devices */
-	allparts = calloc(install->num, sizeof(*allparts));
+	allparts = calloc(install->num + install->num_write_back,
+	    sizeof(*allparts));
 	if (allparts == NULL)
 		return false;
 
 	/* collect all different partition sets */
 	num_parts = 0;
+	for (i = 0; i < install->num_write_back; i++) {
+		parts = install->write_back[i];
+		if (parts == NULL)
+			continue;
+		found = false;
+		for (j = 0; j < num_parts; j++) {
+			if (allparts[j] == parts) {
+				found = true;
+				break;
+			}
+		}
+		if (found)
+			continue;
+		allparts[num_parts++] = parts;
+	}
 	for (i = 0; i < install->num; i++) {
 		parts = install->infos[i].parts;
 		if (parts == NULL)
@@ -75,7 +95,7 @@ write_all_parts(struct install_partition_desc *install)
 		allparts[num_parts++] = parts;
 	}
 
-	/* do four phases, abort anytime and go out, returning res */
+	/* do multiple phases, abort anytime and go out, returning res */
 
 	res = true;
 
@@ -98,7 +118,22 @@ write_all_parts(struct install_partition_desc *install)
 	/* phase 3: now we may have a first chance to enable swap space */
 	set_swap_if_low_ram(install);
 
-	/* phase 4: post disklabel (used for updating boot loaders) */
+#ifndef NO_CLONES
+	/* phase 4: copy any cloned partitions data (if requested) */
+	for (i = 0; i < install->num; i++) {
+		if ((install->infos[i].flags & PUIFLG_CLONE_PARTS) == 0
+		    || install->infos[i].clone_src == NULL
+		    || !install->infos[i].clone_src->with_data)
+			continue;
+		src = &install->infos[i].clone_src
+		    ->selection[install->infos[i].clone_ndx];
+		clone_partition_data(install->infos[i].parts,
+		    install->infos[i].cur_part_id,
+		    src->parts, src->id);
+	}
+#endif
+
+	/* phase 5: post disklabel (used for updating boot loaders) */
 	for (i = 0; i < num_parts; i++) {
 		if (!md_post_disklabel(install, allparts[i])) {
 			res = false;
@@ -118,9 +153,8 @@ void
 do_install(void)
 {
 	int find_disks_ret;
-	int retcode = 0;
-	struct install_partition_desc install;
-	struct disk_partitions *parts;
+	int retcode = 0, res;
+	struct install_partition_desc install = {};
 
 #ifndef NO_PARTMAN
 	partman_go = -1;
@@ -134,12 +168,17 @@ do_install(void)
 		return;
 #endif
 
+#ifdef CHECK_ENTROPY
+	if (!do_check_entropy()) {
+		hit_enter_to_continue(MSG_abort_installation, NULL);
+		return;
+	}
+#endif
+
 	memset(&install, 0, sizeof install);
 
-	get_ramsize();
-
 	/* Create and mount partitions */
-	find_disks_ret = find_disks(msg_string(MSG_install));
+	find_disks_ret = find_disks(msg_string(MSG_install), false);
 	if (partman_go == 1) {
 		if (partman() < 0) {
 			hit_enter_to_continue(MSG_abort_part, NULL);
@@ -162,51 +201,44 @@ do_install(void)
 			}
 		}
 
-		if (!md_get_info(&install) ||
-		    !md_make_bsd_partitions(&install)) {
+		for (;;) {
+			if (md_get_info(&install)) {
+				res = md_make_bsd_partitions(&install);
+				if (res == -1) {
+					pm->parts = NULL;
+					continue;
+				} else if (res == 1) {
+					break;
+				}
+			}
 			hit_enter_to_continue(MSG_abort_inst, NULL);
-			return;
+			goto error;
 		}
 
 		/* Last chance ... do you really want to do this? */
 		clear();
 		refresh();
-		msg_display(MSG_lastchance, pm->diskdev);
+		msg_fmt_display(MSG_lastchance, "%s", pm->diskdev);
 		if (!ask_noyes(NULL))
-			return;
+			goto error;
 
-		/*
-		 * Check if we have a secondary partitioning and
-		 * use that if available. The MD code will typically
-		 * have written the outer partitioning in md_pre_disklabel.
-		 */
-		parts = pm->parts;
-		if (!pm->no_part && parts != NULL) {
-			if (parts->pscheme->secondary_scheme != NULL &&
-			    parts->pscheme->secondary_partitions != NULL) {
-				parts = parts->pscheme->secondary_partitions(
-				    parts, pm->ptstart, false);
-				if (parts == NULL)
-					parts = pm->parts;
-			}
-		}
 		if ((!pm->no_part && !write_all_parts(&install)) ||
 		    make_filesystems(&install) ||
 		    make_fstab(&install) != 0 ||
 		    md_post_newfs(&install) != 0)
-		return;
+		goto error;
 	}
 
 	/* Unpack the distribution. */
 	process_menu(MENU_distset, &retcode);
 	if (retcode == 0)
-		return;
+		goto error;
 	if (get_and_unpack_sets(0, MSG_disksetupdone,
 	    MSG_extractcomplete, MSG_abortinst) != 0)
-		return;
+		goto error;
 
 	if (md_post_extract(&install) != 0)
-		return;
+		goto error;
 
 	do_configmenu(&install);
 
@@ -214,7 +246,8 @@ do_install(void)
 
 	md_cleanup_install(&install);
 
-	free(install.infos);
-
 	hit_enter_to_continue(MSG_instcomplete, NULL);
+
+error:
+	free_install_desc(&install);
 }

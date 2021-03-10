@@ -1,4 +1,4 @@
-/*	$NetBSD: machdep.c,v 1.820 2019/05/19 08:46:15 maxv Exp $	*/
+/*	$NetBSD: machdep.c,v 1.831 2020/07/14 00:45:52 yamaguchi Exp $	*/
 
 /*
  * Copyright (c) 1996, 1997, 1998, 2000, 2004, 2006, 2008, 2009, 2017
@@ -67,7 +67,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.820 2019/05/19 08:46:15 maxv Exp $");
+__KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.831 2020/07/14 00:45:52 yamaguchi Exp $");
 
 #include "opt_beep.h"
 #include "opt_compat_freebsd.h"
@@ -119,7 +119,10 @@ __KERNEL_RCSID(0, "$NetBSD: machdep.c,v 1.820 2019/05/19 08:46:15 maxv Exp $");
 
 #include <sys/sysctl.h>
 
+#include <x86/efi.h>
+
 #include <machine/cpu.h>
+#include <machine/cpu_rng.h>
 #include <machine/cpufunc.h>
 #include <machine/cpuvar.h>
 #include <machine/gdt.h>
@@ -201,7 +204,7 @@ int cpureset_delay = 2000; /* default to 2s */
 #endif
 
 #ifdef MTRR
-struct mtrr_funcs *mtrr_funcs;
+const struct mtrr_funcs *mtrr_funcs;
 #endif
 
 int cpu_class;
@@ -231,14 +234,6 @@ extern paddr_t avail_start, avail_end;
 extern paddr_t pmap_pa_start, pmap_pa_end;
 void hypervisor_callback(void);
 void failsafe_callback(void);
-#endif
-
-#ifdef XENPV
-void (*delay_func)(unsigned int) = xen_delay;
-void (*initclock_func)(void) = xen_initclocks;
-#else
-void (*delay_func)(unsigned int) = i8254_delay;
-void (*initclock_func)(void) = i8254_initclocks;
 #endif
 
 /*
@@ -418,7 +413,8 @@ cpu_startup(void)
 	initmsgbuf((void *)msgbuf_vaddr, sz);
 
 #ifdef MULTIBOOT
-	multiboot_print_info();
+	multiboot1_print_info();
+	multiboot2_print_info();
 #endif
 
 #if NCARDBUS > 0
@@ -491,15 +487,14 @@ void
 i386_switch_context(lwp_t *l)
 {
 	struct pcb *pcb;
-	struct physdev_op physop;
 
 	pcb = lwp_getpcb(l);
 
 	HYPERVISOR_stack_switch(GSEL(GDATA_SEL, SEL_KPL), pcb->pcb_esp0);
 
-	physop.cmd = PHYSDEVOP_SET_IOPL;
-	physop.u.set_iopl.iopl = pcb->pcb_iopl;
-	HYPERVISOR_physdev_op(&physop);
+	struct physdev_set_iopl set_iopl;
+	set_iopl.iopl = pcb->pcb_iopl;
+	HYPERVISOR_physdev_op(PHYSDEVOP_set_iopl, &set_iopl);
 }
 
 void
@@ -509,19 +504,9 @@ i386_tls_switch(lwp_t *l)
 	struct pcb *pcb = lwp_getpcb(l);
 
 	/*
-	 * Raise the IPL to IPL_HIGH.
-	 * FPU IPIs can alter the LWP's saved cr0.  Dropping the priority
-	 * is deferred until mi_switch(), when cpu_switchto() returns.
+	 * Raise the IPL to IPL_HIGH. XXX Still needed?
 	 */
 	(void)splhigh();
-
-	/*
-	 * If our floating point registers are on a different CPU,
-	 * set CR0_TS so we'll trap rather than reuse bogus state.
-	 */
-	if (l != ci->ci_fpcurlwp) {
-		HYPERVISOR_fpu_taskswitch(1);
-	}
 
 	/* Update TLS segment pointers */
 	update_descriptor(&ci->ci_gdt[GUFS_SEL],
@@ -569,6 +554,7 @@ cpu_set_tss_gates(struct cpu_info *ci)
 {
 	struct segment_descriptor sd;
 	void *doubleflt_stack;
+	idt_descriptor_t *idt;
 
 	doubleflt_stack = (void *)uvm_km_alloc(kernel_map, USPACE, 0,
 	    UVM_KMF_WIRED);
@@ -578,6 +564,7 @@ cpu_set_tss_gates(struct cpu_info *ci)
 	    SDT_SYS386TSS, SEL_KPL, 0, 0);
 	ci->ci_gdt[GTRAPTSS_SEL].sd = sd;
 
+	idt = cpu_info_primary.ci_idtvec.iv_idt;
 	set_idtgate(&idt[8], NULL, 0, SDT_SYSTASKGT, SEL_KPL,
 	    GSEL(GTRAPTSS_SEL, SEL_KPL));
 
@@ -800,10 +787,12 @@ haltsys:
 #else
 		__USE(s);
 #endif
-#ifdef XENPV
-		HYPERVISOR_shutdown();
-		for (;;);
-#endif
+#ifdef XEN
+		if (vm_guest == VM_GUEST_XENPV ||
+		    vm_guest == VM_GUEST_XENPVH ||
+		    vm_guest == VM_GUEST_XENPVHVM)
+			HYPERVISOR_shutdown();
+#endif /* XEN */
 	}
 
 #ifdef MULTIPROCESSOR
@@ -919,6 +908,7 @@ setgate(struct gate_descriptor *gd, void *func, int args, int type, int dpl,
 void
 unsetgate(struct gate_descriptor *gd)
 {
+
 	gd->gd_p = 0;
 	gd->gd_hioffset = 0;
 	gd->gd_looffset = 0;
@@ -962,10 +952,15 @@ extern union descriptor tmpgdt[];
 #endif
 
 void
-cpu_init_idt(void)
+cpu_init_idt(struct cpu_info *ci)
 {
 	struct region_descriptor region;
-	setregion(&region, pentium_idt, NIDT * sizeof(idt[0]) - 1);
+	struct idt_vec *iv;
+	idt_descriptor_t *idt;
+
+	iv = &ci->ci_idtvec;
+	idt = iv->iv_idt_pentium;
+	setregion(&region, idt, NIDT * sizeof(idt[0]) - 1);
 	lidt(&region);
 }
 
@@ -993,7 +988,7 @@ initgdt(union descriptor *tgdt)
 	    SDT_MEMERA, SEL_UPL, 1, 1);
 	setsegment(&gdtstore[GUDATA_SEL].sd, 0, 0xfffff,
 	    SDT_MEMRWA, SEL_UPL, 1, 1);
-#if NBIOSCALL > 0
+#if NBIOSCALL > 0 && !defined(XENPV)
 	/* bios trampoline GDT entries */
 	setsegment(&gdtstore[GBIOSCODE_SEL].sd, 0, 0xfffff,
 	    SDT_MEMERA, SEL_KPL, 0, 0);
@@ -1057,8 +1052,9 @@ init386_pte0(void)
 	/* make sure it is clean before using */
 	memset((void *)vaddr, 0, PAGE_SIZE);
 }
-#endif /* !XENPV */
+#endif /* !XENPV && NBIOSCALL > 0 */
 
+#ifndef XENPV
 static void
 init386_ksyms(void)
 {
@@ -1071,7 +1067,10 @@ init386_ksyms(void)
 #endif
 
 #if defined(MULTIBOOT)
-	if (multiboot_ksyms_addsyms_elf())
+	if (multiboot1_ksyms_addsyms_elf())
+		return;
+
+	if (multiboot2_ksyms_addsyms_elf())
 		return;
 #endif
 
@@ -1085,6 +1084,7 @@ init386_ksyms(void)
 	ksyms_addsyms_elf(symtab->nsym, (int *)symtab->ssym, (int *)symtab->esym);
 #endif
 }
+#endif /* XENPV */
 
 void
 init_bootspace(void)
@@ -1136,12 +1136,14 @@ init386(paddr_t first_avail)
 	extern paddr_t local_apic_pa;
 	union descriptor *tgdt;
 	struct region_descriptor region;
-#endif
 #if NBIOSCALL > 0
 	extern int biostramp_image_size;
 	extern u_char biostramp_image[];
 #endif
+#endif /* !XENPV */
 	struct pcb *pcb;
+	struct idt_vec *iv;
+	idt_descriptor_t *idt;
 
 	KASSERT(first_avail % PAGE_SIZE == 0);
 
@@ -1150,11 +1152,17 @@ init386(paddr_t first_avail)
 	cpu_info_primary.ci_vcpu = &HYPERVISOR_shared_info->vcpu_info[0];
 #endif
 
+#ifdef XEN
+	if (vm_guest == VM_GUEST_XENPVH)
+		xen_parse_cmdline(XEN_PARSE_BOOTFLAGS, NULL);
+#endif
+
 	uvm_lwp_setuarea(&lwp0, lwp0uarea);
 
 	cpu_probe(&cpu_info_primary);
 	cpu_init_msrs(&cpu_info_primary, true);
-#ifndef XEN
+	cpu_rng_init();
+#ifndef XENPV
 	cpu_speculation_init(&cpu_info_primary);
 #endif
 
@@ -1307,8 +1315,9 @@ init386(paddr_t first_avail)
 
 	pmap_kenter_pa(pentium_idt_vaddr, idt_paddr, VM_PROT_READ, 0);
 	pmap_update(pmap_kernel());
-	pentium_idt = (union descriptor *)pentium_idt_vaddr;
-	idt = (idt_descriptor_t *)idt_vaddr;
+	iv = &(cpu_info_primary.ci_idtvec);
+	idt_vec_init_cpu_md(iv, cpu_index(&cpu_info_primary));
+	idt = (idt_descriptor_t *)iv->iv_idt;
 
 #ifndef XENPV	
 	tgdt = gdtstore;
@@ -1342,7 +1351,7 @@ init386(paddr_t first_avail)
 		sel = SEL_KPL;
 #endif /* XENPV */
 
-		idt_vec_reserve(x);
+		idt_vec_reserve(iv, x);
 
  		switch (x) {
 #ifdef XENPV
@@ -1363,7 +1372,7 @@ init386(paddr_t first_avail)
 	}
 
 	/* new-style interrupt gate for syscalls */
-	idt_vec_reserve(128);
+	idt_vec_reserve(iv, 128);
 	set_idtgate(&idt[128], &IDTVEC(syscall), 0, SDT_SYS386IGT, SEL_UPL,
 	    GSEL(GCODE_SEL, SEL_KPL));
 
@@ -1373,15 +1382,29 @@ init386(paddr_t first_avail)
 #endif
 	
 	lldt(GSEL(GLDT_SEL, SEL_KPL));
-	cpu_init_idt();
+	cpu_init_idt(&cpu_info_primary);
 
-	init386_ksyms();
+#ifdef XENPV
+	xen_init_ksyms();
+#else /* XENPV */
+#ifdef XEN
+	if (vm_guest == VM_GUEST_XENPVH)
+		xen_init_ksyms();
+	else
+#endif /* XEN */
+		init386_ksyms();
+#endif /* XENPV */
 
 #if NMCA > 0
-	/* check for MCA bus, needed to be done before ISA stuff - if
+	/* 
+	 * check for MCA bus, needed to be done before ISA stuff - if
 	 * MCA is detected, ISA needs to use level triggered interrupts
-	 * by default */
-	mca_busprobe();
+	 * by default
+	 * And we do not search for MCA using bioscall() on EFI systems
+	 * that lacks it (they lack MCA too, anyway).
+	 */
+	if (lookup_bootinfo(BTINFO_EFI) == NULL && vm_guest != VM_GUEST_XENPVH)
+		mca_busprobe();
 #endif
 
 #ifdef XENPV
@@ -1429,7 +1452,9 @@ cpu_reset(void)
 	for (;;);
 #else /* XENPV */
 	struct region_descriptor region;
+	idt_descriptor_t *idt;
 
+	idt = (idt_descriptor_t *)cpu_info_primary.ci_idtvec.iv_idt;
 	x86_disable_intr();
 
 	/*
@@ -1621,13 +1646,6 @@ cpu_setmcontext(struct lwp *l, const mcontext_t *mcp, unsigned int flags)
 	return (0);
 }
 
-void
-cpu_initclocks(void)
-{
-
-	(*initclock_func)();
-}
-
 #define	DEV_IO 14		/* iopl for compat_10 */
 
 int
@@ -1679,7 +1697,7 @@ cpu_alloc_l3_page(struct cpu_info *ci)
 		panic("%s: failed to allocate L3 pglist for CPU %d (ret %d)\n",
 			__func__, cpu_index(ci), ret);
 
-	ci->ci_pae_l3_pdirpa = vmap->phys_addr;
+	ci->ci_pae_l3_pdirpa = VM_PAGE_TO_PHYS(vmap);
 
 	ci->ci_pae_l3_pdir = (paddr_t *)uvm_km_alloc(kernel_map, PAGE_SIZE, 0,
 		UVM_KMF_VAONLY | UVM_KMF_NOWAIT);
@@ -1693,3 +1711,50 @@ cpu_alloc_l3_page(struct cpu_info *ci)
 	pmap_update(pmap_kernel());
 }
 #endif /* PAE */
+
+static void
+idt_vec_copy(struct idt_vec *dst, struct idt_vec *src)
+{
+	idt_descriptor_t *idt_dst;
+
+	idt_dst = dst->iv_idt;
+	memcpy(idt_dst, src->iv_idt, PAGE_SIZE);
+	memcpy(dst->iv_allocmap, src->iv_allocmap, sizeof(dst->iv_allocmap));
+}
+
+void
+idt_vec_init_cpu_md(struct idt_vec *iv, cpuid_t cid)
+{
+	vaddr_t va_idt, va_pentium_idt;
+	struct vm_page *pg;
+
+	if (idt_vec_is_pcpu() &&
+	    cid != cpu_index(&cpu_info_primary)) {
+		va_idt = uvm_km_alloc(kernel_map, PAGE_SIZE,
+		    0, UVM_KMF_VAONLY);
+		pg = uvm_pagealloc(NULL, 0, NULL, UVM_PGA_ZERO);
+		if (pg == NULL) {
+			panic("failed to allocate pcpu idt PA");
+		}
+		pmap_kenter_pa(va_idt, VM_PAGE_TO_PHYS(pg),
+		    VM_PROT_READ|VM_PROT_WRITE, 0);
+		pmap_update(pmap_kernel());
+
+		memset((void *)va_idt, 0, PAGE_SIZE);
+
+		/* pentium f00f bug stuff */
+		va_pentium_idt = uvm_km_alloc(kernel_map, PAGE_SIZE,
+		    0, UVM_KMF_VAONLY);
+		pmap_kenter_pa(va_pentium_idt, VM_PAGE_TO_PHYS(pg),
+		    VM_PROT_READ, 0);
+		pmap_update(pmap_kernel());
+
+		iv->iv_idt = (void *)va_idt;
+		iv->iv_idt_pentium = (void *)va_pentium_idt;
+
+		idt_vec_copy(iv, &(cpu_info_primary.ci_idtvec));
+	} else {
+		iv->iv_idt = (void *)idt_vaddr;
+		iv->iv_idt_pentium = (void *)pentium_idt_vaddr;
+	}
+}

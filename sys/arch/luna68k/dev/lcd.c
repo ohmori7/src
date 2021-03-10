@@ -1,4 +1,4 @@
-/* $NetBSD: lcd.c,v 1.9 2018/03/08 03:12:02 mrg Exp $ */
+/* $NetBSD: lcd.c,v 1.12 2020/12/29 17:17:14 tsutsui Exp $ */
 /* $OpenBSD: lcd.c,v 1.7 2015/02/10 22:42:35 miod Exp $ */
 
 /*-
@@ -32,7 +32,7 @@
 
 #include <sys/cdefs.h>		/* RCS ID & Copyright macro defns */
 
-__KERNEL_RCSID(0, "$NetBSD: lcd.c,v 1.9 2018/03/08 03:12:02 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: lcd.c,v 1.12 2020/12/29 17:17:14 tsutsui Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -43,6 +43,7 @@ __KERNEL_RCSID(0, "$NetBSD: lcd.c,v 1.9 2018/03/08 03:12:02 mrg Exp $");
 #include <sys/errno.h>
 
 #include <machine/autoconf.h>
+#include <machine/board.h>
 #include <machine/cpu.h>
 #include <machine/lcd.h>
 
@@ -71,20 +72,20 @@ __KERNEL_RCSID(0, "$NetBSD: lcd.c,v 1.9 2018/03/08 03:12:02 mrg Exp $");
 #define LCD_MAXBUFLEN	80
 
 struct pio {
-	volatile u_int8_t portA;
-	volatile u_int8_t portB;
-	volatile u_int8_t portC;
-	volatile u_int8_t cntrl;
+	volatile uint8_t portA;
+	volatile uint8_t portB;
+	volatile uint8_t portC;
+	volatile uint8_t cntrl;
 };
 
 /* Autoconf stuff */
 static int  lcd_match(device_t, cfdata_t, void *);
 static void lcd_attach(device_t, device_t, void *);
 
-dev_type_open(lcdopen);
-dev_type_close(lcdclose);
-dev_type_write(lcdwrite);
-dev_type_ioctl(lcdioctl);
+static dev_type_open(lcdopen);
+static dev_type_close(lcdclose);
+static dev_type_write(lcdwrite);
+static dev_type_ioctl(lcdioctl);
 
 const struct cdevsw lcd_cdevsw = {
 	.d_open     = lcdopen,
@@ -110,11 +111,11 @@ struct lcd_softc {
 CFATTACH_DECL_NEW(lcd, sizeof(struct lcd_softc),
     lcd_match, lcd_attach, NULL, NULL);
 
-void lcdbusywait(void);
-void lcdput(int);
-void lcdctrl(int);
-void lcdshow(char *);
-void greeting(void);
+static void lcdbusywait(void);
+static void lcdput(int);
+static void lcdctrl(int);
+static void lcdshow(char *);
+static void greeting(void);
 			       /* "1234567890123456" */
 static char lcd_boot_message1[] = " NetBSD/luna68k ";
 static char lcd_boot_message2[] = "   SX-9100/DT   ";
@@ -147,7 +148,7 @@ lcd_attach(device_t parent, device_t self, void *aux)
 /*
  * open/close/write/ioctl
  */
-int
+static int
 lcdopen(dev_t dev, int flags, int fmt, struct lwp *l)
 {
 	int unit;
@@ -164,7 +165,7 @@ lcdopen(dev_t dev, int flags, int fmt, struct lwp *l)
 	return 0;
 }
 
-int
+static int
 lcdclose(dev_t dev, int flags, int fmt, struct lwp *l)
 {
 	int unit;
@@ -177,7 +178,7 @@ lcdclose(dev_t dev, int flags, int fmt, struct lwp *l)
 	return 0;
 }
 
-int
+static int
 lcdwrite(dev_t dev, struct uio *uio, int flag)
 {
 	int error;
@@ -200,7 +201,7 @@ lcdwrite(dev_t dev, struct uio *uio, int flag)
 	return 0;
 }
 
-int
+static int
 lcdioctl(dev_t dev, u_long cmd, void *addr, int flag, struct lwp *l)
 {
 	int val;
@@ -277,10 +278,10 @@ lcdioctl(dev_t dev, u_long cmd, void *addr, int flag, struct lwp *l)
 	return EPASSTHROUGH;
 }
 
-void
+static void
 lcdbusywait(void)
 {
-	struct pio *p1 = (struct pio *)0x4D000000;
+	struct pio *p1 = (struct pio *)OBIO_PIO1_BASE;
 	int msb, s;
 
 	s = splhigh();
@@ -298,10 +299,10 @@ lcdbusywait(void)
 	splx(s);
 }	
 
-void
+static void
 lcdput(int cc)
 {
-	struct pio *p1 = (struct pio *)0x4D000000;
+	struct pio *p1 = (struct pio *)OBIO_PIO1_BASE;
 	int s;
 
 	lcdbusywait();
@@ -315,10 +316,10 @@ lcdput(int cc)
 	splx(s);
 }
 
-void
+static void
 lcdctrl(int cc)
 {
-	struct pio *p1 = (struct pio *)0x4D000000;
+	struct pio *p1 = (struct pio *)OBIO_PIO1_BASE;
 	int s;
 
 	lcdbusywait();
@@ -332,7 +333,7 @@ lcdctrl(int cc)
 	splx(s);
 }
 
-void
+static void
 lcdshow(char *s)
 {
 	int cc;
@@ -341,9 +342,10 @@ lcdshow(char *s)
 		lcdput(cc);
 }
 
-void
+static void
 greeting(void)
 {
+
 	lcdctrl(LCD_INIT);
 	lcdctrl(LCD_ENTRY);
 	lcdctrl(LCD_ON);

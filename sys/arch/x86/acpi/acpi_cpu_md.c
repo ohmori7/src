@@ -1,4 +1,4 @@
-/* $NetBSD: acpi_cpu_md.c,v 1.79 2018/11/10 09:42:42 maxv Exp $ */
+/* $NetBSD: acpi_cpu_md.c,v 1.84 2020/10/25 16:39:00 nia Exp $ */
 
 /*-
  * Copyright (c) 2010, 2011 Jukka Ruohonen <jruohonen@iki.fi>
@@ -27,7 +27,7 @@
  * SUCH DAMAGE.
  */
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: acpi_cpu_md.c,v 1.79 2018/11/10 09:42:42 maxv Exp $");
+__KERNEL_RCSID(0, "$NetBSD: acpi_cpu_md.c,v 1.84 2020/10/25 16:39:00 nia Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -378,7 +378,6 @@ acpicpu_md_cstate_stop(void)
 {
 	static char text[16];
 	void (*func)(void);
-	uint64_t xc;
 	bool ipi;
 
 	x86_cpu_idle_get(&func, text, sizeof(text));
@@ -393,8 +392,7 @@ acpicpu_md_cstate_stop(void)
 	 * Run a cross-call to ensure that all CPUs are
 	 * out from the ACPI idle-loop before detachment.
 	 */
-	xc = xc_broadcast(0, (xcfunc_t)nullop, NULL, NULL);
-	xc_wait(xc);
+	xc_barrier(0);
 
 	return 0;
 }
@@ -402,7 +400,7 @@ acpicpu_md_cstate_stop(void)
 /*
  * Called with interrupts enabled.
  */
-void
+void __nocsan
 acpicpu_md_cstate_enter(int method, int state)
 {
 	struct cpu_info *ci = curcpu();
@@ -1005,24 +1003,7 @@ static int
 acpicpu_md_pstate_sysctl_init(void)
 {
 	const struct sysctlnode	*fnode, *mnode, *rnode;
-	const char *str;
 	int rv;
-
-	switch (cpu_vendor) {
-
-	case CPUVENDOR_IDT:
-	case CPUVENDOR_INTEL:
-		str = "est";
-		break;
-
-	case CPUVENDOR_AMD:
-		str = "powernow";
-		break;
-
-	default:
-		return ENODEV;
-	}
-
 
 	rv = sysctl_createv(&acpicpu_log, 0, NULL, &rnode,
 	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "machdep", NULL,
@@ -1032,7 +1013,7 @@ acpicpu_md_pstate_sysctl_init(void)
 		goto fail;
 
 	rv = sysctl_createv(&acpicpu_log, 0, &rnode, &mnode,
-	    0, CTLTYPE_NODE, str, NULL,
+	    0, CTLTYPE_NODE, "cpu", NULL,
 	    NULL, 0, NULL, 0, CTL_CREATE, CTL_EOL);
 
 	if (rv != 0)

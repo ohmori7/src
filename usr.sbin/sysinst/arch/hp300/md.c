@@ -1,4 +1,4 @@
-/*	$NetBSD: md.c,v 1.6 2019/06/12 06:20:20 martin Exp $ */
+/*	$NetBSD: md.c,v 1.11 2020/10/12 16:14:34 martin Exp $ */
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -116,7 +116,7 @@ md_get_info(struct install_partition_desc *install)
 /*
  * md back-end code for menu-driven BSD disklabel editor.
  */
-bool
+int
 md_make_bsd_partitions(struct install_partition_desc *install)
 {
 
@@ -136,11 +136,17 @@ md_check_partitions(struct install_partition_desc *install)
 
 	for (i = 0; i < install->num; i++) {
 		if (i > 0) {
+			/* skip raw part and similar */
+			if (install->infos[i].cur_flags &
+			    (PTI_SEC_CONTAINER|PTI_PSCHEME_INTERNAL|
+			    PTI_RAW_PART))
+				continue;
+
 			if (install->infos[i].cur_start < last_end) {
 				snprintf(desc, sizeof desc,
 				    "%zu (%s)", i,
 				    install->infos[i].mount);
-				msg_display(MSG_ordering, desc);
+				msg_fmt_display(MSG_ordering, "%s", desc);
 				if (ask_yesno(NULL))
 					return false;
 			}
@@ -182,11 +188,17 @@ int
 md_post_newfs(struct install_partition_desc *install)
 {
 	/* boot blocks ... */
-	msg_display(MSG_dobootblks, pm->diskdev);
+	msg_fmt_display(MSG_dobootblks, "%s", pm->diskdev);
 	if (run_program(RUN_DISPLAY | RUN_NO_CLEAR,
 	    "/usr/sbin/installboot /dev/r%sc /usr/mdec/uboot.lif", pm->diskdev))
 		process_menu(MENU_ok,
 		    __UNCONST("Warning: disk is probably not bootable"));
+
+	wclear(stdscr);
+	touchwin(stdscr);
+	clearok(stdscr, 1);
+	refresh();
+
 	return 0;
 }
 
@@ -234,7 +246,7 @@ hp300_boot_size(void)
 }
 
 int
-md_pre_mount(struct install_partition_desc *install)
+md_pre_mount(struct install_partition_desc *install, size_t ndx)
 {
 	return 0;
 }

@@ -1,4 +1,4 @@
-/*	$NetBSD: sdt.h,v 1.10 2018/08/26 16:54:38 riastradh Exp $	*/
+/*	$NetBSD: sdt.h,v 1.14 2020/04/19 03:12:35 riastradh Exp $	*/
 
 /*-
  * Copyright 2006-2008 John Birrell <jb@FreeBSD.org>
@@ -37,48 +37,49 @@
 
 #define	_DTRACE_VERSION	1
 
-#define	DTRACE_PROBE(prov, name) {				\
+#define	DTRACE_PROBE(prov, name) do {				\
 	extern void __dtrace_##prov##___##name(void);		\
 	__dtrace_##prov##___##name();				\
-}
+} while (0)
 
-#define	DTRACE_PROBE1(prov, name, arg1) {			\
+#define	DTRACE_PROBE1(prov, name, arg1) do {			\
 	extern void __dtrace_##prov##___##name(unsigned long);	\
 	__dtrace_##prov##___##name((unsigned long)arg1);	\
-}
+} while (0)
 
-#define	DTRACE_PROBE2(prov, name, arg1, arg2) {			\
+#define	DTRACE_PROBE2(prov, name, arg1, arg2) do {		\
 	extern void __dtrace_##prov##___##name(unsigned long,	\
 	    unsigned long);					\
 	__dtrace_##prov##___##name((unsigned long)arg1,		\
 	    (unsigned long)arg2);				\
-}
+} while (0)
 
-#define	DTRACE_PROBE3(prov, name, arg1, arg2, arg3) {		\
+#define	DTRACE_PROBE3(prov, name, arg1, arg2, arg3) do {	\
 	extern void __dtrace_##prov##___##name(unsigned long,	\
 	    unsigned long, unsigned long);			\
 	__dtrace_##prov##___##name((unsigned long)arg1,		\
 	    (unsigned long)arg2, (unsigned long)arg3);		\
-}
+} while (0)
 
-#define	DTRACE_PROBE4(prov, name, arg1, arg2, arg3, arg4) {	\
+#define	DTRACE_PROBE4(prov, name, arg1, arg2, arg3, arg4) do {	\
 	extern void __dtrace_##prov##___##name(unsigned long,	\
 	    unsigned long, unsigned long, unsigned long);	\
 	__dtrace_##prov##___##name((unsigned long)arg1,		\
 	    (unsigned long)arg2, (unsigned long)arg3,		\
 	    (unsigned long)arg4);				\
-}
+} while (0)
 
-#define	DTRACE_PROBE5(prov, name, arg1, arg2, arg3, arg4, arg5) {	\
+#define	DTRACE_PROBE5(prov, name, arg1, arg2, arg3, arg4, arg5) do {	\
 	extern void __dtrace_##prov##___##name(unsigned long,		\
 	    unsigned long, unsigned long, unsigned long, unsigned long);\
 	__dtrace_##prov##___##name((unsigned long)arg1,			\
 	    (unsigned long)arg2, (unsigned long)arg3,			\
 	    (unsigned long)arg4, (unsigned long)arg5);			\
-}
+} while (0)
 
 #else /* _KERNEL */
 
+#include <sys/types.h>
 #include <sys/cdefs.h>
 #include <sys/queue.h>
 
@@ -309,11 +310,13 @@
 	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, 0)
 #define	SDT_PROBE5(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4) \
 	SDT_PROBE(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4)
+/* XXX: void * function casts */
 #define	SDT_PROBE6(prov, mod, func, name, arg0, arg1, arg2, arg3, arg4, arg5)  \
 	do {								       \
 		if (sdt_##prov##_##mod##_##func##_##name->id)		       \
-			(*(void (*)(uint32_t, uintptr_t, uintptr_t, uintptr_t, \
-			    uintptr_t, uintptr_t, uintptr_t))sdt_probe_func)(  \
+			__FPTRCAST(void (*)(uint32_t, uintptr_t, uintptr_t,    \
+			    uintptr_t, uintptr_t, uintptr_t, uintptr_t),       \
+			    sdt_probe_func)(  				       \
 			    sdt_##prov##_##mod##_##func##_##name->id,	       \
 			    (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2, \
 			    (uintptr_t)arg3, (uintptr_t)arg4, (uintptr_t)arg5);\
@@ -322,9 +325,9 @@
     arg6)								       \
 	do {								       \
 		if (sdt_##prov##_##mod##_##func##_##name->id)		       \
-			(*(void (*)(uint32_t, uintptr_t, uintptr_t, uintptr_t, \
-			    uintptr_t, uintptr_t, uintptr_t, uintptr_t))       \
-			    sdt_probe_func)(				       \
+			__FPTRCAST(void (*)(uint32_t, uintptr_t, uintptr_t,    \
+			    uintptr_t, uintptr_t, uintptr_t, uintptr_t,	       \
+			    uintptr_t), sdt_probe_func)(		       \
 			    sdt_##prov##_##mod##_##func##_##name->id,	       \
 			    (uintptr_t)arg0, (uintptr_t)arg1, (uintptr_t)arg2, \
 			    (uintptr_t)arg3, (uintptr_t)arg4, (uintptr_t)arg5, \

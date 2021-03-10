@@ -1,4 +1,4 @@
-/*	$NetBSD: if_tlp_pci.c,v 1.126 2019/05/29 06:17:28 msaitoh Exp $	*/
+/*	$NetBSD: if_tlp_pci.c,v 1.129 2020/07/07 06:27:37 msaitoh Exp $	*/
 
 /*-
  * Copyright (c) 1998, 1999, 2000, 2002 The NetBSD Foundation, Inc.
@@ -36,7 +36,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_tlp_pci.c,v 1.126 2019/05/29 06:17:28 msaitoh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_tlp_pci.c,v 1.129 2020/07/07 06:27:37 msaitoh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -588,7 +588,7 @@ tlp_pci_attach(device_t parent, device_t self, void *aux)
 	switch (sc->sc_chip) {
 	case TULIP_CHIP_21040:
 		sc->sc_srom_addrbits = 6;
-		sc->sc_srom = malloc(TULIP_ROM_SIZE(6), M_DEVBUF, M_NOWAIT);
+		sc->sc_srom = malloc(TULIP_ROM_SIZE(6), M_DEVBUF, M_WAITOK);
 		TULIP_WRITE(sc, CSR_MIIROM, MIIROM_SROMCS);
 		for (i = 0; i < TULIP_ROM_SIZE(6); i++) {
 			for (j = 0; j < 10000; j++) {
@@ -604,7 +604,7 @@ tlp_pci_attach(device_t parent, device_t self, void *aux)
 	case TULIP_CHIP_82C169:
 	    {
 		sc->sc_srom_addrbits = 2;
-		sc->sc_srom = malloc(TULIP_ROM_SIZE(2), M_DEVBUF, M_NOWAIT);
+		sc->sc_srom = malloc(TULIP_ROM_SIZE(2), M_DEVBUF, M_WAITOK);
 
 		/*
 		 * The Lite-On PNIC stores the Ethernet address in
@@ -647,19 +647,20 @@ tlp_pci_attach(device_t parent, device_t self, void *aux)
 			KASSERT(prop_object_type(ea) == PROP_TYPE_DATA);
 			KASSERT(prop_data_size(ea) == ETHER_ADDR_LEN);
 
-			memcpy(enaddr, prop_data_data_nocopy(ea),
+			memcpy(enaddr, prop_data_value(ea),
 			       ETHER_ADDR_LEN);
 
 			sc->sc_srom_addrbits = 6;
 			sc->sc_srom = malloc(TULIP_ROM_SIZE(6), M_DEVBUF,
-			    M_NOWAIT | M_ZERO);
+			    M_WAITOK | M_ZERO);
 			memcpy(sc->sc_srom, enaddr, sizeof(enaddr));
 			if (tlp_srom_debug) {
 				aprint_normal("SROM CONTENTS:");
 				for (i = 0; i < TULIP_ROM_SIZE(6); i++) {
 					if ((i % 8) == 0)
 						aprint_normal("\n\t");
-					aprint_normal("0x%02x ", sc->sc_srom[i]);
+					aprint_normal("0x%02x ",
+					    sc->sc_srom[i]);
 				}
 				aprint_normal("\n");
 			}
@@ -935,7 +936,7 @@ tlp_pci_attach(device_t parent, device_t self, void *aux)
 			if (eaddrprop != NULL
 			    && prop_data_size(eaddrprop) == ETHER_ADDR_LEN)
 				memcpy(enaddr,
-				    prop_data_data_nocopy(eaddrprop),
+				    prop_data_value(eaddrprop),
 				    ETHER_ADDR_LEN);
 			else
 				memcpy(enaddr, &sc->sc_srom[20],
@@ -1545,7 +1546,7 @@ tlp_pci_adaptec_quirks(struct tulip_pci_softc *psc, const uint8_t *enaddr)
 
 		case 0x13:
 			strcpy(psc->sc_tulip.sc_name, "Cogent ???");
- 			sc->sc_mediasw = &tlp_cogent_em1x0_mediasw;
+			sc->sc_mediasw = &tlp_cogent_em1x0_mediasw;
 			psc->sc_flags |= TULIP_PCI_SHAREDINTR |
 			    TULIP_PCI_SHAREDROM;
 			break;

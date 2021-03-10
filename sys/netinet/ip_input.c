@@ -1,4 +1,4 @@
-/*	$NetBSD: ip_input.c,v 1.389 2019/05/13 07:47:59 ozaki-r Exp $	*/
+/*	$NetBSD: ip_input.c,v 1.401 2021/03/08 18:03:25 christos Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
@@ -91,7 +91,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ip_input.c,v 1.389 2019/05/13 07:47:59 ozaki-r Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ip_input.c,v 1.401 2021/03/08 18:03:25 christos Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_inet.h"
@@ -168,7 +168,7 @@ int ip_directedbcast = 0;
 int ip_allowsrcrt = 0;
 int ip_mtudisc = 1;
 int ip_mtudisc_timeout = IPMTUDISCTIMEOUT;
-int ip_do_randomid = 0;
+int ip_do_randomid = 1;
 
 /*
  * XXX - Setting ip_checkinterface mostly implements the receive side of
@@ -189,7 +189,6 @@ struct rttimer_queue *ip_mtudisc_timeout_q = NULL;
 
 pktqueue_t *		ip_pktq			__read_mostly;
 pfil_head_t *		inet_pfil_hook		__read_mostly;
-ipid_state_t *		ip_ids			__read_mostly;
 percpu_t *		ipstat_percpu		__read_mostly;
 
 static percpu_t		*ipforward_rt_percpu	__cacheline_aligned;
@@ -243,7 +242,7 @@ struct mowner ip_tx_mowner = MOWNER_INIT("internet", "tx");
 #endif
 
 static void		ipintr(void *);
-static void		ip_input(struct mbuf *);
+static void		ip_input(struct mbuf *, struct ifnet *);
 static void		ip_forward(struct mbuf *, int, struct ifnet *);
 static bool		ip_dooptions(struct mbuf *);
 static struct in_ifaddr *ip_rtaddr(struct in_addr, struct psref *);
@@ -291,7 +290,6 @@ ip_init(void)
 
 	ip_reass_init();
 
-	ip_ids = ip_id_init();
 	ip_id = time_uptime & 0xfffff;
 
 #ifdef GATEWAY
@@ -308,7 +306,7 @@ ip_init(void)
 #endif
 
 	ipstat_percpu = percpu_alloc(sizeof(uint64_t) * IP_NSTATS);
-	ipforward_rt_percpu = percpu_alloc(sizeof(struct route));
+	ipforward_rt_percpu = rtcache_percpu_alloc();
 	ip_mtudisc_timeout_q = rt_timer_queue_create(ip_mtudisc_timeout);
 }
 
@@ -399,7 +397,19 @@ ipintr(void *arg __unused)
 
 	SOFTNET_KERNEL_LOCK_UNLESS_NET_MPSAFE();
 	while ((m = pktq_dequeue(ip_pktq)) != NULL) {
-		ip_input(m);
+		struct ifnet *ifp;
+		struct psref psref;
+
+		ifp = m_get_rcvif_psref(m, &psref);
+		if (__predict_false(ifp == NULL)) {
+			IP_STATINC(IP_STAT_IFDROP);
+			m_freem(m);
+			continue;
+		}
+
+		ip_input(m, ifp);
+
+		m_put_rcvif_psref(ifp, &psref);
 	}
 	SOFTNET_KERNEL_UNLOCK_UNLESS_NET_MPSAFE();
 }
@@ -409,15 +419,13 @@ ipintr(void *arg __unused)
  * try to reassemble.  Process options.  Pass to next level.
  */
 static void
-ip_input(struct mbuf *m)
+ip_input(struct mbuf *m, struct ifnet *ifp)
 {
 	struct ip *ip = NULL;
 	struct in_ifaddr *ia = NULL;
 	int hlen = 0, len;
 	int downmatch;
 	int srcrt = 0;
-	ifnet_t *ifp;
-	struct psref psref;
 	int s;
 
 	KASSERTMSG(cpu_softintr_p(), "ip_input: not in the software "
@@ -426,17 +434,16 @@ ip_input(struct mbuf *m)
 	MCLAIM(m, &ip_rx_mowner);
 	KASSERT((m->m_flags & M_PKTHDR) != 0);
 
-	ifp = m_get_rcvif_psref(m, &psref);
-	if (__predict_false(ifp == NULL))
-		goto out;
-
 	/*
 	 * If no IP addresses have been set yet but the interfaces
 	 * are receiving, can't do anything with incoming packets yet.
 	 * Note: we pre-check without locks held.
 	 */
-	if (IN_ADDRLIST_READER_EMPTY())
+	if (IN_ADDRLIST_READER_EMPTY()) {
+		IP_STATINC(IP_STAT_IFDROP);
 		goto out;
+	}
+
 	IP_STATINC(IP_STAT_TOTAL);
 
 	/*
@@ -445,18 +452,10 @@ ip_input(struct mbuf *m)
 	 * it.  Otherwise, if it is aligned, make sure the entire
 	 * base IP header is in the first mbuf of the chain.
 	 */
-	if (IP_HDR_ALIGNED_P(mtod(m, void *)) == 0) {
-		if ((m = m_copyup(m, sizeof(struct ip),
-		    (max_linkhdr + 3) & ~3)) == NULL) {
-			/* XXXJRT new stat, please */
-			IP_STATINC(IP_STAT_TOOSMALL);
-			goto out;
-		}
-	} else if (__predict_false(m->m_len < sizeof(struct ip))) {
-		if ((m = m_pullup(m, sizeof(struct ip))) == NULL) {
-			IP_STATINC(IP_STAT_TOOSMALL);
-			goto out;
-		}
+	if (M_GET_ALIGNED_HDR(&m, struct ip, true) != 0) {
+		/* XXXJRT new stat, please */
+		IP_STATINC(IP_STAT_TOOSMALL);
+		goto out;
 	}
 	ip = mtod(m, struct ip *);
 	if (ip->ip_v != IPVERSION) {
@@ -581,10 +580,25 @@ ip_input(struct mbuf *m)
 			IP_STATINC(IP_STAT_PFILDROP_IN);
 			goto out;
 		}
-		KASSERT(m->m_len >= sizeof(struct ip));
+		if (__predict_false(m->m_len < sizeof(struct ip))) {
+			if ((m = m_pullup(m, sizeof(struct ip))) == NULL) {
+				IP_STATINC(IP_STAT_TOOSMALL);
+				goto out;
+			}
+		}
 		ip = mtod(m, struct ip *);
 		hlen = ip->ip_hl << 2;
-		KASSERT(m->m_len >= hlen);
+		if (hlen < sizeof(struct ip)) {	/* minimum header length */
+			IP_STATINC(IP_STAT_BADHLEN);
+			goto out;
+		}
+		if (hlen > m->m_len) {
+			if ((m = m_pullup(m, hlen)) == NULL) {
+				IP_STATINC(IP_STAT_BADHLEN);
+				goto out;
+			}
+			ip = mtod(m, struct ip *);
+		}
 
 		/*
 		 * XXX The setting of "srcrt" here is to prevent ip_forward()
@@ -706,7 +720,6 @@ ip_input(struct mbuf *m)
 	 * Not for us; forward if possible and desirable.
 	 */
 	if (ipforwarding == 0) {
-		m_put_rcvif_psref(ifp, &psref);
 		IP_STATINC(IP_STAT_CANTFORWARD);
 		m_freem(m);
 	} else {
@@ -717,7 +730,6 @@ ip_input(struct mbuf *m)
 		 * forwarding loop till TTL goes to 0.
 		 */
 		if (downmatch) {
-			m_put_rcvif_psref(ifp, &psref);
 			icmp_error(m, ICMP_UNREACH, ICMP_UNREACH_HOST, 0, 0);
 			IP_STATINC(IP_STAT_CANTFORWARD);
 			return;
@@ -725,20 +737,17 @@ ip_input(struct mbuf *m)
 #ifdef IPSEC
 		/* Check the security policy (SP) for the packet */
 		if (ipsec_used) {
-			if (ipsec_ip_input(m, true) != 0) {
+			if (ipsec_ip_input_checkpolicy(m, true) != 0) {
+				IP_STATINC(IP_STAT_IPSECDROP_IN);
 				goto out;
 			}
 		}
 #endif
 		ip_forward(m, srcrt, ifp);
-		m_put_rcvif_psref(ifp, &psref);
 	}
 	return;
 
 ours:
-	m_put_rcvif_psref(ifp, &psref);
-	ifp = NULL;
-
 	/*
 	 * If offset or IP_MF are set, must reassemble.
 	 */
@@ -772,7 +781,8 @@ ours:
 	 */
 	if (ipsec_used &&
 	    (inetsw[ip_protox[ip->ip_p]].pr_flags & PR_LASTHDR) != 0) {
-		if (ipsec_ip_input(m, false) != 0) {
+		if (ipsec_ip_input_checkpolicy(m, false) != 0) {
+			IP_STATINC(IP_STAT_IPSECDROP_IN);
 			goto out;
 		}
 	}
@@ -802,7 +812,6 @@ ours:
 	return;
 
 out:
-	m_put_rcvif_psref(ifp, &psref);
 	if (m != NULL)
 		m_freem(m);
 }
@@ -1169,16 +1178,16 @@ ip_rtaddr(struct in_addr dst, struct psref *psref)
 
 	sockaddr_in_init(&u.dst4, &dst, 0);
 
-	ro = percpu_getref(ipforward_rt_percpu);
+	ro = rtcache_percpu_getref(ipforward_rt_percpu);
 	rt = rtcache_lookup(ro, &u.dst);
 	if (rt == NULL) {
-		percpu_putref(ipforward_rt_percpu);
+		rtcache_percpu_putref(ipforward_rt_percpu);
 		return NULL;
 	}
 
 	ia4_acquire(ifatoia(rt->rt_ifa), psref);
 	rtcache_unref(rt, ro);
-	percpu_putref(ipforward_rt_percpu);
+	rtcache_percpu_putref(ipforward_rt_percpu);
 
 	return ifatoia(rt->rt_ifa);
 }
@@ -1348,16 +1357,18 @@ ip_forward(struct mbuf *m, int srcrt, struct ifnet *rcvif)
 	}
 
 	if (ip->ip_ttl <= IPTTLDEC) {
+		IP_STATINC(IP_STAT_TIMXCEED);
 		icmp_error(m, ICMP_TIMXCEED, ICMP_TIMXCEED_INTRANS, dest, 0);
 		return;
 	}
 
 	sockaddr_in_init(&u.dst4, &ip->ip_dst, 0);
 
-	ro = percpu_getref(ipforward_rt_percpu);
+	ro = rtcache_percpu_getref(ipforward_rt_percpu);
 	rt = rtcache_lookup(ro, &u.dst);
 	if (rt == NULL) {
-		percpu_putref(ipforward_rt_percpu);
+		rtcache_percpu_putref(ipforward_rt_percpu);
+		IP_STATINC(IP_STAT_NOROUTE);
 		icmp_error(m, ICMP_UNREACH, ICMP_UNREACH_NET, dest, 0);
 		return;
 	}
@@ -1385,8 +1396,7 @@ ip_forward(struct mbuf *m, int srcrt, struct ifnet *rcvif)
 	    (rt->rt_flags & (RTF_DYNAMIC|RTF_MODIFIED)) == 0 &&
 	    !in_nullhost(satocsin(rt_getkey(rt))->sin_addr) &&
 	    ipsendredirects && !srcrt) {
-		if (rt->rt_ifa &&
-		    (ip->ip_src.s_addr & ifatoia(rt->rt_ifa)->ia_subnetmask) ==
+		if ((ip->ip_src.s_addr & ifatoia(rt->rt_ifa)->ia_subnetmask) ==
 		    ifatoia(rt->rt_ifa)->ia_subnet) {
 			if (rt->rt_flags & RTF_GATEWAY)
 				dest = satosin(rt->rt_gateway)->sin_addr.s_addr;
@@ -1429,13 +1439,13 @@ ip_forward(struct mbuf *m, int srcrt, struct ifnet *rcvif)
 		m_freem(mcopy);
 	}
 
-	percpu_putref(ipforward_rt_percpu);
+	rtcache_percpu_putref(ipforward_rt_percpu);
 	return;
 
 redirect:
 error:
 	if (mcopy == NULL) {
-		percpu_putref(ipforward_rt_percpu);
+		rtcache_percpu_putref(ipforward_rt_percpu);
 		return;
 	}
 
@@ -1478,11 +1488,11 @@ error:
 		 */
 		if (mcopy)
 			m_freem(mcopy);
-		percpu_putref(ipforward_rt_percpu);
+		rtcache_percpu_putref(ipforward_rt_percpu);
 		return;
 	}
 	icmp_error(mcopy, type, code, dest, destmtu);
-	percpu_putref(ipforward_rt_percpu);
+	rtcache_percpu_putref(ipforward_rt_percpu);
 }
 
 void

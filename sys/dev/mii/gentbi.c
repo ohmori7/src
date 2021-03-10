@@ -1,4 +1,4 @@
-/*	$NetBSD: gentbi.c,v 1.29 2019/03/25 09:20:46 msaitoh Exp $	*/
+/*	$NetBSD: gentbi.c,v 1.31 2020/03/15 23:04:50 thorpej Exp $	*/
 
 /*-
  * Copyright (c) 1998, 1999, 2000, 2001 The NetBSD Foundation, Inc.
@@ -62,7 +62,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: gentbi.c,v 1.29 2019/03/25 09:20:46 msaitoh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: gentbi.c,v 1.31 2020/03/15 23:04:50 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -105,14 +105,20 @@ gentbimatch(device_t parent, cfdata_t match, void *aux)
 	 *	- There is no media in the BMSR.
 	 *	- EXTSR has only 1000X.
 	 */
+	mii_lock(mii);
 	rv = (*mii->mii_readreg)(parent, ma->mii_phyno, MII_BMSR, &bmsr);
 	if ((rv != 0)
-	    || (bmsr & BMSR_EXTSTAT) == 0 || (bmsr & BMSR_MEDIAMASK) != 0)
+	    || (bmsr & BMSR_EXTSTAT) == 0 || (bmsr & BMSR_MEDIAMASK) != 0) {
+		mii_unlock(mii);
 		return 0;
+	}
 
 	rv = (*mii->mii_readreg)(parent, ma->mii_phyno, MII_EXTSR, &extsr);
-	if ((rv != 0) || ((extsr & (EXTSR_1000TFDX | EXTSR_1000THDX)) != 0))
+	if ((rv != 0) || ((extsr & (EXTSR_1000TFDX | EXTSR_1000THDX)) != 0)) {
+		mii_unlock(mii);
 		return 0;
+	}
+	mii_unlock(mii);
 
 	if (extsr & (EXTSR_1000XFDX | EXTSR_1000XHDX)) {
 		/*
@@ -155,7 +161,8 @@ gentbiattach(device_t parent, device_t self, void *aux)
 	sc->mii_funcs = &gentbi_funcs;
 	sc->mii_pdata = mii;
 	sc->mii_flags = ma->mii_flags;
-	sc->mii_anegticks = MII_ANEGTICKS;
+
+	mii_lock(mii);
 
 	PHY_RESET(sc);
 
@@ -169,13 +176,9 @@ gentbiattach(device_t parent, device_t self, void *aux)
 	if (sc->mii_capabilities & BMSR_EXTSTAT)
 		PHY_READ(sc, MII_EXTSR, &sc->mii_extcapabilities);
 
-	aprint_normal_dev(self, "");
-	if ((sc->mii_capabilities & BMSR_MEDIAMASK) == 0 &&
-	    (sc->mii_extcapabilities & EXTSR_MEDIAMASK) == 0)
-		aprint_error("no media present");
-	else
-		mii_phy_add_media(sc);
-	aprint_normal("\n");
+	mii_unlock(mii);
+
+	mii_phy_add_media(sc);
 }
 
 static int
@@ -183,6 +186,8 @@ gentbi_service(struct mii_softc *sc, struct mii_data *mii, int cmd)
 {
 	struct ifmedia_entry *ife = mii->mii_media.ifm_cur;
 	uint16_t reg;
+
+	KASSERT(mii_locked(mii));
 
 	switch (cmd) {
 	case MII_POLLSTAT:
@@ -237,6 +242,8 @@ gentbi_status(struct mii_softc *sc)
 	struct mii_data *mii = sc->mii_pdata;
 	struct ifmedia_entry *ife = mii->mii_media.ifm_cur;
 	uint16_t bmsr, bmcr, anlpar;
+
+	KASSERT(mii_locked(mii));
 
 	mii->mii_media_status = IFM_AVALID;
 	mii->mii_media_active = IFM_ETHER;

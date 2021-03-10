@@ -1,4 +1,4 @@
-/*	$NetBSD: if_mvxpe.c,v 1.27 2019/05/28 07:41:49 msaitoh Exp $	*/
+/*	$NetBSD: if_mvxpe.c,v 1.33 2020/02/05 08:34:48 skrll Exp $	*/
 /*
  * Copyright (c) 2015 Internet Initiative Japan Inc.
  * All rights reserved.
@@ -25,7 +25,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_mvxpe.c,v 1.27 2019/05/28 07:41:49 msaitoh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_mvxpe.c,v 1.33 2020/02/05 08:34:48 skrll Exp $");
 
 #include "opt_multiprocessor.h"
 
@@ -286,7 +286,7 @@ STATIC void
 mvxpe_attach(device_t parent, device_t self, void *aux)
 {
 	struct mvxpe_softc *sc = device_private(self);
-	struct mii_softc *mii;
+	struct mii_softc *child;
 	struct ifnet *ifp = &sc->sc_ethercom.ec_if;
 	struct mii_data * const mii = &sc->sc_mii;
 	struct marvell_attach_args *mva = aux;
@@ -401,9 +401,7 @@ mvxpe_attach(device_t parent, device_t self, void *aux)
 	 */
 	sc->sc_sysctl_mib_size =
 	    __arraycount(mvxpe_mib_list) * sizeof(struct mvxpe_sysctl_mib);
-	sc->sc_sysctl_mib = kmem_alloc(sc->sc_sysctl_mib_size, KM_NOSLEEP);
-	if (sc->sc_sysctl_mib == NULL)
-		goto fail;
+	sc->sc_sysctl_mib = kmem_alloc(sc->sc_sysctl_mib_size, KM_SLEEP);
 	memset(sc->sc_sysctl_mib, 0, sc->sc_sysctl_mib_size);
 
 	/*
@@ -485,14 +483,14 @@ mvxpe_attach(device_t parent, device_t self, void *aux)
 	 * but some boards may not.
 	 */
 	mii_attach(self, mii, 0xffffffff, MII_PHY_ANY, sc->sc_dev->dv_unit, 0);
-	mii = LIST_FIRST(&mii->mii_phys);
-	if (mii == NULL) {
+	child = LIST_FIRST(&mii->mii_phys);
+	if (child == NULL) {
 		aprint_error_dev(self, "no PHY found!\n");
 		ifmedia_add(&mii->mii_media, IFM_ETHER | IFM_MANUAL, 0, NULL);
 		ifmedia_set(&mii->mii_media, IFM_ETHER | IFM_MANUAL);
 	} else {
 		ifmedia_set(&mii->mii_media, IFM_ETHER | IFM_AUTO);
-		phyaddr = MVXPE_PHYADDR_PHYAD(mii->mii_phy);
+		phyaddr = MVXPE_PHYADDR_PHYAD(child->mii_phy);
 		MVXPE_WRITE(sc, MVXPE_PHYADDR, phyaddr);
 		DPRINTSC(sc, 1, "PHYADDR: %#x\n", MVXPE_READ(sc, MVXPE_PHYADDR));
 	}
@@ -560,11 +558,11 @@ mvxpe_evcnt_attach(struct mvxpe_softc *sc)
 	evcnt_attach_dynamic(&sc->sc_ev.ev_misc_srse, EVCNT_TYPE_INTR,
 	    NULL, device_xname(sc->sc_dev), "MISC SERDES sync error");
 	evcnt_attach_dynamic(&sc->sc_ev.ev_misc_txreq, EVCNT_TYPE_INTR,
-	    NULL, device_xname(sc->sc_dev), "MISC Tx resource erorr");
+	    NULL, device_xname(sc->sc_dev), "MISC Tx resource error");
 
 	/* RxTx Interrupt */
 	evcnt_attach_dynamic(&sc->sc_ev.ev_rxtx_rreq, EVCNT_TYPE_INTR,
-	    NULL, device_xname(sc->sc_dev), "RxTx Rx resource erorr");
+	    NULL, device_xname(sc->sc_dev), "RxTx Rx resource error");
 	evcnt_attach_dynamic(&sc->sc_ev.ev_rxtx_rpq, EVCNT_TYPE_INTR,
 	    NULL, device_xname(sc->sc_dev), "RxTx Rx packet");
 	evcnt_attach_dynamic(&sc->sc_ev.ev_rxtx_tbrq, EVCNT_TYPE_INTR,
@@ -602,7 +600,7 @@ mvxpe_evcnt_attach(struct mvxpe_softc *sc)
 	evcnt_attach_dynamic(&sc->sc_ev.ev_txd_ur, EVCNT_TYPE_MISC,
 	    NULL, device_xname(sc->sc_dev), "Tx FIFO underrun counter");
 	evcnt_attach_dynamic(&sc->sc_ev.ev_txd_oth, EVCNT_TYPE_MISC,
-	    NULL, device_xname(sc->sc_dev), "Tx unkonwn erorr counter");
+	    NULL, device_xname(sc->sc_dev), "Tx unknown error counter");
 
 	/* Status Registers */
 	evcnt_attach_dynamic(&sc->sc_ev.ev_reg_pdfc, EVCNT_TYPE_MISC,
@@ -612,7 +610,7 @@ mvxpe_evcnt_attach(struct mvxpe_softc *sc)
 	evcnt_attach_dynamic(&sc->sc_ev.ev_reg_txbadfcs, EVCNT_TYPE_MISC,
 	    NULL, device_xname(sc->sc_dev), "Tx bad FCS counter");
 	evcnt_attach_dynamic(&sc->sc_ev.ev_reg_txdropped, EVCNT_TYPE_MISC,
-	    NULL, device_xname(sc->sc_dev), "Tx dorpped counter");
+	    NULL, device_xname(sc->sc_dev), "Tx dropped counter");
 	evcnt_attach_dynamic(&sc->sc_ev.ev_reg_lpic, EVCNT_TYPE_MISC,
 	    NULL, device_xname(sc->sc_dev), "LP_IDLE counter");
 
@@ -1711,7 +1709,7 @@ mvxpe_start(struct ifnet *ifp)
 		    sc->sc_tx_ring[q].tx_queue_len);
 		DPRINTIFNET(ifp, 1, "a packet is added to tx ring\n");
 		sc->sc_tx_pending++;
-		ifp->if_opackets++;
+		if_statinc(ifp, if_opackets);
 		ifp->if_timer = 1;
 		sc->sc_wdogsoft = 1;
 		bpf_mtap(ifp, m, BPF_D_OUT);
@@ -1939,7 +1937,7 @@ mvxpe_watchdog(struct ifnet *ifp)
 				MVXPE_EVCNT_INCR(&sc->sc_ev.ev_drv_wdogsoft);
 			} else {
 				aprint_error_ifnet(ifp, "watchdog timeout\n");
-				ifp->if_oerrors++;
+				if_statinc(ifp, if_oerrors);
 				mvxpe_linkreset(sc);
 				mvxpe_sc_unlock(sc);
 
@@ -1959,7 +1957,7 @@ mvxpe_ifflags_cb(struct ethercom *ec)
 {
 	struct ifnet *ifp = &ec->ec_if;
 	struct mvxpe_softc *sc = ifp->if_softc;
-	int change = ifp->if_flags ^ sc->sc_if_flags;
+	u_short change = ifp->if_flags ^ sc->sc_if_flags;
 
 	mvxpe_sc_lock(sc);
 
@@ -3266,13 +3264,13 @@ mvxpe_update_mib(struct mvxpe_softc *sc)
 
 		switch (mvxpe_mib_list[i].ext) {
 		case MVXPE_MIBEXT_IF_OERRORS:
-			ifp->if_oerrors += val;
+			if_statadd(ifp, if_oerrors,  val);
 			break;
 		case MVXPE_MIBEXT_IF_IERRORS:
-			ifp->if_ierrors += val;
+			if_statadd(ifp, if_ierrors,  val);
 			break;
 		case MVXPE_MIBEXT_IF_COLLISIONS:
-			ifp->if_collisions += val;
+			if_statadd(ifp, if_collisions, val);
 			break;
 		default:
 			break;

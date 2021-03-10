@@ -1,4 +1,4 @@
-/*	$NetBSD: locore.S,v 1.18 2014/03/02 13:26:30 joerg Exp $	*/
+/*	$NetBSD: locore.S,v 1.20 2020/08/28 12:41:17 skrll Exp $	*/
 
 /*
  * Copyright (C) 1994-1997 Mark Brinicombe
@@ -42,7 +42,7 @@
 #endif
 
 
-/* What size should this really be ? It is only used by init_arm() */
+/* What size should this really be ? It is only used by initarm() */
 #define INIT_ARM_STACK_SIZE	2048
 
 /*
@@ -160,7 +160,7 @@ ASENTRY_NP(hpc_start)
 	mov	fp, #0x00000000		/* trace back starts here */
 	bl	_C_LABEL(initarm)	/* Off we go */
 
-	/* init arm will return the new stack pointer. */
+	/* initarm will return the new stack pointer. */
 	mov	sp, r0
 
 	mov	fp, #0x00000000		/* trace back starts here */

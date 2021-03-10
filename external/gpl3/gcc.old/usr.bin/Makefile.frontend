@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile.frontend,v 1.7 2018/11/11 22:50:06 mrg Exp $
+#	$NetBSD: Makefile.frontend,v 1.10 2020/08/19 07:48:02 mrg Exp $
 
 BINDIR=		/usr/bin
 
@@ -9,24 +9,19 @@ CPPFLAGS+=	-I${GCCARCH} -I${FRONTENDOBJ} \
 NOCTF=		# defined
 .include <bsd.init.mk>
 
+.if ${ADD_FRONTEND_LIBRARY:Uyes} != "no"
 DPADD+=			${FRONTENDOBJ}/libfrontend.a
 LDADD+=			-L${FRONTENDOBJ} -lfrontend
+.endif
 
-.include "../Makefile.common"
 .include "../Makefile.common-target"
+.include "../Makefile.common"
 .include "../Makefile.libcpp"
 .include "../Makefile.backtrace"
 .include "../Makefile.libiberty"
 .include "../Makefile.libdecnumber"
 
-HOSTPROG_CXX=	1
-
-.include <bsd.prog.mk>
-
-# Force using C++ for this
-HOST_CC:=	${HOST_CXX}
-CC:=		${CXX}
-CFLAGS:=	${CXXFLAGS}
+.include "../Makefile.prog"
 
 gcc-vers.texi:
 	(echo "@set version-GCC $(BASEVER)"; \

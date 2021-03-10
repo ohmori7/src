@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2019, Intel Corp.
+ * Copyright (C) 2000 - 2020, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -53,10 +53,6 @@
 static char *
 DtTrim (
     char                    *String);
-
-static void
-DtLinkField (
-    DT_FIELD                *Field);
 
 static ACPI_STATUS
 DtParseLine (
@@ -186,45 +182,6 @@ DtTrim (
 
     ReturnString[Length] = 0;
     return (ReturnString);
-}
-
-
-/******************************************************************************
- *
- * FUNCTION:    DtLinkField
- *
- * PARAMETERS:  Field               - New field object to link
- *
- * RETURN:      None
- *
- * DESCRIPTION: Link one field name and value to the list
- *
- *****************************************************************************/
-
-static void
-DtLinkField (
-    DT_FIELD                *Field)
-{
-    DT_FIELD                *Prev;
-    DT_FIELD                *Next;
-
-
-    Prev = Next = AslGbl_FieldList;
-
-    while (Next)
-    {
-        Prev = Next;
-        Next = Next->Next;
-    }
-
-    if (Prev)
-    {
-        Prev->Next = Field;
-    }
-    else
-    {
-        AslGbl_FieldList = Field;
-    }
 }
 
 
@@ -679,7 +636,6 @@ DtGetNextLine (
 
             case '\n':
 
-                CurrentLineOffset = AslGbl_NextLineOffset;
                 AslGbl_NextLineOffset = (UINT32) ftell (Handle);
                 AslGbl_CurrentLineNumber++;
                 break;
@@ -721,7 +677,6 @@ DtGetNextLine (
 
                 /* Ignore newline, this will merge the lines */
 
-                CurrentLineOffset = AslGbl_NextLineOffset;
                 AslGbl_NextLineOffset = (UINT32) ftell (Handle);
                 AslGbl_CurrentLineNumber++;
                 State = DT_NORMAL_TEXT;
@@ -1009,7 +964,7 @@ DtDumpSubtableInfo (
 {
 
     DbgPrint (ASL_DEBUG_OUTPUT,
-        "[%.04X] %24s %.08X %.08X %.08X %.08X %.08X %p %p %p\n",
+        "[%.04X] %24s %.08X %.08X %.08X %.08X %p %p %p %p\n",
         Subtable->Depth, Subtable->Name, Subtable->Length, Subtable->TotalLength,
         Subtable->SizeOfLengthField, Subtable->Flags, Subtable,
         Subtable->Parent, Subtable->Child, Subtable->Peer);
@@ -1023,7 +978,7 @@ DtDumpSubtableTree (
 {
 
     DbgPrint (ASL_DEBUG_OUTPUT,
-        "[%.04X] %24s %*s%08X (%.02X) - (%.02X)\n",
+        "[%.04X] %24s %*s%p (%.02X) - (%.02X)\n",
         Subtable->Depth, Subtable->Name, (4 * Subtable->Depth), " ",
         Subtable, Subtable->Length, Subtable->TotalLength);
 }
@@ -1117,7 +1072,7 @@ DtWriteFieldToListing (
     if (strlen (Field->Value) > 64)
     {
         FlPrintFile (ASL_FILE_LISTING_OUTPUT, "...Additional data, length 0x%X\n",
-            strlen (Field->Value));
+            (UINT32) strlen (Field->Value));
     }
 
     FlPrintFile (ASL_FILE_LISTING_OUTPUT, "\n");

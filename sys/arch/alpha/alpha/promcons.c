@@ -1,4 +1,4 @@
-/* $NetBSD: promcons.c,v 1.39 2014/07/25 08:10:31 dholland Exp $ */
+/* $NetBSD: promcons.c,v 1.41 2020/09/03 02:09:09 thorpej Exp $ */
 
 /*
  * Copyright (c) 1994, 1995, 1996 Carnegie-Mellon University.
@@ -29,7 +29,7 @@
 
 #include <sys/cdefs.h>			/* RCS ID & Copyright macro defns */
 
-__KERNEL_RCSID(0, "$NetBSD: promcons.c,v 1.39 2014/07/25 08:10:31 dholland Exp $");
+__KERNEL_RCSID(0, "$NetBSD: promcons.c,v 1.41 2020/09/03 02:09:09 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -51,7 +51,11 @@ __KERNEL_RCSID(0, "$NetBSD: promcons.c,v 1.39 2014/07/25 08:10:31 dholland Exp $
 #include <machine/cpuconf.h>
 #include <machine/prom.h>
 
-#ifdef _PMAP_MAY_USE_PROM_CONSOLE
+#ifndef CONSPEED
+#define	CONSPEED 9600
+#endif
+
+#ifdef _PROM_MAY_USE_PROM_CONSOLE
 
 dev_type_open(promopen);
 dev_type_close(promclose);
@@ -102,7 +106,7 @@ promopen(dev_t dev, int flag, int mode, struct lwp *l)
 		callo = true;
 	}
 
-	if (!pmap_uses_prom_console() || unit >= 1)
+	if (!prom_uses_prom_console() || unit >= 1)
 		return ENXIO;
 
 	s = spltty();
@@ -129,7 +133,7 @@ promopen(dev_t dev, int flag, int mode, struct lwp *l)
 		tp->t_oflag = TTYDEF_OFLAG;
 		tp->t_cflag = TTYDEF_CFLAG|CLOCAL;
 		tp->t_lflag = TTYDEF_LFLAG;
-		tp->t_ispeed = tp->t_ospeed = 9600;
+		tp->t_ispeed = tp->t_ospeed = CONSPEED;
 		ttsetwater(tp);
 
 		setuptimeout = 1;
@@ -258,10 +262,10 @@ promtty(dev_t dev)
 	return prom_tty[0];
 }
 
-#else /* _PMAP_MAY_USE_PROM_CONSOLE */
+#else /* _PROM_MAY_USE_PROM_CONSOLE */
 
 /*
- * If not defined _PMAP_MAY_USE_PROM_CONSOLE,
+ * If not defined _PROM_MAY_USE_PROM_CONSOLE,
  * this fake prom_cdevsw is attached to the kernel.
  * NEVER REMOVE!
  */
@@ -280,4 +284,4 @@ const struct cdevsw prom_cdevsw = {
 	.d_flag = 0
 };
 
-#endif /* _PMAP_MAY_USE_PROM_CONSOLE */
+#endif /* _PROM_MAY_USE_PROM_CONSOLE */

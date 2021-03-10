@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.2 2019/02/17 04:05:56 rin Exp $
+#	$NetBSD: Makefile,v 1.5 2020/10/21 13:30:02 christos Exp $
 #
 .include "../Makefile.inc"
 
@@ -10,5 +10,7 @@ KMOD=	ptrace_common
 SRCS=	sys_ptrace_common.c
 
 WARNS=	3
+
+COPTS.sys_ptrace_common.c+=	${GCC_NO_CAST_FUNCTION_TYPE}
 
 .include <bsd.kmodule.mk>

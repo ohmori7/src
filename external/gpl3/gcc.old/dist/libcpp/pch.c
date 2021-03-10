@@ -1,5 +1,5 @@
 /* Part of CPP library.  (Precompiled header reading/writing.)
-   Copyright (C) 2000-2016 Free Software Foundation, Inc.
+   Copyright (C) 2000-2018 Free Software Foundation, Inc.
 
 This program is free software; you can redistribute it and/or modify it
 under the terms of the GNU General Public License as published by the
@@ -55,6 +55,8 @@ write_macdef (cpp_reader *pfile, cpp_hashnode *hn, void *file_p)
     case NT_VOID:
       if (! (hn->flags & NODE_POISONED))
 	return 1;
+      /* XXX Really fallthru?  */
+      /* FALLTHRU */
 
     case NT_MACRO:
       if ((hn->flags & NODE_BUILTIN)
@@ -230,7 +232,7 @@ count_defs (cpp_reader *pfile ATTRIBUTE_UNUSED, cpp_hashnode *hn, void *ss_p)
       if (hn->flags & NODE_BUILTIN)
 	return 1;
 
-      /* else fall through.  */
+      /* fall through.  */
 
     case NT_VOID:
       {
@@ -269,7 +271,7 @@ write_defs (cpp_reader *pfile ATTRIBUTE_UNUSED, cpp_hashnode *hn, void *ss_p)
       if (hn->flags & NODE_BUILTIN)
 	return 1;
 
-      /* else fall through.  */
+      /* fall through.  */
 
     case NT_VOID:
       {
@@ -628,7 +630,7 @@ cpp_valid_state (cpp_reader *r, const char *name, int fd)
 	     attempting to use it without -g.  Restoring the PCH file
 	     is supposed to bring in this definition *and* enable the
 	     generation of call frame information, so that precompiled
-	     definitions that take this macro into accout, to decide
+	     definitions that take this macro into account, to decide
 	     what asm to emit, won't issue .cfi directives when the
 	     compiler doesn't.  */
 	  if (!(h->flags & NODE_USED)
@@ -833,6 +835,7 @@ cpp_read_state (cpp_reader *r, const char *name, FILE *f,
     s->n_true		= cpp_lookup (r, DSC("true"));
     s->n_false		= cpp_lookup (r, DSC("false"));
     s->n__VA_ARGS__     = cpp_lookup (r, DSC("__VA_ARGS__"));
+    s->n__VA_OPT__      = cpp_lookup (r, DSC("__VA_OPT__"));
     s->n__has_include__ = cpp_lookup (r, DSC("__has_include__"));
     s->n__has_include_next__ = cpp_lookup (r, DSC("__has_include_next__"));
   }

@@ -1,4 +1,4 @@
-/*	$NetBSD: if_ipsec.c,v 1.21 2019/03/14 03:52:40 knakahara Exp $  */
+/*	$NetBSD: if_ipsec.c,v 1.30 2020/10/14 18:48:05 roy Exp $  */
 
 /*
  * Copyright (c) 2017 Internet Initiative Japan Inc.
@@ -27,13 +27,14 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_ipsec.c,v 1.21 2019/03/14 03:52:40 knakahara Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_ipsec.c,v 1.30 2020/10/14 18:48:05 roy Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_inet.h"
 #endif
 
 #include <sys/param.h>
+#include <sys/atomic.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/mbuf.h>
@@ -48,6 +49,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_ipsec.c,v 1.21 2019/03/14 03:52:40 knakahara Exp 
 #include <sys/mutex.h>
 #include <sys/pserialize.h>
 #include <sys/psref.h>
+#include <sys/sysctl.h>
 
 #include <net/if.h>
 #include <net/if_types.h>
@@ -80,9 +82,6 @@ __KERNEL_RCSID(0, "$NetBSD: if_ipsec.c,v 1.21 2019/03/14 03:52:40 knakahara Exp 
 #include <netipsec/ipsec.h>
 #include <netipsec/ipsecif.h>
 
-static void if_ipsec_ro_init_pc(void *, void *, struct cpu_info *);
-static void if_ipsec_ro_fini_pc(void *, void *, struct cpu_info *);
-
 static int if_ipsec_clone_create(struct if_clone *, int);
 static int if_ipsec_clone_destroy(struct ifnet *);
 
@@ -94,7 +93,7 @@ static int if_ipsec_encap_detach(struct ipsec_variant *);
 static int if_ipsec_set_tunnel(struct ifnet *,
     struct sockaddr *, struct sockaddr *);
 static void if_ipsec_delete_tunnel(struct ifnet *);
-static int if_ipsec_ensure_flags(struct ifnet *, short);
+static int if_ipsec_ensure_flags(struct ifnet *, u_short);
 static void if_ipsec_attach0(struct ipsec_softc *);
 
 static int if_ipsec_update_variant(struct ipsec_softc *,
@@ -139,9 +138,8 @@ static int if_ipsec_set_addr_port(struct sockaddr *, struct sockaddr *,
  */
 
 /* This list is used in ioctl context only. */
-LIST_HEAD(ipsec_sclist, ipsec_softc);
 static struct {
-	struct ipsec_sclist list;
+	LIST_HEAD(ipsec_sclist, ipsec_softc) list;
 	kmutex_t lock;
 } ipsec_softcs __cacheline_aligned;
 
@@ -150,6 +148,138 @@ struct psref_class *iv_psref_class __read_mostly;
 struct if_clone ipsec_cloner =
     IF_CLONE_INITIALIZER("ipsec", if_ipsec_clone_create, if_ipsec_clone_destroy);
 static int max_ipsec_nesting = MAX_IPSEC_NEST;
+
+static struct sysctllog *if_ipsec_sysctl;
+
+#ifdef INET6
+static int
+sysctl_if_ipsec_pmtu_global(SYSCTLFN_ARGS)
+{
+	int error, pmtu;
+	struct sysctlnode node = *rnode;
+
+	pmtu = ip6_ipsec_pmtu;
+	node.sysctl_data = &pmtu;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error || newp == NULL)
+		return error;
+
+	switch (pmtu) {
+	case IPSEC_PMTU_MINMTU:
+	case IPSEC_PMTU_OUTERMTU:
+		ip6_ipsec_pmtu = pmtu;
+		break;
+	default:
+		return EINVAL;
+	}
+
+	return 0;
+}
+
+static int
+sysctl_if_ipsec_pmtu_perif(SYSCTLFN_ARGS)
+{
+	int error, pmtu;
+	struct sysctlnode node = *rnode;
+	struct ipsec_softc *sc = (struct ipsec_softc *)node.sysctl_data;
+
+	pmtu = sc->ipsec_pmtu;
+	node.sysctl_data = &pmtu;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error || newp == NULL)
+		return error;
+
+	switch (pmtu) {
+	case IPSEC_PMTU_SYSDEFAULT:
+	case IPSEC_PMTU_MINMTU:
+	case IPSEC_PMTU_OUTERMTU:
+		sc->ipsec_pmtu = pmtu;
+		break;
+	default:
+		return EINVAL;
+	}
+
+	return 0;
+}
+#endif
+
+static void
+if_ipsec_sysctl_setup(void)
+{
+	if_ipsec_sysctl = NULL;
+
+#ifdef INET6
+	/*
+	 * Previously create "net.inet6.ip6" entry to avoid sysctl_createv error.
+	 */
+	sysctl_createv(NULL, 0, NULL, NULL,
+		       CTLFLAG_PERMANENT,
+		       CTLTYPE_NODE, "inet6",
+		       SYSCTL_DESCR("PF_INET6 related settings"),
+		       NULL, 0, NULL, 0,
+		       CTL_NET, PF_INET6, CTL_EOL);
+	sysctl_createv(NULL, 0, NULL, NULL,
+		       CTLFLAG_PERMANENT,
+		       CTLTYPE_NODE, "ip6",
+		       SYSCTL_DESCR("IPv6 related settings"),
+		       NULL, 0, NULL, 0,
+		       CTL_NET, PF_INET6, IPPROTO_IPV6, CTL_EOL);
+
+	sysctl_createv(&if_ipsec_sysctl, 0, NULL, NULL,
+		       CTLFLAG_PERMANENT | CTLFLAG_READWRITE,
+		       CTLTYPE_INT, "ipsecifhlim",
+		       SYSCTL_DESCR("Default hop limit for a ipsec tunnel datagram"),
+		       NULL, 0, &ip6_ipsec_hlim, 0,
+		       CTL_NET, PF_INET6, IPPROTO_IPV6,
+		       IPV6CTL_IPSEC_HLIM, CTL_EOL);
+
+	sysctl_createv(&if_ipsec_sysctl, 0, NULL, NULL,
+		       CTLFLAG_PERMANENT | CTLFLAG_READWRITE,
+		       CTLTYPE_INT, "ipsecifpmtu",
+		       SYSCTL_DESCR("Default Path MTU setting for ipsec tunnels"),
+		       sysctl_if_ipsec_pmtu_global, 0, NULL, 0,
+		       CTL_NET, PF_INET6, IPPROTO_IPV6,
+		       IPV6CTL_IPSEC_PMTU, CTL_EOL);
+#endif
+}
+
+static void
+if_ipsec_perif_sysctl_setup(struct sysctllog **clog, struct ipsec_softc *sc)
+{
+#ifdef INET6
+	const struct sysctlnode *cnode, *rnode;
+	struct ifnet *ifp = &sc->ipsec_if;
+	const char *ifname = ifp->if_xname;
+	int rv;
+
+	/*
+	 * Already created in sysctl_sndq_setup().
+	 */
+	sysctl_createv(clog, 0, NULL, &rnode,
+		       CTLFLAG_PERMANENT,
+		       CTLTYPE_NODE, "interfaces",
+		       SYSCTL_DESCR("Per-interface controls"),
+		       NULL, 0, NULL, 0,
+		       CTL_NET, CTL_CREATE, CTL_EOL);
+	sysctl_createv(clog, 0, &rnode, &rnode,
+		       CTLFLAG_PERMANENT,
+		       CTLTYPE_NODE, ifname,
+		       SYSCTL_DESCR("Interface controls"),
+		       NULL, 0, NULL, 0,
+		       CTL_CREATE, CTL_EOL);
+
+	rv = sysctl_createv(clog, 0, &rnode, &cnode,
+			    CTLFLAG_PERMANENT | CTLFLAG_READWRITE,
+			    CTLTYPE_INT, "pmtu",
+			    SYSCTL_DESCR("Path MTU setting for this ipsec tunnel"),
+			    sysctl_if_ipsec_pmtu_perif, 0, (void *)sc, 0,
+			    CTL_CREATE, CTL_EOL);
+	if (rv != 0)
+		log(LOG_WARNING, "%s: could not attach sysctl node pmtu\n", ifname);
+
+	sc->ipsec_pmtu = IPSEC_PMTU_SYSDEFAULT;
+#endif
+}
 
 /* ARGSUSED */
 void
@@ -161,6 +291,8 @@ ipsecifattach(int count)
 
 	iv_psref_class = psref_class_create("ipsecvar", IPL_SOFTNET);
 
+	if_ipsec_sysctl_setup();
+
 	if_clone_attach(&ipsec_cloner);
 }
 
@@ -169,12 +301,16 @@ if_ipsec_clone_create(struct if_clone *ifc, int unit)
 {
 	struct ipsec_softc *sc;
 	struct ipsec_variant *var;
+	struct ifnet *ifp;
 
 	sc = kmem_zalloc(sizeof(*sc), KM_SLEEP);
 
 	if_initname(&sc->ipsec_if, ifc->ifc_name, unit);
 
 	if_ipsec_attach0(sc);
+
+	ifp = &sc->ipsec_if;
+	if_ipsec_perif_sysctl_setup(&ifp->if_sysctl_log, sc);
 
 	var = kmem_zalloc(sizeof(*var), KM_SLEEP);
 	var->iv_softc = sc;
@@ -183,8 +319,7 @@ if_ipsec_clone_create(struct if_clone *ifc, int unit)
 	sc->ipsec_var = var;
 	mutex_init(&sc->ipsec_lock, MUTEX_DEFAULT, IPL_NONE);
 	sc->ipsec_psz = pserialize_create();
-	sc->ipsec_ro_percpu = percpu_alloc(sizeof(struct ipsec_ro));
-	percpu_foreach(sc->ipsec_ro_percpu, if_ipsec_ro_init_pc, NULL);
+	sc->ipsec_ro_percpu = if_tunnel_alloc_ro_percpu();
 
 	mutex_enter(&ipsec_softcs.lock);
 	LIST_INSERT_HEAD(&ipsec_softcs.list, sc, ipsec_list);
@@ -201,7 +336,7 @@ if_ipsec_attach0(struct ipsec_softc *sc)
 	sc->ipsec_if.if_flags  = IFF_POINTOPOINT | IFF_MULTICAST;
 	/* set ipsec(4) specific default flags. */
 	sc->ipsec_if.if_flags  |= IFF_FWD_IPV6;
-	sc->ipsec_if.if_extflags = IFEF_NO_LINK_STATE_CHANGE | IFEF_MPSAFE;
+	sc->ipsec_if.if_extflags = IFEF_MPSAFE;
 	sc->ipsec_if.if_ioctl  = if_ipsec_ioctl;
 	sc->ipsec_if.if_output = if_ipsec_output;
 	sc->ipsec_if.if_type   = IFT_IPSEC;
@@ -209,27 +344,10 @@ if_ipsec_attach0(struct ipsec_softc *sc)
 	sc->ipsec_if.if_softc  = sc;
 	IFQ_SET_READY(&sc->ipsec_if.if_snd);
 	if_initialize(&sc->ipsec_if);
+	sc->ipsec_if.if_link_state = LINK_STATE_DOWN;
 	if_alloc_sadl(&sc->ipsec_if);
 	bpf_attach(&sc->ipsec_if, DLT_NULL, sizeof(u_int));
 	if_register(&sc->ipsec_if);
-}
-
-static void
-if_ipsec_ro_init_pc(void *p, void *arg __unused, struct cpu_info *ci __unused)
-{
-	struct ipsec_ro *iro = p;
-
-	iro->ir_lock = mutex_obj_alloc(MUTEX_DEFAULT, IPL_NONE);
-}
-
-static void
-if_ipsec_ro_fini_pc(void *p, void *arg __unused, struct cpu_info *ci __unused)
-{
-	struct ipsec_ro *iro = p;
-
-	rtcache_free(&iro->ir_ro);
-
-	mutex_obj_free(iro->ir_lock);
 }
 
 static int
@@ -250,8 +368,7 @@ if_ipsec_clone_destroy(struct ifnet *ifp)
 	bpf_detach(ifp);
 	if_detach(ifp);
 
-	percpu_foreach(sc->ipsec_ro_percpu, if_ipsec_ro_fini_pc, NULL);
-	percpu_free(sc->ipsec_ro_percpu, sizeof(struct ipsec_ro));
+	if_tunnel_free_ro_percpu(sc->ipsec_ro_percpu);
 
 	pserialize_destroy(sc->ipsec_psz);
 	mutex_destroy(&sc->ipsec_lock);
@@ -423,7 +540,7 @@ end:
 	curlwp_bindx(bound);
 noref_end:
 	if (error)
-		ifp->if_oerrors++;
+		if_statinc(ifp, if_oerrors);
 
 	return error;
 }
@@ -451,8 +568,7 @@ if_ipsec_out_direct(struct ipsec_variant *var, struct mbuf *m, int family)
 	if (error)
 		return error;
 
-	ifp->if_opackets++;
-	ifp->if_obytes += len;
+	if_statadd2(ifp, if_opackets, 1, if_obytes, len);
 
 	return 0;
 }
@@ -494,7 +610,7 @@ if_ipsec_in_enqueue(struct mbuf *m, int af, struct ifnet *ifp)
 		break;
 #endif
 	default:
-		ifp->if_ierrors++;
+		if_statinc(ifp, if_ierrors);
 		m_freem(m);
 		return;
 	}
@@ -506,10 +622,9 @@ if_ipsec_in_enqueue(struct mbuf *m, int af, struct ifnet *ifp)
 #endif
 	pktlen = m->m_pkthdr.len;
 	if (__predict_true(pktq_enqueue(pktq, m, h))) {
-		ifp->if_ibytes += pktlen;
-		ifp->if_ipackets++;
+		if_statadd2(ifp, if_ibytes, pktlen, if_ipackets, 1);
 	} else {
-		ifp->if_iqdrops++;
+		if_statinc(ifp, if_iqdrops);
 		m_freem(m);
 	}
 
@@ -551,7 +666,7 @@ if_ipsec_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 	int error = 0, size;
 	struct sockaddr *dst, *src;
 	u_long mtu;
-	short oflags = ifp->if_flags;
+	u_short oflags = ifp->if_flags;
 	int bound;
 	struct psref psref;
 
@@ -660,12 +775,14 @@ if_ipsec_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 		error = if_ipsec_set_tunnel(&sc->ipsec_if, src, dst);
 		if (error)
 			goto bad;
+		if_link_state_change(&sc->ipsec_if, LINK_STATE_UP);
 		curlwp_bindx(bound);
 		break;
 
 	case SIOCDIFPHYADDR:
 		bound = curlwp_bind();
 		if_ipsec_delete_tunnel(&sc->ipsec_if);
+		if_link_state_change(&sc->ipsec_if, LINK_STATE_DOWN);
 		curlwp_bindx(bound);
 		break;
 
@@ -1017,7 +1134,6 @@ if_ipsec_set_tunnel(struct ifnet *ifp,
 	if_ipsec_copy_variant(nullvar, ovar);
 	if_ipsec_clear_config(nullvar);
 	psref_target_init(&nullvar->iv_psref, iv_psref_class);
-	membar_producer();
 	/*
 	 * (2-3) Swap variant include its SPs.
 	 */
@@ -1123,7 +1239,6 @@ if_ipsec_delete_tunnel(struct ifnet *ifp)
 	if_ipsec_copy_variant(nullvar, ovar);
 	if_ipsec_clear_config(nullvar);
 	psref_target_init(&nullvar->iv_psref, iv_psref_class);
-	membar_producer();
 	/*
 	 * (2-3) Swap variant include its SPs.
 	 */
@@ -1163,7 +1278,7 @@ if_ipsec_delete_tunnel(struct ifnet *ifp)
  *               NOTE: use the same encap_cookies.
  */
 static int
-if_ipsec_ensure_flags(struct ifnet *ifp, short oflags)
+if_ipsec_ensure_flags(struct ifnet *ifp, u_short oflags)
 {
 	struct ipsec_softc *sc = ifp->if_softc;
 	struct ipsec_variant *ovar, *nvar, *nullvar;
@@ -1210,7 +1325,6 @@ if_ipsec_ensure_flags(struct ifnet *ifp, short oflags)
 	if_ipsec_copy_variant(nullvar, ovar);
 	if_ipsec_clear_config(nullvar);
 	psref_target_init(&nullvar->iv_psref, iv_psref_class);
-	membar_producer();
 	/*
 	 * (2-3) Swap variant include its SPs.
 	 */
@@ -1473,7 +1587,10 @@ if_ipsec_set_sadb_x_policy(struct sadb_x_policy *xpl,
 		xisr->sadb_x_ipsecrequest_proto = IPPROTO_ESP;
 		xisr->sadb_x_ipsecrequest_mode = IPSEC_MODE_TRANSPORT;
 		xisr->sadb_x_ipsecrequest_level = level;
-		xisr->sadb_x_ipsecrequest_reqid = key_newreqid();
+		if (level == IPSEC_LEVEL_UNIQUE)
+			xisr->sadb_x_ipsecrequest_reqid = key_newreqid();
+		else
+			xisr->sadb_x_ipsecrequest_reqid = 0;
 	}
 
 	return size;
@@ -1568,7 +1685,7 @@ if_ipsec_add_sp0(struct sockaddr *src, in_port_t sport,
 	ext_msg_len += PFKEY_UNIT64(size);
 	size = if_ipsec_set_sadb_dst(&xdst, dst, proto);
 	ext_msg_len += PFKEY_UNIT64(size);
-	size = if_ipsec_set_sadb_x_policy(&xpl, &xisr, policy, dir, 0, level, src, dst);
+	size = if_ipsec_set_sadb_x_policy(&xpl, &xisr, policy, dir, 0, level, NULL, NULL);
 	ext_msg_len += PFKEY_UNIT64(size);
 	if_ipsec_set_sadb_msg_add(&msg, ext_msg_len);
 
@@ -1781,16 +1898,16 @@ if_ipsec_update_variant(struct ipsec_softc *sc, struct ipsec_variant *nvar,
 	 * we stop packet processing while replacing SPs, that is, we set
 	 * "null" config variant to sc->ipsec_var.
 	 */
-	sc->ipsec_var = nullvar;
+	atomic_store_release(&sc->ipsec_var, nullvar);
 	pserialize_perform(sc->ipsec_psz);
 	psref_target_destroy(&ovar->iv_psref, iv_psref_class);
 
 	error = if_ipsec_replace_sp(sc, ovar, nvar);
 	if (!error)
-		sc->ipsec_var = nvar;
+		atomic_store_release(&sc->ipsec_var, nvar);
 	else {
-		sc->ipsec_var = ovar; /* rollback */
 		psref_target_init(&ovar->iv_psref, iv_psref_class);
+		atomic_store_release(&sc->ipsec_var, ovar); /* rollback */
 	}
 
 	pserialize_perform(sc->ipsec_psz);

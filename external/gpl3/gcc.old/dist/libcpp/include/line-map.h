@@ -1,5 +1,5 @@
 /* Map (unsigned int) keys to (source file, line, column) triples.
-   Copyright (C) 2001-2016 Free Software Foundation, Inc.
+   Copyright (C) 2001-2018 Free Software Foundation, Inc.
 
 This program is free software; you can redistribute it and/or modify it
 under the terms of the GNU General Public License as published by the
@@ -26,6 +26,41 @@ along with this program; see the file COPYING3.  If not see
 #define GTY(x) /* nothing */
 #endif
 
+/* Both gcc and emacs number source *lines* starting at 1, but
+   they have differing conventions for *columns*.
+
+   GCC uses a 1-based convention for source columns,
+   whereas Emacs's M-x column-number-mode uses a 0-based convention.
+
+   For example, an error in the initial, left-hand
+   column of source line 3 is reported by GCC as:
+
+      some-file.c:3:1: error: ...etc...
+
+   On navigating to the location of that error in Emacs
+   (e.g. via "next-error"),
+   the locus is reported in the Mode Line
+   (assuming M-x column-number-mode) as:
+
+     some-file.c   10%   (3, 0)
+
+   i.e. "3:1:" in GCC corresponds to "(3, 0)" in Emacs.  */
+
+/* The type of line numbers.  */
+typedef unsigned int linenum_type;
+
+/* A function for for use by qsort for comparing line numbers.  */
+
+inline int compare (linenum_type lhs, linenum_type rhs)
+{
+  /* Avoid truncation issues by using long long for the comparison,
+     and only consider the sign of the result.  */
+  long long diff = (long long)lhs - (long long)rhs;
+  if (diff)
+    return diff > 0 ? 1 : -1;
+  return 0;
+}
+
 /* Reason for creating a new line map with linemap_add.  LC_ENTER is
    when including a new file, e.g. a #include directive in C.
    LC_LEAVE is when reaching a file's end.  LC_RENAME is when a file
@@ -42,9 +77,6 @@ enum lc_reason
   LC_ENTER_MACRO
   /* FIXME: add support for stringize and paste.  */
 };
-
-/* The type of line numbers.  */
-typedef unsigned int linenum_type;
 
 /* The typedef "source_location" is a key within the location database,
    identifying a source location or macro expansion, along with range
@@ -227,10 +259,10 @@ typedef unsigned int linenum_type;
 
                  11111111112
         12345678901234567890
-     521
+     522
      523   return foo + bar;
                   ~~~~^~~~~
-     523
+     524
 
    The location's caret is at the "+", line 523 column 15, but starts
    earlier, at the "f" of "foo" at column 11.  The finish is at the "r"
@@ -260,6 +292,21 @@ typedef unsigned int linenum_type;
    worked example in libcpp/location-example.txt.  */
 typedef unsigned int source_location;
 
+/* Do not track column numbers higher than this one.  As a result, the
+   range of column_bits is [12, 18] (or 0 if column numbers are
+   disabled).  */
+const unsigned int LINE_MAP_MAX_COLUMN_NUMBER = (1U << 12);
+
+/* Do not pack ranges if locations get higher than this.
+   If you change this, update:
+     gcc.dg/plugin/location-overflow-test-*.c.  */
+const source_location LINE_MAP_MAX_LOCATION_WITH_PACKED_RANGES = 0x50000000;
+
+/* Do not track column numbers if locations get higher than this.
+   If you change this, update:
+     gcc.dg/plugin/location-overflow-test-*.c.  */
+const source_location LINE_MAP_MAX_LOCATION_WITH_COLS = 0x60000000;
+
 /* A range of source locations.
 
    Ranges are closed:
@@ -286,8 +333,15 @@ struct GTY(()) source_range
     return result;
   }
 
-  /* Is there any part of this range on the given line?  */
-  bool intersects_line_p (const char *file, int line) const;
+  /* Make a source_range from a pair of source_location.  */
+  static source_range from_locations (source_location start,
+				      source_location finish)
+  {
+    source_range result;
+    result.m_start = start;
+    result.m_finish = finish;
+    return result;
+  }
 };
 
 /* Memory allocation function typedef.  Works like xrealloc.  */
@@ -679,6 +733,8 @@ struct GTY(()) location_adhoc_data_map {
 
 /* A set of chronological line_map structures.  */
 struct GTY(()) line_maps {
+
+  ~line_maps ();
   
   maps_info_ordinary info_ordinary;
 
@@ -886,7 +942,7 @@ LINEMAPS_LAST_ALLOCATED_ORDINARY_MAP (const line_maps *set)
 }
 
 /* Returns a pointer to the beginning of the region where macro maps
-   are allcoated.  */
+   are allocated.  */
 inline line_map_macro *
 LINEMAPS_MACRO_MAPS (const line_maps *set)
 {
@@ -957,7 +1013,6 @@ LINEMAPS_LAST_ALLOCATED_MACRO_MAP (const line_maps *set)
   return (line_map_macro *)LINEMAPS_LAST_ALLOCATED_MAP (set, true);
 }
 
-extern void location_adhoc_data_fini (struct line_maps *);
 extern source_location get_combined_adhoc_loc (struct line_maps *,
 					       source_location,
 					       source_range,
@@ -981,6 +1036,12 @@ IS_ADHOC_LOC (source_location loc)
 
 bool
 pure_location_p (line_maps *set, source_location loc);
+
+/* Given location LOC within SET, strip away any packed range information
+   or ad-hoc information.  */
+
+extern source_location get_pure_location (line_maps *set,
+					  source_location loc);
 
 /* Combine LOC and BLOCK, giving a combined adhoc location.  */
 
@@ -1060,11 +1121,15 @@ const char* linemap_map_get_macro_name (const line_map_macro *);
 int linemap_location_in_system_header_p (struct line_maps *,
 					 source_location);
 
-/* Return TRUE if LOCATION is a source code location of a token coming
-   from a macro replacement-list at a macro expansion point, FALSE
-   otherwise.  */
+/* Return TRUE if LOCATION is a source code location of a token that is part of
+   a macro expansion, FALSE otherwise.  */
 bool linemap_location_from_macro_expansion_p (const struct line_maps *,
 					      source_location);
+
+/* TRUE if LOCATION is a source code location of a token that is part of the
+   definition of a macro, FALSE otherwise.  */
+bool linemap_location_from_macro_definition_p (struct line_maps *,
+					       source_location);
 
 /* With the precondition that LOCATION is the locus of a token that is
    an argument of a function-like macro MACRO_MAP and appears in the
@@ -1223,26 +1288,6 @@ typedef struct
   bool sysp;
 } expanded_location;
 
-/* Both gcc and emacs number source *lines* starting at 1, but
-   they have differing conventions for *columns*.
-
-   GCC uses a 1-based convention for source columns,
-   whereas Emacs's M-x column-number-mode uses a 0-based convention.
-
-   For example, an error in the initial, left-hand
-   column of source line 3 is reported by GCC as:
-
-      some-file.c:3:1: error: ...etc...
-
-   On navigating to the location of that error in Emacs
-   (e.g. via "next-error"),
-   the locus is reported in the Mode Line
-   (assuming M-x column-number-mode) as:
-
-     some-file.c   10%   (3, 0)
-
-   i.e. "3:1:" in GCC corresponds to "(3, 0)" in Emacs.  */
-
 /* A location within a rich_location: a caret&range, with
    the caret potentially flagged for display.  */
 
@@ -1262,10 +1307,129 @@ struct location_range
   bool m_show_caret_p;
 };
 
+/* A partially-embedded vec for use within rich_location for storing
+   ranges and fix-it hints.
+
+   Elements [0..NUM_EMBEDDED) are allocated within m_embed, after
+   that they are within the dynamically-allocated m_extra.
+
+   This allows for static allocation in the common case, whilst
+   supporting the rarer case of an arbitrary number of elements.
+
+   Dynamic allocation is not performed unless it's needed.  */
+
+template <typename T, int NUM_EMBEDDED>
+class semi_embedded_vec
+{
+ public:
+  semi_embedded_vec ();
+  ~semi_embedded_vec ();
+
+  unsigned int count () const { return m_num; }
+  T& operator[] (int idx);
+  const T& operator[] (int idx) const;
+
+  void push (const T&);
+  void truncate (int len);
+
+ private:
+  int m_num;
+  T m_embedded[NUM_EMBEDDED];
+  int m_alloc;
+  T *m_extra;
+};
+
+/* Constructor for semi_embedded_vec.  In particular, no dynamic allocation
+   is done.  */
+
+template <typename T, int NUM_EMBEDDED>
+semi_embedded_vec<T, NUM_EMBEDDED>::semi_embedded_vec ()
+: m_num (0), m_alloc (0), m_extra (NULL)
+{
+}
+
+/* semi_embedded_vec's dtor.  Release any dynamically-allocated memory.  */
+
+template <typename T, int NUM_EMBEDDED>
+semi_embedded_vec<T, NUM_EMBEDDED>::~semi_embedded_vec ()
+{
+  XDELETEVEC (m_extra);
+}
+
+/* Look up element IDX, mutably.  */
+
+template <typename T, int NUM_EMBEDDED>
+T&
+semi_embedded_vec<T, NUM_EMBEDDED>::operator[] (int idx)
+{
+  linemap_assert (idx < m_num);
+  if (idx < NUM_EMBEDDED)
+    return m_embedded[idx];
+  else
+    {
+      linemap_assert (m_extra != NULL);
+      return m_extra[idx - NUM_EMBEDDED];
+    }
+}
+
+/* Look up element IDX (const).  */
+
+template <typename T, int NUM_EMBEDDED>
+const T&
+semi_embedded_vec<T, NUM_EMBEDDED>::operator[] (int idx) const
+{
+  linemap_assert (idx < m_num);
+  if (idx < NUM_EMBEDDED)
+    return m_embedded[idx];
+  else
+    {
+      linemap_assert (m_extra != NULL);
+      return m_extra[idx - NUM_EMBEDDED];
+    }
+}
+
+/* Append VALUE to the end of the semi_embedded_vec.  */
+
+template <typename T, int NUM_EMBEDDED>
+void
+semi_embedded_vec<T, NUM_EMBEDDED>::push (const T& value)
+{
+  int idx = m_num++;
+  if (idx < NUM_EMBEDDED)
+    m_embedded[idx] = value;
+  else
+    {
+      /* Offset "idx" to be an index within m_extra.  */
+      idx -= NUM_EMBEDDED;
+      if (NULL == m_extra)
+	{
+	  linemap_assert (m_alloc == 0);
+	  m_alloc = 16;
+	  m_extra = XNEWVEC (T, m_alloc);
+	}
+      else if (idx >= m_alloc)
+	{
+	  linemap_assert (m_alloc > 0);
+	  m_alloc *= 2;
+	  m_extra = XRESIZEVEC (T, m_extra, m_alloc);
+	}
+      linemap_assert (m_extra);
+      linemap_assert (idx < m_alloc);
+      m_extra[idx] = value;
+    }
+}
+
+/* Truncate to length LEN.  No deallocation is performed.  */
+
+template <typename T, int NUM_EMBEDDED>
+void
+semi_embedded_vec<T, NUM_EMBEDDED>::truncate (int len)
+{
+  linemap_assert (len <= m_num);
+  m_num = len;
+}
+
 class fixit_hint;
-  class fixit_insert;
-  class fixit_remove;
-  class fixit_replace;
 
 /* A "rich" source code location, for use when printing diagnostics.
    A rich_location has one or more carets&ranges, where the carets
@@ -1337,7 +1501,92 @@ class fixit_hint;
    - range 0 is at the "%s" with start = caret = "%" and finish at
      the "s".
    - range 1 has start/finish covering the "101" and is not flagged for
-     caret printing; it is perhaps at the start of "101".  */
+     caret printing; it is perhaps at the start of "101".
+
+
+   Fix-it hints
+   ------------
+
+   Rich locations can also contain "fix-it hints", giving suggestions
+   for the user on how to edit their code to fix a problem.  These
+   can be expressed as insertions, replacements, and removals of text.
+   The edits by default are relative to the zeroth range within the
+   rich_location, but optionally they can be expressed relative to
+   other locations (using various overloaded methods of the form
+   rich_location::add_fixit_*).
+
+   For example:
+
+   Example F: fix-it hint: insert_before
+   *************************************
+      ptr = arr[0];
+	    ^~~~~~
+	    &
+   This rich location has a single range (range 0) covering "arr[0]",
+   with the caret at the start.  The rich location has a single
+   insertion fix-it hint, inserted before range 0, added via
+     richloc.add_fixit_insert_before ("&");
+
+   Example G: multiple fix-it hints: insert_before and insert_after
+   ****************************************************************
+      #define FN(ARG0, ARG1, ARG2) fn(ARG0, ARG1, ARG2)
+				      ^~~~  ^~~~  ^~~~
+				      (   ) (   ) (   )
+   This rich location has three ranges, covering "arg0", "arg1",
+   and "arg2", all with caret-printing enabled.
+   The rich location has 6 insertion fix-it hints: each arg
+   has a pair of insertion fix-it hints, suggesting wrapping
+   them with parentheses: one a '(' inserted before,
+   the other a ')' inserted after, added via
+     richloc.add_fixit_insert_before (LOC, "(");
+   and
+     richloc.add_fixit_insert_after (LOC, ")");
+
+   Example H: fix-it hint: removal
+   *******************************
+     struct s {int i};;
+		      ^
+		      -
+   This rich location has a single range at the stray trailing
+   semicolon, along with a single removal fix-it hint, covering
+   the same range, added via:
+     richloc.add_fixit_remove ();
+
+   Example I: fix-it hint: replace
+   *******************************
+      c = s.colour;
+	    ^~~~~~
+	    color
+   This rich location has a single range (range 0) covering "colour",
+   and a single "replace" fix-it hint, covering the same range,
+   added via
+     richloc.add_fixit_replace ("color");
+
+   Adding a fix-it hint can fail: for example, attempts to insert content
+   at the transition between two line maps may fail due to there being no
+   source_location (aka location_t) value to express the new location.
+
+   Attempts to add a fix-it hint within a macro expansion will fail.
+
+   There is only limited support for newline characters in fix-it hints:
+   only hints with newlines which insert an entire new line are permitted,
+   inserting at the start of a line, and finishing with a newline
+   (with no interior newline characters).  Other attempts to add
+   fix-it hints containing newline characters will fail.
+   Similarly, attempts to delete or replace a range *affecting* multiple
+   lines will fail.
+
+   The rich_location API handles these failures gracefully, so that
+   diagnostics can attempt to add fix-it hints without each needing
+   extensive checking.
+
+   Fix-it hints within a rich_location are "atomic": if any hints can't
+   be applied, none of them will be (tracked by the m_seen_impossible_fixit
+   flag), and no fix-its hints will be displayed for that rich_location.
+   This implies that diagnostic messages need to be worded in such a way
+   that they make sense whether or not the fix-it hints are displayed,
+   or that richloc.seen_impossible_fixit_p () should be checked before
+   issuing the diagnostics.  */
 
 class rich_location
 {
@@ -1346,9 +1595,6 @@ class rich_location
 
   /* Constructing from a location.  */
   rich_location (line_maps *set, source_location loc);
-
-  /* Constructing from a source_range.  */
-  rich_location (source_range src_range);
 
   /* Destructor.  */
   ~rich_location ();
@@ -1364,13 +1610,10 @@ class rich_location
   set_range (line_maps *set, unsigned int idx, source_location loc,
 	     bool show_caret_p);
 
-  unsigned int get_num_locations () const { return m_num_ranges; }
+  unsigned int get_num_locations () const { return m_ranges.count (); }
 
-  location_range *get_range (unsigned int idx)
-  {
-    linemap_assert (idx < m_num_ranges);
-    return &m_ranges[idx];
-  }
+  const location_range *get_range (unsigned int idx) const;
+  location_range *get_range (unsigned int idx);
 
   expanded_location get_expanded_location (unsigned int idx);
 
@@ -1378,98 +1621,157 @@ class rich_location
   override_column (int column);
 
   /* Fix-it hints.  */
-  void
-  add_fixit_insert (source_location where,
-		    const char *new_content);
 
+  /* Methods for adding insertion fix-it hints.  */
+
+  /* Suggest inserting NEW_CONTENT immediately before the primary
+     range's start.  */
+  void
+  add_fixit_insert_before (const char *new_content);
+
+  /* Suggest inserting NEW_CONTENT immediately before the start of WHERE.  */
+  void
+  add_fixit_insert_before (source_location where,
+			   const char *new_content);
+
+  /* Suggest inserting NEW_CONTENT immediately after the end of the primary
+     range.  */
+  void
+  add_fixit_insert_after (const char *new_content);
+
+  /* Suggest inserting NEW_CONTENT immediately after the end of WHERE.  */
+  void
+  add_fixit_insert_after (source_location where,
+			  const char *new_content);
+
+  /* Methods for adding removal fix-it hints.  */
+
+  /* Suggest removing the content covered by range 0.  */
+  void
+  add_fixit_remove ();
+
+  /* Suggest removing the content covered between the start and finish
+     of WHERE.  */
+  void
+  add_fixit_remove (source_location where);
+
+  /* Suggest removing the content covered by SRC_RANGE.  */
   void
   add_fixit_remove (source_range src_range);
 
+  /* Methods for adding "replace" fix-it hints.  */
+
+  /* Suggest replacing the content covered by range 0 with NEW_CONTENT.  */
+  void
+  add_fixit_replace (const char *new_content);
+
+  /* Suggest replacing the content between the start and finish of
+     WHERE with NEW_CONTENT.  */
+  void
+  add_fixit_replace (source_location where,
+		     const char *new_content);
+
+  /* Suggest replacing the content covered by SRC_RANGE with
+     NEW_CONTENT.  */
   void
   add_fixit_replace (source_range src_range,
 		     const char *new_content);
 
-  unsigned int get_num_fixit_hints () const { return m_num_fixit_hints; }
+  unsigned int get_num_fixit_hints () const { return m_fixit_hints.count (); }
   fixit_hint *get_fixit_hint (int idx) const { return m_fixit_hints[idx]; }
+  fixit_hint *get_last_fixit_hint () const;
+  bool seen_impossible_fixit_p () const { return m_seen_impossible_fixit; }
+
+  /* Set this if the fix-it hints are not suitable to be
+     automatically applied.
+
+     For example, if you are suggesting more than one
+     mutually exclusive solution to a problem, then
+     it doesn't make sense to apply all of the solutions;
+     manual intervention is required.
+
+     If set, then the fix-it hints in the rich_location will
+     be printed, but will not be added to generated patches,
+     or affect the modified version of the file.  */
+  void fixits_cannot_be_auto_applied ()
+  {
+    m_fixits_cannot_be_auto_applied = true;
+  }
+
+  bool fixits_can_be_auto_applied_p () const
+  {
+    return !m_fixits_cannot_be_auto_applied;
+  }
+
+private:
+  bool reject_impossible_fixit (source_location where);
+  void stop_supporting_fixits ();
+  void maybe_add_fixit (source_location start,
+			source_location next_loc,
+			const char *new_content);
 
 public:
-  static const int MAX_RANGES = 3;
-  static const int MAX_FIXIT_HINTS = 2;
+  static const int STATICALLY_ALLOCATED_RANGES = 3;
 
 protected:
-  unsigned int m_num_ranges;
-  location_range m_ranges[MAX_RANGES];
+  line_maps *m_line_table;
+  semi_embedded_vec <location_range, STATICALLY_ALLOCATED_RANGES> m_ranges;
 
   int m_column_override;
 
   bool m_have_expanded_location;
   expanded_location m_expanded_location;
 
-  unsigned int m_num_fixit_hints;
-  fixit_hint *m_fixit_hints[MAX_FIXIT_HINTS];
+  static const int MAX_STATIC_FIXIT_HINTS = 2;
+  semi_embedded_vec <fixit_hint *, MAX_STATIC_FIXIT_HINTS> m_fixit_hints;
+
+  bool m_seen_impossible_fixit;
+  bool m_fixits_cannot_be_auto_applied;
 };
+
+/* A fix-it hint: a suggested insertion, replacement, or deletion of text.
+   We handle these three types of edit with one class, by representing
+   them as replacement of a half-open range:
+       [start, next_loc)
+   Insertions have start == next_loc: "replace" the empty string at the
+   start location with the new string.
+   Deletions are replacement with the empty string.
+
+   There is only limited support for newline characters in fix-it hints
+   as noted above in the comment for class rich_location.
+   A fixit_hint instance can have at most one newline character; if
+   present, the newline character must be the final character of
+   the content (preventing e.g. fix-its that split a pre-existing line).  */
 
 class fixit_hint
 {
-public:
-  enum kind {INSERT, REMOVE, REPLACE};
-
-  virtual ~fixit_hint () {}
-
-  virtual enum kind get_kind () const = 0;
-  virtual bool affects_line_p (const char *file, int line) = 0;
-};
-
-class fixit_insert : public fixit_hint
-{
  public:
-  fixit_insert (source_location where,
-		const char *new_content);
-  ~fixit_insert ();
-  enum kind get_kind () const { return INSERT; }
-  bool affects_line_p (const char *file, int line);
+  fixit_hint (source_location start,
+	      source_location next_loc,
+	      const char *new_content);
+  ~fixit_hint () { free (m_bytes); }
 
-  source_location get_location () const { return m_where; }
+  bool affects_line_p (const char *file, int line) const;
+  source_location get_start_loc () const { return m_start; }
+  source_location get_next_loc () const { return m_next_loc; }
+  bool maybe_append (source_location start,
+		     source_location next_loc,
+		     const char *new_content);
+
   const char *get_string () const { return m_bytes; }
   size_t get_length () const { return m_len; }
 
- private:
-  source_location m_where;
-  char *m_bytes;
-  size_t m_len;
-};
+  bool insertion_p () const { return m_start == m_next_loc; }
 
-class fixit_remove : public fixit_hint
-{
- public:
-  fixit_remove (source_range src_range);
-  ~fixit_remove () {}
-
-  enum kind get_kind () const { return REMOVE; }
-  bool affects_line_p (const char *file, int line);
-
-  source_range get_range () const { return m_src_range; }
+  bool ends_with_newline_p () const;
 
  private:
-  source_range m_src_range;
-};
-
-class fixit_replace : public fixit_hint
-{
- public:
-  fixit_replace (source_range src_range,
-                 const char *new_content);
-  ~fixit_replace ();
-
-  enum kind get_kind () const { return REPLACE; }
-  bool affects_line_p (const char *file, int line);
-
-  source_range get_range () const { return m_src_range; }
-  const char *get_string () const { return m_bytes; }
-  size_t get_length () const { return m_len; }
-
- private:
-  source_range m_src_range;
+  /* We don't use source_range here since, unlike most places,
+     this is a half-open/half-closed range:
+       [start, next_loc)
+     so that we can support insertion via start == next_loc.  */
+  source_location m_start;
+  source_location m_next_loc;
   char *m_bytes;
   size_t m_len;
 };
@@ -1620,6 +1922,15 @@ void linemap_dump (FILE *, struct line_maps *, unsigned, bool);
    specifies how many macro maps to dump.  */
 void line_table_dump (FILE *, struct line_maps *, unsigned int, unsigned int);
 
+/* An enum for distinguishing the various parts within a source_location.  */
+
+enum location_aspect
+{
+  LOCATION_ASPECT_CARET,
+  LOCATION_ASPECT_START,
+  LOCATION_ASPECT_FINISH
+};
+
 /* The rich_location class requires a way to expand source_location instances.
    We would directly use expand_location_to_spelling_point, which is
    implemented in gcc/input.c, but we also need to use it for rich_location
@@ -1627,6 +1938,7 @@ void line_table_dump (FILE *, struct line_maps *, unsigned int, unsigned int);
    Hence we require client code of libcpp to implement the following
    symbol.  */
 extern expanded_location
-linemap_client_expand_location_to_spelling_point (source_location );
+linemap_client_expand_location_to_spelling_point (source_location,
+						  enum location_aspect);
 
 #endif /* !LIBCPP_LINE_MAP_H  */

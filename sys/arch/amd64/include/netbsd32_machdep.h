@@ -1,4 +1,4 @@
-/*	$NetBSD: netbsd32_machdep.h,v 1.23 2019/06/04 16:29:53 mgorny Exp $	*/
+/*	$NetBSD: netbsd32_machdep.h,v 1.25 2019/11/27 09:16:58 rin Exp $	*/
 
 #ifndef _MACHINE_NETBSD32_H_
 #define _MACHINE_NETBSD32_H_
@@ -6,6 +6,8 @@
 #include <sys/ucontext.h>
 #include <compat/sys/ucontext.h>
 #include <compat/sys/siginfo.h>
+
+#include <x86/fpu.h>
 
 /*
  * i386 ptrace constants
@@ -22,6 +24,8 @@
 #define	PT32_SETDBREGS		(PT_FIRSTMACH + 8)
 #define	PT32_SETSTEP		(PT_FIRSTMACH + 9)
 #define	PT32_CLEARSTEP		(PT_FIRSTMACH + 10)
+#define	PT32_GETXSTATE		(PT_FIRSTMACH + 11)
+#define	PT32_SETXSTATE		(PT_FIRSTMACH + 12)
 
 #define NETBSD32_POINTER_TYPE uint32_t
 typedef	struct { NETBSD32_POINTER_TYPE i32; } netbsd32_pointer_t;
@@ -133,6 +137,11 @@ struct fpreg32 {
 struct dbreg32 {
 	int	dr[8];
 };
+
+struct xmmregs32 {
+	struct fxsave fxstate;
+};
+__CTASSERT(sizeof(struct xmmregs32) == 512);
 
 struct x86_get_ldt_args32 {
 	int32_t start;

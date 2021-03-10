@@ -1,4 +1,4 @@
-/* $NetBSD: acpi_machdep.c,v 1.26 2019/05/01 07:26:28 mlelstv Exp $ */
+/* $NetBSD: acpi_machdep.c,v 1.31 2021/02/04 23:54:48 thorpej Exp $ */
 
 /*
  * Copyright 2001 Wasabi Systems, Inc.
@@ -40,7 +40,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: acpi_machdep.c,v 1.26 2019/05/01 07:26:28 mlelstv Exp $");
+__KERNEL_RCSID(0, "$NetBSD: acpi_machdep.c,v 1.31 2021/02/04 23:54:48 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -79,6 +79,10 @@ __KERNEL_RCSID(0, "$NetBSD: acpi_machdep.c,v 1.26 2019/05/01 07:26:28 mlelstv Ex
 #include "opt_acpi.h"
 #include "opt_vga.h"
 
+#ifdef XEN
+#include <xen/hypervisor.h>
+#endif
+
 /*
  * Default VBIOS reset method for non-HW accelerated VGA drivers.
  */
@@ -100,8 +104,68 @@ acpi_md_OsGetRootPointer(void)
 	ACPI_PHYSICAL_ADDRESS PhysicalAddress;
 	ACPI_STATUS Status;
 
-#ifndef XENPV
-	/* If EFI is available, attempt to use it to locate the ACPI table. */
+#ifdef XENPV
+	/*
+	 * Obtain the ACPI RSDP from the hypervisor. 
+	 * This is the only way to go if Xen booted from EFI: the 
+	 * Extended BIOS Data Area (EBDA) is not mapped, and Xen 
+	 * does not pass an EFI SystemTable to the kernel.
+	 */
+        struct xen_platform_op op = {
+                .cmd = XENPF_firmware_info,
+                .u.firmware_info = {
+                        .type = XEN_FW_EFI_INFO,  
+                        .index = XEN_FW_EFI_CONFIG_TABLE
+                }
+        };
+        union xenpf_efi_info *info = &op.u.firmware_info.u.efi_info;
+
+        if (HYPERVISOR_platform_op(&op) == 0) {
+		struct efi_cfgtbl *ct;
+		int i;
+
+		ct = AcpiOsMapMemory(info->cfg.addr, 
+		    sizeof(*ct) * info->cfg.nent);
+
+		for (i = 0; i < info->cfg.nent; i++) {
+                	if (memcmp(&ct[i].ct_uuid,
+			    &EFI_UUID_ACPI20, sizeof(EFI_UUID_ACPI20)) == 0) {
+				PhysicalAddress = (ACPI_PHYSICAL_ADDRESS)
+				    (uintptr_t)ct[i].ct_data;
+				if (PhysicalAddress)
+					goto out;
+					
+			}
+		}
+
+		for (i = 0; i < info->cfg.nent; i++) {
+                	if (memcmp(&ct[i].ct_uuid,
+			    &EFI_UUID_ACPI10, sizeof(EFI_UUID_ACPI10)) == 0) {
+				PhysicalAddress = (ACPI_PHYSICAL_ADDRESS)
+				    (uintptr_t)ct[i].ct_data;
+				if (PhysicalAddress)
+					goto out;
+					
+			}
+		}
+out:
+		AcpiOsUnmapMemory(ct, sizeof(*ct) * info->cfg.nent);
+
+		if (PhysicalAddress)
+			return PhysicalAddress;
+	}
+#else
+#ifdef XEN
+	if (vm_guest == VM_GUEST_XENPVH) {
+		PhysicalAddress = hvm_start_info->rsdp_paddr;
+		if (PhysicalAddress)
+			return PhysicalAddress;
+	}
+#endif
+	/* 
+	 * Get the ACPI RSDP from EFI SystemTable. This works when the 
+	 * kernel was loaded from EFI bootloader.
+	 */
 	if (efi_probe()) {
 		PhysicalAddress = efi_getcfgtblpa(&EFI_UUID_ACPI20);
 		if (!PhysicalAddress)
@@ -111,6 +175,11 @@ acpi_md_OsGetRootPointer(void)
 	}
 
 #endif
+	/*
+	 * Find ACPI RSDP from Extended BIOS Data Area (EBDA). This
+	 * works when the kernel was started from BIOS bootloader,
+	 * or for Xen PV when Xen was started from BIOS bootloader.
+	 */
 	Status = AcpiFindRootPointer(&PhysicalAddress);
 	if (ACPI_FAILURE(Status))
 		PhysicalAddress = 0;
@@ -292,6 +361,18 @@ acpi_md_intr_establish(uint32_t InterruptNumber, int ipl, int type,
 #endif
 
 	return ih;
+}
+
+void
+acpi_md_intr_mask(void *ih)
+{
+	intr_mask(ih);
+}
+
+void
+acpi_md_intr_unmask(void *ih)
+{
+	intr_unmask(ih);
 }
 
 void
@@ -521,6 +602,8 @@ device_acpi_register(device_t dev, void *aux)
 	parent = device_parent(dev);
 	if (parent == NULL)
 		return;
+
+	acpi_device_register(dev, aux);
 
 	device_is_vga = device_is_a(dev, "vga") || device_is_a(dev, "genfb");
 	device_is_pci = device_is_a(parent, "pci");

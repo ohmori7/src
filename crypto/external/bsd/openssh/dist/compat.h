@@ -1,5 +1,5 @@
-/*	$NetBSD: compat.h,v 1.12 2018/08/26 07:46:36 christos Exp $	*/
-/* $OpenBSD: compat.h,v 1.54 2018/08/13 02:41:05 djm Exp $ */
+/*	$NetBSD: compat.h,v 1.14 2021/03/05 17:47:16 christos Exp $	*/
+/* $OpenBSD: compat.h,v 1.56 2021/01/27 09:26:54 djm Exp $ */
 
 /*
  * Copyright (c) 1999, 2000, 2001 Markus Friedl.  All rights reserved.
@@ -27,11 +27,6 @@
 
 #ifndef COMPAT_H
 #define COMPAT_H
-
-#define	SSH_PROTO_UNKNOWN	0x00
-#define	SSH_PROTO_1		0x01
-#define	SSH_PROTO_1_PREFERRED	0x02
-#define	SSH_PROTO_2		0x04
 
 #define SSH_BUG_UTF8TTYMODE	0x00000001
 #define SSH_BUG_SIGTYPE		0x00000002
@@ -65,11 +60,10 @@
 #define SSH_BUG_DHGEX_LARGE	0x40000000
 #define SSH_BUG_LARGEWINDOW     0x80000000
 
-u_int    compat_datafellows(const char *);
-int	 proto_spec(const char *);
-const char	*compat_cipher_proposal(const char *);
-char	*compat_pkalg_proposal(char *);
-const char	*compat_kex_proposal(const char *);
+struct ssh;
 
-extern int datafellows;
+void    compat_banner(struct ssh *, const char *);
+const char	*compat_cipher_proposal(struct ssh *, const char *);
+char	*compat_pkalg_proposal(struct ssh *, char *);
+const char	*compat_kex_proposal(struct ssh *, const char *);
 #endif

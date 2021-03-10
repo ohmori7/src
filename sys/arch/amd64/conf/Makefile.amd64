@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile.amd64,v 1.77 2019/05/22 08:31:25 kamil Exp $
+#	$NetBSD: Makefile.amd64,v 1.85 2020/05/11 15:15:15 joerg Exp $
 
 # Makefile for NetBSD
 #
@@ -44,21 +44,49 @@ CFLAGS+=	-msoft-float
 # For gcc we might need this, but other compilers barf
 # CFLAGS+=	-mno-fp-ret-in-387
 
-.if ${SPECTRE_V2_GCC_MITIGATION:U0} > 0 && ${HAVE_GCC:U0} > 0
-CFLAGS+=      -mindirect-branch=thunk-inline
-CFLAGS+=      -mindirect-branch-register
+.if ${SPECTRE_V2_GCC_MITIGATION:U0} > 0
+CFLAGS+=	${${ACTIVE_CC} == "gcc" :? -mindirect-branch=thunk :}
+CFLAGS+=	${${ACTIVE_CC} == "gcc" :? -mindirect-branch-register :}
 .endif
 
-.if ${KASAN:U0} > 0 && ${HAVE_GCC:U0} > 0
+.if ${KASAN:U0} > 0
+.if ${HAVE_GCC:U0} > 0
 KASANFLAGS=	-fsanitize=kernel-address \
 		--param asan-globals=1 --param asan-stack=1 \
+		--param asan-instrument-allocas=1 \
 		-fsanitize-address-use-after-scope \
 		-fasan-shadow-offset=0xDFFF900000000000
-.for f in subr_asan.c subr_kcov.c subr_lwp_specificdata.c subr_specificdata.c
+.elif ${HAVE_LLVM:Uno} == "yes"
+KASANFLAGS=	-fsanitize=kernel-address \
+		-mllvm -asan-globals=1 -mllvm -asan-stack=1 \
+		-mllvm -asan-instrument-dynamic-allocas=1 \
+		-mllvm -asan-use-after-scope=1 \
+		-mllvm -asan-instrumentation-with-call-threshold=0 \
+		-mllvm -asan-mapping-offset=0xDFFF900000000000
+.endif
+.for f in subr_asan.c subr_kcov.c
 KASANFLAGS.${f}=	# empty
 .endfor
 CFLAGS+=	${KASANFLAGS.${.IMPSRC:T}:U${KASANFLAGS}}
 .endif
+
+.if ${KCSAN:U0} > 0 && ${HAVE_GCC:U0} > 0
+KCSANFLAGS=	-fsanitize=thread
+.for f in subr_csan.c subr_kcov.c clock.c lapic.c
+KCSANFLAGS.${f}=	# empty
+.endfor
+CFLAGS+=	${KCSANFLAGS.${.IMPSRC:T}:U${KCSANFLAGS}}
+.endif
+
+.if ${KMSAN:U0} > 0 && ${HAVE_LLVM:Uno} == "yes"
+KMSANFLAGS=	-fsanitize=kernel-memory
+.for f in subr_msan.c
+KMSANFLAGS.${f}=	# empty
+.endfor
+CFLAGS+=	${KMSANFLAGS.${.IMPSRC:T}:U${KMSANFLAGS}}
+.endif
+
+EXTRA_INCLUDES= -I$S/external/mit/xen-include-public/dist/
 
 ##
 ## (3) libkern and compat
@@ -89,7 +117,7 @@ LINKFLAGS_NORMAL=	-X
 # depend on CPU configuration
 locore.o machdep.o: Makefile
 
-acpi_wakeup_low.o amd64func.o busfunc.o cpufunc.o cpu_in_cksum.o: assym.h
+acpi_wakeup_low.o busfunc.o cpufunc.o cpu_in_cksum.o: assym.h
 linux_sigcode.o linux32_sigcode.o lock_stubs.o mptramp.o: assym.h
 netbsd32_sigcode.o: assym.h
 

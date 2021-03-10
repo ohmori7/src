@@ -1,4 +1,4 @@
-/*	$NetBSD: smdk2800_machdep.c,v 1.45 2018/10/28 14:30:32 skrll Exp $ */
+/*	$NetBSD: smdk2800_machdep.c,v 1.49 2020/04/18 11:00:41 skrll Exp $ */
 
 /*
  * Copyright (c) 2002, 2003, 2005 Fujitsu Component Limited
@@ -106,12 +106,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: smdk2800_machdep.c,v 1.45 2018/10/28 14:30:32 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: smdk2800_machdep.c,v 1.49 2020/04/18 11:00:41 skrll Exp $");
 
 #include "opt_ddb.h"
 #include "opt_console.h"
 #include "opt_kgdb.h"
-#include "opt_pmap_debug.h"
 #include "opt_md.h"
 #include "pci.h"
 
@@ -190,10 +189,6 @@ int max_processes = 64;		/* Default number */
 #endif				/* !PMAP_STATIC_L1S */
 
 paddr_t msgbufphys;
-
-#ifdef PMAP_DEBUG
-extern int pmap_debug_level;
-#endif
 
 #define KERNEL_PT_SYS		0	/* L2 table for mapping zero page */
 #define KERNEL_PT_KERNEL	1	/* L2 table for mapping kernel */
@@ -330,7 +325,7 @@ static const struct pmap_devmap smdk2800_devmap[] = {
 #define	ioreg32(pa)	(*(volatile uint32_t *)ioreg_vaddr(pa))
 
 /*
- * u_int initarm(...)
+ * vaddr_t initarm(...)
  *
  * Initial entry point on startup. This gets called before main() is
  * entered.
@@ -343,7 +338,7 @@ static const struct pmap_devmap smdk2800_devmap[] = {
  *   Relocating the kernel to the bottom of physical memory
  */
 
-u_int
+vaddr_t
 initarm(void *arg)
 {
 	int loop;
@@ -442,7 +437,7 @@ initarm(void *arg)
 #else
 	/* Reserve physmem for ram disk */
 	md_root_start = ((physical_end - MD_ROOT_SIZE) & ~(L1_S_SIZE-1));
-	printf("Reserve %ld bytes for memory disk\n",  
+	printf("Reserve %ld bytes for memory disk\n",
 	    physical_end - md_root_start);
 	/* copy fs contents */
 	memcpy((void *)md_root_start, (void *)MEMORY_DISK_ROOT_ADDR,
@@ -791,7 +786,7 @@ initarm(void *arg)
 #endif
 	{
 		uint8_t  gpio = ~gpio8(GPIO_PDATF);
-		
+
 		if (gpio & (1<<5)) /* SW3 */
 			boothowto ^= RB_SINGLE;
 		if (gpio & (1<<7)) /* SW7 */
@@ -815,7 +810,7 @@ initarm(void *arg)
 #endif
 
 	/* We return the new stack pointer address */
-	return (kernelstack.pv_va + USPACE_SVC_STACK_TOP);
+	return kernelstack.pv_va + USPACE_SVC_STACK_TOP;
 }
 
 void
@@ -887,7 +882,7 @@ kgdb_port_init(void)
 		unit = 1;
 
 	if (unit >= 0) {
-		s3c2800_clock_freq2(ioreg_vaddr(S3C2800_CLKMAN_BASE), 
+		s3c2800_clock_freq2(ioreg_vaddr(S3C2800_CLKMAN_BASE),
 		    NULL, NULL, &pclk);
 
 		s3c2800_sscom_kgdb_attach(&s3c2xx0_bs_tag,

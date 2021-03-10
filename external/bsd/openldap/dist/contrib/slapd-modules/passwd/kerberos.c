@@ -1,9 +1,9 @@
-/*	$NetBSD: kerberos.c,v 1.1.1.6 2018/02/06 01:53:06 christos Exp $	*/
+/*	$NetBSD: kerberos.c,v 1.2 2020/08/11 13:15:36 christos Exp $	*/
 
 /* $OpenLDAP$ */
 /* This work is part of OpenLDAP Software <http://www.openldap.org/>.
  *
- * Copyright 1998-2017 The OpenLDAP Foundation.
+ * Copyright 1998-2020 The OpenLDAP Foundation.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without

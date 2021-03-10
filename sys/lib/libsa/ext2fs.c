@@ -1,4 +1,4 @@
-/*	$NetBSD: ext2fs.c,v 1.27 2019/04/05 20:09:29 christos Exp $	*/
+/*	$NetBSD: ext2fs.c,v 1.29 2020/01/24 13:20:33 jakllsch Exp $	*/
 
 /*
  * Copyright (c) 1997 Manuel Bouyer.
@@ -692,7 +692,7 @@ out:
 	if (rc)
 		ext2fs_close(f);
 	else
-		fsmod = "ext2fs";
+		fsmod = "ufs/ext2fs";
 	return rc;
 }
 
@@ -866,7 +866,7 @@ ext2fs_ls(struct open_file *f, const char *pattern)
 				goto out;
 			}
 			lsadd(&names, pattern, dp->e2d_name,
-			    strlen(dp->e2d_name), fs2h32(dp->e2d_ino), t);
+			    dp->e2d_namlen, fs2h32(dp->e2d_ino), t);
 		}
 		fp->f_seekp += buf_size;
 	}

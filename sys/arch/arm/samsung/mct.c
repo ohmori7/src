@@ -1,4 +1,4 @@
-/*	$NetBSD: mct.c,v 1.15 2018/09/11 10:06:53 jmcneill Exp $	*/
+/*	$NetBSD: mct.c,v 1.17 2021/01/27 03:10:19 thorpej Exp $	*/
 
 /*-
  * Copyright (c) 2014-2018 The NetBSD Foundation, Inc.
@@ -34,7 +34,7 @@
 
 #include <sys/cdefs.h>
 
-__KERNEL_RCSID(1, "$NetBSD: mct.c,v 1.15 2018/09/11 10:06:53 jmcneill Exp $");
+__KERNEL_RCSID(1, "$NetBSD: mct.c,v 1.17 2021/01/27 03:10:19 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -225,14 +225,17 @@ mct_fdt_cpu_hatch(void *priv, struct cpu_info *ci)
 #endif
 }
 
+static const struct device_compatible_entry compat_data[] = {
+	{ .compat = "samsung,exynos4210-mct" },
+	DEVICE_COMPAT_EOL
+};
+
 static int
 mct_match(device_t parent, cfdata_t cf, void *aux)
 {
-	const char * const compatible[] = { "samsung,exynos4210-mct",
-					    NULL };
-
 	struct fdt_attach_args * const faa = aux;
-	return of_match_compatible(faa->faa_phandle, compatible);
+
+	return of_compatible_match(faa->faa_phandle, compat_data);
 }
 
 static void
@@ -256,8 +259,8 @@ mct_attach(device_t parent, device_t self, void *aux)
 	sc->sc_freq = EXYNOS_F_IN_FREQ;
 	error = bus_space_map(sc->sc_bst, addr, size, 0, &sc->sc_bsh);
 	if (error) {
-		aprint_error(": couldn't map %#llx: %d",
-			     (uint64_t)addr, error);
+		aprint_error(": couldn't map %#" PRIxBUSADDR ": %d",
+			     addr, error);
 		return;
 	}
 

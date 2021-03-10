@@ -1,4 +1,4 @@
-/*	$NetBSD: efiboot.h,v 1.10 2019/04/21 22:30:41 thorpej Exp $	*/
+/*	$NetBSD: efiboot.h,v 1.14 2020/10/11 14:03:33 jmcneill Exp $	*/
 
 /*-
  * Copyright (c) 2016 Kimihiro Nonaka <nonaka@netbsd.org>
@@ -35,8 +35,6 @@
 #include <loadfile.h>
 #include <net.h>
 
-#include <prop/proplib.h>
-
 #include "efiboot_machdep.h"
 
 struct boot_command {
@@ -58,12 +56,14 @@ extern const struct boot_command commands[];
 void command_help(char *);
 int set_default_device(const char *);
 char *get_default_device(void);
+void set_default_fstype(int);
+int get_default_fstype(void);
 int set_initrd_path(const char *);
 char *get_initrd_path(void);
 int set_dtb_path(const char *);
 char *get_dtb_path(void);
-int set_efibootplist_path(const char *);
-char *get_efibootplist_path(void);
+int set_rndseed_path(const char *);
+char *get_rndseed_path(void);
 
 /* console.c */
 int ischar(void);
@@ -77,7 +77,6 @@ void efi_exit(void);
 void efi_delay(int);
 void efi_reboot(void);
 extern int howto;
-extern prop_dictionary_t efibootplist;
 
 /* efichar.c */
 size_t ucs2len(const CHAR16 *);
@@ -85,7 +84,8 @@ int ucs2_to_utf8(const CHAR16 *, char **);
 int utf8_to_ucs2(const char *, CHAR16 **, size_t *);
 
 /* efidev.c */
-int efi_device_path_depth(EFI_DEVICE_PATH *dp, int);
+int efi_device_path_depth(EFI_DEVICE_PATH *, int);
+int efi_device_path_count(EFI_DEVICE_PATH *);
 int efi_device_path_ncmp(EFI_DEVICE_PATH *, EFI_DEVICE_PATH *, int);
 
 /* efinet.c */
@@ -106,7 +106,6 @@ bool efi_pxe_match_booted_interface(const EFI_MAC_ADDRESS *, UINT32);
 
 /* exec.c */
 int exec_netbsd(const char *, const char *);
-void load_efibootplist(bool);
 
 /* panic.c */
 __dead VOID Panic(IN CHAR16 *, ...);

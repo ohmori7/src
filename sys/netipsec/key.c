@@ -1,4 +1,4 @@
-/*	$NetBSD: key.c,v 1.263 2019/06/12 22:23:06 christos Exp $	*/
+/*	$NetBSD: key.c,v 1.271 2020/03/13 06:55:35 knakahara Exp $	*/
 /*	$FreeBSD: key.c,v 1.3.2.3 2004/02/14 22:23:23 bms Exp $	*/
 /*	$KAME: key.c,v 1.191 2001/06/27 10:46:49 sakane Exp $	*/
 
@@ -32,7 +32,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: key.c,v 1.263 2019/06/12 22:23:06 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: key.c,v 1.271 2020/03/13 06:55:35 knakahara Exp $");
 
 /*
  * This code is referred to RFC 2367
@@ -73,6 +73,7 @@ __KERNEL_RCSID(0, "$NetBSD: key.c,v 1.263 2019/06/12 22:23:06 christos Exp $");
 #include <sys/localcount.h>
 #include <sys/pserialize.h>
 #include <sys/hash.h>
+#include <sys/xcall.h>
 
 #include <net/if.h>
 #include <net/route.h>
@@ -696,8 +697,8 @@ static bool key_sah_has_sav(struct secashead *);
 static void key_sah_ref(struct secashead *);
 static void key_sah_unref(struct secashead *);
 static void key_init_sav(struct secasvar *);
+static void key_wait_sav(struct secasvar *);
 static void key_destroy_sav(struct secasvar *);
-static void key_destroy_sav_with_ref(struct secasvar *);
 static struct secasvar *key_newsav(struct mbuf *,
 	const struct sadb_msghdr *, int *, const char*, int);
 #define	KEY_NEWSAV(m, sadb, e)				\
@@ -1598,30 +1599,20 @@ key_destroy_sav(struct secasvar *sav)
 }
 
 /*
- * Destroy sav with holding its reference.
+ * Wait for references of a passed sav to go away.
  */
 static void
-key_destroy_sav_with_ref(struct secasvar *sav)
+key_wait_sav(struct secasvar *sav)
 {
 
 	ASSERT_SLEEPABLE();
 
 	mutex_enter(&key_sad.lock);
-	sav->state = SADB_SASTATE_DEAD;
-	SAVLIST_WRITER_REMOVE(sav);
-	SAVLUT_WRITER_REMOVE(sav);
-	mutex_exit(&key_sad.lock);
-
-	/* We cannot unref with holding key_sad.lock */
-	KEY_SA_UNREF(&sav);
-
-	mutex_enter(&key_sad.lock);
+	KASSERT(sav->state == SADB_SASTATE_DEAD);
 	KDASSERT(mutex_ownable(softnet_lock));
 	key_sad_pserialize_perform();
 	localcount_drain(&sav->localcount, &key_sad.cv_lc, &key_sad.lock);
 	mutex_exit(&key_sad.lock);
-
-	key_destroy_sav(sav);
 }
 
 /* %%% SPD management */
@@ -1705,7 +1696,8 @@ key_lookup_and_remove_sp(const struct secpolicyindex *spidx, bool from_kernel)
 
 	mutex_enter(&key_spd.lock);
 	SPLIST_WRITER_FOREACH(sp, spidx->dir) {
-		KASSERT(sp->state != IPSEC_SPSTATE_DEAD);
+		KASSERTMSG(sp->state != IPSEC_SPSTATE_DEAD, "sp->state=%u",
+		    sp->state);
 		/*
 		 * SPs created in kernel(e.g. ipsec(4) I/F) must not be
 		 * removed by userland programs.
@@ -1770,7 +1762,8 @@ key_lookupbyid_and_remove_sp(u_int32_t id, bool from_kernel)
 
 	mutex_enter(&key_spd.lock);
 	SPLIST_READER_FOREACH(sp, IPSEC_DIR_INBOUND) {
-		KASSERT(sp->state != IPSEC_SPSTATE_DEAD);
+		KASSERTMSG(sp->state != IPSEC_SPSTATE_DEAD, "sp->state=%u",
+		    sp->state);
 		/*
 		 * SPs created in kernel(e.g. ipsec(4) I/F) must not be
 		 * removed by userland programs.
@@ -1782,7 +1775,8 @@ key_lookupbyid_and_remove_sp(u_int32_t id, bool from_kernel)
 	}
 
 	SPLIST_READER_FOREACH(sp, IPSEC_DIR_OUTBOUND) {
-		KASSERT(sp->state != IPSEC_SPSTATE_DEAD);
+		KASSERTMSG(sp->state != IPSEC_SPSTATE_DEAD, "sp->state=%u",
+		    sp->state);
 		/*
 		 * SPs created in kernel(e.g. ipsec(4) I/F) must not be
 		 * removed by userland programs.
@@ -2822,7 +2816,8 @@ key_api_spdflush(struct socket *so, struct mbuf *m,
 	    retry:
 		mutex_enter(&key_spd.lock);
 		SPLIST_WRITER_FOREACH(sp, dir) {
-			KASSERT(sp->state != IPSEC_SPSTATE_DEAD);
+			KASSERTMSG(sp->state != IPSEC_SPSTATE_DEAD,
+			    "sp->state=%u", sp->state);
 			/*
 			 * Userlang programs can remove SPs created by userland
 			 * probrams only, that is, they cannot remove SPs
@@ -3241,7 +3236,7 @@ key_unlink_sah(struct secashead *sah)
 
 	KASSERT(!cpu_softintr_p());
 	KASSERT(mutex_owned(&key_sad.lock));
-	KASSERT(sah->state == SADB_SASTATE_DEAD);
+	KASSERTMSG(sah->state == SADB_SASTATE_DEAD, "sah->state=%u", sah->state);
 
 	/* Remove from the sah list */
 	SAHLIST_WRITER_REMOVE(sah);
@@ -3534,6 +3529,41 @@ out:
 }
 
 /*
+ * Search SAD litmited alive SA by an SPI and remove it from a list.
+ * OUT:
+ *	NULL	: not found
+ *	others	: found, pointer to a SA.
+ */
+static struct secasvar *
+key_lookup_and_remove_sav(struct secashead *sah, u_int32_t spi,
+    const struct secasvar *hint)
+{
+	struct secasvar *sav = NULL;
+	u_int state;
+
+	/* search all status */
+	mutex_enter(&key_sad.lock);
+	SASTATE_ALIVE_FOREACH(state) {
+		SAVLIST_WRITER_FOREACH(sav, sah, state) {
+			KASSERT(sav->state == state);
+
+			if (sav->spi == spi) {
+				if (hint != NULL && hint != sav)
+					continue;
+				sav->state = SADB_SASTATE_DEAD;
+				SAVLIST_WRITER_REMOVE(sav);
+				SAVLUT_WRITER_REMOVE(sav);
+				goto out;
+			}
+		}
+	}
+out:
+	mutex_exit(&key_sad.lock);
+
+	return sav;
+}
+
+/*
  * Free allocated data to member variables of sav:
  * sav->replay, sav->key_* and sav->lft_*.
  */
@@ -3541,7 +3571,8 @@ static void
 key_freesaval(struct secasvar *sav)
 {
 
-	KASSERT(key_sa_refcnt(sav) == 0);
+	KASSERTMSG(key_sa_refcnt(sav) == 0, "key_sa_refcnt(sav)=%u",
+	    key_sa_refcnt(sav));
 
 	if (sav->replay != NULL)
 		kmem_intr_free(sav->replay, sav->replay_len);
@@ -3581,7 +3612,8 @@ key_setsaval(struct secasvar *sav, struct mbuf *m,
 	KASSERT(mhp->msg != NULL);
 
 	/* We shouldn't initialize sav variables while someone uses it. */
-	KASSERT(key_sa_refcnt(sav) == 0);
+	KASSERTMSG(key_sa_refcnt(sav) == 0, "key_sa_refcnt(sav)=%u",
+	    key_sa_refcnt(sav));
 
 	/* SA */
 	if (mhp->ext[SADB_EXT_SA] != NULL) {
@@ -3770,7 +3802,8 @@ key_init_xform(struct secasvar *sav)
 	int error;
 
 	/* We shouldn't initialize sav variables while someone uses it. */
-	KASSERT(key_sa_refcnt(sav) == 0);
+	KASSERTMSG(key_sa_refcnt(sav) == 0, "key_sa_refcnt(sav)=%u",
+	    key_sa_refcnt(sav));
 
 	/* check SPI value */
 	switch (sav->sah->saidx.proto) {
@@ -3929,7 +3962,8 @@ key_setdumpsa(struct secasvar *sav, u_int8_t type, u_int8_t satype,
 			    time_mono_to_wall(lt.sadb_lifetime_addtime);
 			lt.sadb_lifetime_usetime =
 			    time_mono_to_wall(lt.sadb_lifetime_usetime);
-			percpu_foreach(sav->lft_c_counters_percpu,
+			percpu_foreach_xcall(sav->lft_c_counters_percpu,
+			    XC_HIGHPRI_IPL(IPL_SOFTNET),
 			    key_sum_lifetime_counters, sum);
 			lt.sadb_lifetime_allocations =
 			    sum[LIFETIME_COUNTER_ALLOCATIONS];
@@ -4470,30 +4504,34 @@ key_ismyaddr6(const struct sockaddr_in6 *sin6)
 	bound = curlwp_bind();
 	s = pserialize_read_enter();
 	IN6_ADDRLIST_READER_FOREACH(ia) {
-		bool ingroup;
-
 		if (key_sockaddr_match((const struct sockaddr *)&sin6,
 		    (const struct sockaddr *)&ia->ia_addr, 0)) {
 			pserialize_read_exit(s);
 			goto ours;
 		}
-		ia6_acquire(ia, &psref);
-		pserialize_read_exit(s);
 
-		/*
-		 * XXX Multicast
-		 * XXX why do we care about multlicast here while we don't care
-		 * about IPv4 multicast??
-		 * XXX scope
-		 */
-		ingroup = in6_multi_group(&sin6->sin6_addr, ia->ia_ifp);
-		if (ingroup) {
+		if (IN6_IS_ADDR_MULTICAST(&sin6->sin6_addr)) {
+			bool ingroup;
+
+			ia6_acquire(ia, &psref);
+			pserialize_read_exit(s);
+
+			/*
+			 * XXX Multicast
+			 * XXX why do we care about multlicast here while we don't care
+			 * about IPv4 multicast??
+			 * XXX scope
+			 */
+			ingroup = in6_multi_group(&sin6->sin6_addr, ia->ia_ifp);
+			if (ingroup) {
+				ia6_release(ia, &psref);
+				goto ours;
+			}
+
+			s = pserialize_read_enter();
 			ia6_release(ia, &psref);
-			goto ours;
 		}
 
-		s = pserialize_read_enter();
-		ia6_release(ia, &psref);
 	}
 	pserialize_read_exit(s);
 
@@ -4732,7 +4770,7 @@ key_portcomp(in_port_t port1, in_port_t port2, int howport)
 	case PORT_STRICT:
 		if (port1 != port2) {
 			KEYDEBUG_PRINTF(KEYDEBUG_MATCH,
-			    "port fail %d != %d\n", port1, port2);
+			    "port fail %d != %d\n", ntohs(port1), ntohs(port2));
 			return 1;
 		}
 		return 0;
@@ -4784,9 +4822,9 @@ key_sockaddr_match(
 		KEYDEBUG_PRINTF(KEYDEBUG_MATCH,
 		    "addr success %s[%d] == %s[%d]\n",
 		    (in_print(s1, sizeof(s1), &sin1->sin_addr), s1),
-		    sin1->sin_port,
+		    ntohs(sin1->sin_port),
 		    (in_print(s2, sizeof(s2), &sin2->sin_addr), s2),
-		    sin2->sin_port);
+		    ntohs(sin2->sin_port));
 		break;
 	case AF_INET6:
 		sin61 = (const struct sockaddr_in6 *)sa1;
@@ -4851,16 +4889,23 @@ key_bb_match_withmask(const void *a1, const void *a2, u_int bits)
 }
 
 static void
-key_timehandler_spd(time_t now)
+key_timehandler_spd(void)
 {
 	u_int dir;
 	struct secpolicy *sp;
+	volatile time_t now;
 
 	for (dir = 0; dir < IPSEC_DIR_MAX; dir++) {
 	    retry:
 		mutex_enter(&key_spd.lock);
+		/*
+		 * To avoid for sp->created to overtake "now" because of
+		 * wating mutex, set time_uptime here.
+		 */
+		now = time_uptime;
 		SPLIST_WRITER_FOREACH(sp, dir) {
-			KASSERT(sp->state != IPSEC_SPSTATE_DEAD);
+			KASSERTMSG(sp->state != IPSEC_SPSTATE_DEAD,
+			    "sp->state=%u", sp->state);
 
 			if (sp->lifetime == 0 && sp->validtime == 0)
 				continue;
@@ -4892,10 +4937,11 @@ key_timehandler_spd(time_t now)
 }
 
 static void
-key_timehandler_sad(time_t now)
+key_timehandler_sad(void)
 {
 	struct secashead *sah;
 	int s;
+	volatile time_t now;
 
 restart:
 	mutex_enter(&key_sad.lock);
@@ -4921,6 +4967,10 @@ restart:
 		/* if LARVAL entry doesn't become MATURE, delete it. */
 		mutex_enter(&key_sad.lock);
 	restart_sav_LARVAL:
+		/*
+		 * Same as key_timehandler_spd(), set time_uptime here.
+		 */
+		now = time_uptime;
 		SAVLIST_WRITER_FOREACH(sav, sah, SADB_SASTATE_LARVAL) {
 			if (now - sav->created > key_larval_lifetime) {
 				key_sa_chgstate(sav, SADB_SASTATE_DEAD);
@@ -4935,6 +4985,10 @@ restart:
 		 */
 	restart_sav_MATURE:
 		mutex_enter(&key_sad.lock);
+		/*
+		 * ditto
+		 */
+		now = time_uptime;
 		SAVLIST_WRITER_FOREACH(sav, sah, SADB_SASTATE_MATURE) {
 			/* we don't need to check. */
 			if (sav->lft_s == NULL)
@@ -4975,7 +5029,8 @@ restart:
 				uint64_t lft_c_bytes = 0;
 				lifetime_counters_t sum = {0};
 
-				percpu_foreach(sav->lft_c_counters_percpu,
+				percpu_foreach_xcall(sav->lft_c_counters_percpu,
+				    XC_HIGHPRI_IPL(IPL_SOFTNET),
 				    key_sum_lifetime_counters, sum);
 				lft_c_bytes = sum[LIFETIME_COUNTER_BYTES];
 
@@ -4999,6 +5054,10 @@ restart:
 		/* check DYING entry to change status to DEAD. */
 		mutex_enter(&key_sad.lock);
 	restart_sav_DYING:
+		/*
+		 * ditto
+		 */
+		now = time_uptime;
 		SAVLIST_WRITER_FOREACH(sav, sah, SADB_SASTATE_DYING) {
 			/* we don't need to check. */
 			if (sav->lft_h == NULL)
@@ -5033,7 +5092,8 @@ restart:
 				uint64_t lft_c_bytes = 0;
 				lifetime_counters_t sum = {0};
 
-				percpu_foreach(sav->lft_c_counters_percpu,
+				percpu_foreach_xcall(sav->lft_c_counters_percpu,
+				    XC_HIGHPRI_IPL(IPL_SOFTNET),
 				    key_sum_lifetime_counters, sum);
 				lft_c_bytes = sum[LIFETIME_COUNTER_BYTES];
 
@@ -5065,13 +5125,18 @@ restart:
 }
 
 static void
-key_timehandler_acq(time_t now)
+key_timehandler_acq(void)
 {
 #ifndef IPSEC_NONBLOCK_ACQUIRE
 	struct secacq *acq, *nextacq;
+	volatile time_t now;
 
     restart:
 	mutex_enter(&key_misc.lock);
+	/*
+	 * Same as key_timehandler_spd(), set time_uptime here.
+	 */
+	now = time_uptime;
 	LIST_FOREACH_SAFE(acq, &key_misc.acqlist, chain, nextacq) {
 		if (now - acq->created > key_blockacq_lifetime) {
 			LIST_REMOVE(acq, chain);
@@ -5085,10 +5150,11 @@ key_timehandler_acq(time_t now)
 }
 
 static void
-key_timehandler_spacq(time_t now)
+key_timehandler_spacq(void)
 {
 #ifdef notyet
 	struct secspacq *acq, *nextacq;
+	time_t now = time_uptime;
 
 	LIST_FOREACH_SAFE(acq, &key_misc.spacqlist, chain, nextacq) {
 		if (now - acq->created > key_blockacq_lifetime) {
@@ -5110,15 +5176,14 @@ static unsigned int key_timehandler_work_enqueued = 0;
 static void
 key_timehandler_work(struct work *wk, void *arg)
 {
-	time_t now = time_uptime;
 
 	/* We can allow enqueuing another work at this point */
 	atomic_swap_uint(&key_timehandler_work_enqueued, 0);
 
-	key_timehandler_spd(now);
-	key_timehandler_sad(now);
-	key_timehandler_acq(now);
-	key_timehandler_spacq(now);
+	key_timehandler_spd();
+	key_timehandler_sad();
+	key_timehandler_acq();
+	key_timehandler_spacq();
 
 	key_acquire_sendup_pending_mbuf();
 
@@ -5628,7 +5693,7 @@ key_api_update(struct socket *so, struct mbuf *m, const struct sadb_msghdr *mhp)
 	const struct sockaddr *src, *dst;
 	struct secasindex saidx;
 	struct secashead *sah;
-	struct secasvar *sav, *newsav;
+	struct secasvar *sav, *newsav, *oldsav;
 	u_int16_t proto;
 	u_int8_t mode;
 	u_int16_t reqid;
@@ -5781,11 +5846,25 @@ key_api_update(struct socket *so, struct mbuf *m, const struct sadb_msghdr *mhp)
 	mutex_exit(&key_sad.lock);
 	key_validate_savlist(sah, SADB_SASTATE_MATURE);
 
+	/*
+	 * We need to lookup and remove the sav atomically, so get it again
+	 * here by a special API while we have a reference to it.
+	 */
+	oldsav = key_lookup_and_remove_sav(sah, sa0->sadb_sa_spi, sav);
+	KASSERT(oldsav == NULL || oldsav == sav);
+	/* We can release the reference because of oldsav */
+	KEY_SA_UNREF(&sav);
+	if (oldsav == NULL) {
+		/* Someone has already removed the sav.  Nothing to do. */
+	} else {
+		key_wait_sav(oldsav);
+		key_destroy_sav(oldsav);
+		oldsav = NULL;
+	}
+	sav = NULL;
+
 	key_sah_unref(sah);
 	sah = NULL;
-
-	key_destroy_sav_with_ref(sav);
-	sav = NULL;
 
     {
 	struct mbuf *n;
@@ -6187,7 +6266,7 @@ key_api_delete(struct socket *so, struct mbuf *m,
 	sah = key_getsah_ref(&saidx, CMP_HEAD);
 	if (sah != NULL) {
 		/* get a SA with SPI. */
-		sav = key_getsavbyspi(sah, sa0->sadb_sa_spi);
+		sav = key_lookup_and_remove_sav(sah, sa0->sadb_sa_spi, NULL);
 		key_sah_unref(sah);
 	}
 
@@ -6196,7 +6275,8 @@ key_api_delete(struct socket *so, struct mbuf *m,
 		return key_senderror(so, m, ENOENT);
 	}
 
-	key_destroy_sav_with_ref(sav);
+	key_wait_sav(sav);
+	key_destroy_sav(sav);
 	sav = NULL;
 
     {
@@ -7211,6 +7291,7 @@ key_api_register(struct socket *so, struct mbuf *m,
 		sup = (struct sadb_supported *)(mtod(n, char *) + off);
 		sup->sadb_supported_len = PFKEY_UNIT64(alen);
 		sup->sadb_supported_exttype = SADB_EXT_SUPPORTED_AUTH;
+		sup->sadb_supported_reserved = 0;
 		off += PFKEY_ALIGN8(sizeof(*sup));
 
 		for (i = 1; i <= SADB_AALG_MAX; i++) {
@@ -7226,6 +7307,7 @@ key_api_register(struct socket *so, struct mbuf *m,
 			key_getsizes_ah(aalgo, i, &minkeysize, &maxkeysize);
 			alg->sadb_alg_minbits = _BITS(minkeysize);
 			alg->sadb_alg_maxbits = _BITS(maxkeysize);
+			alg->sadb_alg_reserved = 0;
 			off += PFKEY_ALIGN8(sizeof(*alg));
 		}
 	}
@@ -7235,6 +7317,7 @@ key_api_register(struct socket *so, struct mbuf *m,
 		sup = (struct sadb_supported *)(mtod(n, char *) + off);
 		sup->sadb_supported_len = PFKEY_UNIT64(elen);
 		sup->sadb_supported_exttype = SADB_EXT_SUPPORTED_ENCRYPT;
+		sup->sadb_supported_reserved = 0;
 		off += PFKEY_ALIGN8(sizeof(*sup));
 
 		for (i = 1; i <= SADB_EALG_MAX; i++) {
@@ -7248,6 +7331,7 @@ key_api_register(struct socket *so, struct mbuf *m,
 			alg->sadb_alg_ivlen = ealgo->blocksize;
 			alg->sadb_alg_minbits = _BITS(ealgo->minkey);
 			alg->sadb_alg_maxbits = _BITS(ealgo->maxkey);
+			alg->sadb_alg_reserved = 0;
 			off += PFKEY_ALIGN8(sizeof(struct sadb_alg));
 		}
 	}
@@ -7345,8 +7429,8 @@ key_expire(struct secasvar *sav)
 	lt = mtod(m, struct sadb_lifetime *);
 	lt->sadb_lifetime_len = PFKEY_UNIT64(sizeof(struct sadb_lifetime));
 	lt->sadb_lifetime_exttype = SADB_EXT_LIFETIME_CURRENT;
-	percpu_foreach(sav->lft_c_counters_percpu,
-	    key_sum_lifetime_counters, sum);
+	percpu_foreach_xcall(sav->lft_c_counters_percpu,
+	    XC_HIGHPRI_IPL(IPL_SOFTNET), key_sum_lifetime_counters, sum);
 	lt->sadb_lifetime_allocations = sum[LIFETIME_COUNTER_ALLOCATIONS];
 	lt->sadb_lifetime_bytes = sum[LIFETIME_COUNTER_BYTES];
 	lt->sadb_lifetime_addtime =

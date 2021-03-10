@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.203 2019/05/07 10:22:54 hannken Exp $
+#	$NetBSD: Makefile,v 1.207 2021/02/06 16:14:55 dbj Exp $
 
 .include <bsd.own.mk>
 .include <bsd.endian.mk>
@@ -25,26 +25,25 @@
 TOOLS_BUILDRUMP?=no
 
 .if ${TOOLCHAIN_MISSING} == "no"
-. if defined(HAVE_GCC) && ${HAVE_GCC} > 0
-TOOLCHAIN_BITS= gmake .WAIT
+. if (defined(HAVE_GCC) && ${HAVE_GCC} > 0) || \
+     (defined(HAVE_GDB) && ${HAVE_GDB} > 0 && ${MKCROSSGDB:Uno} != "no")
+TOOLCHAIN_BITS+= gmake .WAIT
 TOOLCHAIN_BITS+= gmp .WAIT
 TOOLCHAIN_BITS+= mpfr .WAIT
 TOOLCHAIN_BITS+= mpc .WAIT
 . endif
-.endif
 
-.if ${TOOLCHAIN_MISSING} == "no"
 TOOLCHAIN_BITS+= binutils .WAIT
-.endif
 
-.if defined(HAVE_GCC) && ${HAVE_GCC} > 0
-. if ${TOOLCHAIN_MISSING} == "no"
+. if defined(HAVE_GCC) && ${HAVE_GCC} > 0
 TOOLCHAIN_BITS+= gcc
-.  if ${MKCROSSGDB:Uno} != "no" || make(obj)
-TOOLCHAIN_BITS+= gdb
-.  endif
-TOOLCHAIN_BITS+= .WAIT
 . endif
+
+. if defined(HAVE_GDB) && ${HAVE_GDB} > 0 && ${MKCROSSGDB:Uno} != "no"
+TOOLCHAIN_BITS+= gdb
+. endif
+
+TOOLCHAIN_BITS+= .WAIT
 .endif
 
 .if defined(HAVE_PCC)
@@ -100,10 +99,10 @@ SUBDIR+= cap_mkdb crunchgen ctags gencat hexdump \
 		makewhatis mtree nbperf .WAIT uudecode
 .endif
 
-SUBDIR+= cat rpcgen join lorder m4 mkdep tsort xz-include .WAIT yacc .WAIT awk .WAIT lex
-SUBDIR+= grep xz-lib pax .WAIT libprop
-
+SUBDIR+= cat rpcgen join lorder m4 mkdep tsort .WAIT yacc .WAIT awk .WAIT lex
 .if ${TOOLS_BUILDRUMP} == "no"
+SUBDIR+= xz-include .WAIT grep xz-lib pax .WAIT libprop
+
 SUBDIR += .WAIT texinfo \
 	.WAIT tic \
 	.WAIT ${TOOLCHAIN_BITS} \
@@ -118,7 +117,10 @@ SUBDIR += .WAIT texinfo \
 		.WAIT installboot \
 		pwd_mkdb strfile sunlabel vgrind zic
 .endif
-SUBDIR+= stat .WAIT config xz-bin
+SUBDIR+= stat .WAIT config
+.if ${TOOLS_BUILDRUMP} == "no"
+SUBDIR+= xz-bin
+.endif
 
 .if ${MKLLVM} != "no" || ${MKLLVMRT} != "no"
 SUBDIR+= \
@@ -135,12 +137,6 @@ SUBDIR+= \
 	.WAIT llvm-include .WAIT \
 	llvm-lib .WAIT \
 	llvm-clang
-. if ${MKLLD} != "no"
-SUBDIR+=	llvm-lld
-. endif
-. if ${MKMCLINKER} != "no"
-SUBDIR+=	llvm-mcld
-. endif
 .endif
 
 .if ${MKMAN} != "no" || ${MKDOC} != "no" || ${MKHTML} != "no"
@@ -217,7 +213,8 @@ SUBDIR+=	elftosb
 .endif
 
 .if ${MACHINE} == "evbarm" || ${MACHINE} == "evbmips" || \
-    ${MACHINE} == "evbppc" || ${MACHINE} == "sandpoint"
+    ${MACHINE} == "evbppc" || ${MACHINE} == "evbsh3" || \
+    ${MACHINE} == "sandpoint"
 SUBDIR+=	mkubootimage
 SUBDIR+=	libfdt .WAIT
 SUBDIR+=	dtc

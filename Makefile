@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.327 2019/06/14 09:12:42 martin Exp $
+#	$NetBSD: Makefile,v 1.333 2020/10/29 20:26:24 uwe Exp $
 
 #
 # This is the top-level makefile for building NetBSD. For an outline of
@@ -136,7 +136,11 @@ _SRC_TOP_OBJ_=
 # _SUBDIR is used to set SUBDIR, after removing directories that have
 # BUILD_${dir}=no, or that have no ${dir}/Makefile.
 #
-_SUBDIR=	tools .WAIT lib include external crypto/external bin
+_SUBDIR=	tools .WAIT lib
+.if ${MKLLVM} != "no"
+_SUBDIR+=	external/bsd/compiler_rt
+.endif
+_SUBDIR+=	include external crypto/external bin
 _SUBDIR+=	games libexec sbin usr.bin
 _SUBDIR+=	usr.sbin share sys etc tests compat
 _SUBDIR+=	.WAIT rescue .WAIT distrib regress
@@ -203,6 +207,7 @@ postinstall-fix-obsolete: .NOTMAIN .PHONY
 postinstall-fix-obsolete_stand: .NOTMAIN .PHONY
 	@echo "   === Removing obsolete files ==="
 	${_POSTINSTALL_ENV} ${HOST_SH} ${_POSTINSTALL} -s ${.CURDIR} ${_POSTINSTALL_X11} -d ${DESTDIR}/ fix obsolete_stand
+	${_POSTINSTALL_ENV} ${HOST_SH} ${_POSTINSTALL} -s ${.CURDIR} ${_POSTINSTALL_X11} -d ${DESTDIR}/ fix obsolete_stand_debug
 	@echo "   ==============================="
 
 
@@ -235,6 +240,12 @@ BUILDTARGETS+=	includes
 .endif
 BUILDTARGETS+=	do-lib
 BUILDTARGETS+=	do-compat-lib
+.if ${MKLLVM} != "no"
+BUILDTARGETS+=	do-sanitizer
+.if ${MKSANITIZER:Uno} == "yes"
+BUILDTARGETS+=	do-sanitizer-tools
+.endif
+.endif
 .if ${MKX11} != "no"
 BUILDTARGETS+=	do-x11
 .endif
@@ -469,6 +480,16 @@ do-lib: .PHONY .MAKE
 
 do-compat-lib: .PHONY .MAKE
 	${MAKEDIRTARGET} compat build_install BOOTSTRAP_SUBDIRS="../../../lib"
+
+do-sanitizer: .PHONY .MAKE
+	${MAKEDIRTARGET} external/bsd/compiler_rt build_install
+
+do-sanitizer-tools: .PHONY .MAKE
+.if !exists(${TOOLDIR}/lib/clang) && ${HAVE_LLVM:Uno} == "yes"
+	mkdir -p ${TOOLDIR}/lib/clang
+	cd ${DESTDIR}/usr/lib/clang && \
+		${TOOL_PAX} -rw . ${TOOLDIR}/lib/clang
+.endif
 
 do-top-obj: .PHONY .MAKE
 	${MAKEDIRTARGET} . obj NOSUBDIR=

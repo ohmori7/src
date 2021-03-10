@@ -1,4 +1,4 @@
-/*	$NetBSD: armreg.h,v 1.127 2019/05/02 15:37:10 skrll Exp $	*/
+/*	$NetBSD: armreg.h,v 1.130 2021/01/31 06:18:50 skrll Exp $	*/
 
 /*
  * Copyright (c) 1998, 2001 Ben Harris
@@ -529,7 +529,7 @@
 #define NMRR_WBWA	1		// write-back write-allocate
 #define NMRR_WT		2		// write-through
 #define NMRR_WB		3		// write-back
-#define PRRR_NOSn(n)	__BITS(24+2*(n))// Memory region is Inner Shareable
+#define PRRR_NOSn(n)	__BITS(24+(n))	// Memory region is Inner Shareable only
 #define PRRR_NS1	__BIT(19)	// Normal Shareable S=1 is Shareable
 #define PRRR_NS0	__BIT(18)	// Normal Shareable S=0 is Shareable
 #define PRRR_DS1	__BIT(17)	// Device Shareable S=1 is Shareable
@@ -745,17 +745,17 @@ static inline void armreg_##name##_write(uint64_t __val)	\
 }
 
 /* cp10 registers */
-ARMREG_READ_INLINE2(fpsid, "vmrs\t%0, fpsid") /* VFP System ID */
-ARMREG_READ_INLINE2(fpscr, "vmrs\t%0, fpscr") /* VFP Status/Control Register */
-ARMREG_WRITE_INLINE2(fpscr, "vmsr\tfpscr, %0") /* VFP Status/Control Register */
-ARMREG_READ_INLINE2(mvfr1, "vmrs\t%0, mvfr1") /* Media and VFP Feature Register 1 */
-ARMREG_READ_INLINE2(mvfr0, "vmrs\t%0, mvfr0") /* Media and VFP Feature Register 0 */
-ARMREG_READ_INLINE2(fpexc, "vmrs\t%0, fpexc") /* VFP Exception Register */
-ARMREG_WRITE_INLINE2(fpexc, "vmsr\tfpexc, %0") /* VFP Exception Register */
-ARMREG_READ_INLINE2(fpinst, "fmrx\t%0, fpinst") /* VFP Exception Instruction */
-ARMREG_WRITE_INLINE2(fpinst, "fmxr\tfpinst, %0") /* VFP Exception Instruction */
-ARMREG_READ_INLINE2(fpinst2, "fmrx\t%0, fpinst2") /* VFP Exception Instruction 2 */
-ARMREG_WRITE_INLINE2(fpinst2, "fmxr\tfpinst2, %0") /* VFP Exception Instruction 2 */
+ARMREG_READ_INLINE2(fpsid, ".fpu vfp\n vmrs\t%0, fpsid") /* VFP System ID */
+ARMREG_READ_INLINE2(fpscr, ".fpu vfp\n vmrs\t%0, fpscr") /* VFP Status/Control Register */
+ARMREG_WRITE_INLINE2(fpscr, ".fpu vfp\n vmsr\tfpscr, %0") /* VFP Status/Control Register */
+ARMREG_READ_INLINE2(mvfr1, ".fpu vfp\n vmrs\t%0, mvfr1") /* Media and VFP Feature Register 1 */
+ARMREG_READ_INLINE2(mvfr0, ".fpu vfp\n vmrs\t%0, mvfr0") /* Media and VFP Feature Register 0 */
+ARMREG_READ_INLINE2(fpexc, ".fpu vfp\n vmrs\t%0, fpexc") /* VFP Exception Register */
+ARMREG_WRITE_INLINE2(fpexc, ".fpu vfp\n vmsr\tfpexc, %0") /* VFP Exception Register */
+ARMREG_READ_INLINE2(fpinst, ".fpu vfp\n fmrx\t%0, fpinst") /* VFP Exception Instruction */
+ARMREG_WRITE_INLINE2(fpinst, ".fpu vfp\n vmsr\tfpinst, %0") /* VFP Exception Instruction */
+ARMREG_READ_INLINE2(fpinst2, ".fpu vfp\n fmrx\t%0, fpinst2") /* VFP Exception Instruction 2 */
+ARMREG_WRITE_INLINE2(fpinst2, ".fpu vfp\n fmxr\tfpinst2, %0") /* VFP Exception Instruction 2 */
 
 /* cp15 c0 registers */
 ARMREG_READ_INLINE(midr, "p15,0,%0,c0,c0,0") /* Main ID Register */
@@ -990,11 +990,41 @@ gtmr_cntv_ctl_write(uint32_t val)
 	armreg_cntv_ctl_write(val);
 }
 
+
+/*
+ * Counter-timer Physical Timer Control register
+ */
+
+static inline uint32_t
+gtmr_cntp_ctl_read(void)
+{
+
+	return armreg_cntp_ctl_read();
+}
+
 static inline void
 gtmr_cntp_ctl_write(uint32_t val)
 {
 
 	armreg_cntp_ctl_write(val);
+}
+
+
+/*
+ * Counter-timer Physical Timer TimerValue register
+ */
+static inline uint32_t
+gtmr_cntp_tval_read(void)
+{
+
+	return armreg_cntp_tval_read();
+}
+
+static inline void
+gtmr_cntp_tval_write(uint32_t val)
+{
+
+	armreg_cntp_tval_write(val);
 }
 
 
@@ -1013,6 +1043,24 @@ gtmr_cntv_tval_write(uint32_t val)
 {
 
 	armreg_cntv_tval_write(val);
+}
+
+
+/*
+ * Counter-timer Physical Timer CompareValue register
+ */
+static inline uint64_t
+gtmr_cntp_cval_read(void)
+{
+
+	return armreg_cntp_cval_read();
+}
+
+static inline void
+gtmr_cntp_cval_write(uint64_t val)
+{
+
+	armreg_cntp_cval_write(val);
 }
 
 

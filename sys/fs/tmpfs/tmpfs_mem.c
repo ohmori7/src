@@ -1,7 +1,7 @@
-/*	$NetBSD: tmpfs_mem.c,v 1.9 2016/08/22 23:07:36 skrll Exp $	*/
+/*	$NetBSD: tmpfs_mem.c,v 1.13 2020/06/11 19:20:46 ad Exp $	*/
 
 /*
- * Copyright (c) 2010, 2011 The NetBSD Foundation, Inc.
+ * Copyright (c) 2010, 2011, 2020 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
@@ -35,7 +35,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: tmpfs_mem.c,v 1.9 2016/08/22 23:07:36 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: tmpfs_mem.c,v 1.13 2020/06/11 19:20:46 ad Exp $");
 
 #include <sys/param.h>
 #include <sys/atomic.h>
@@ -97,12 +97,11 @@ tmpfs_mem_info(bool total)
 {
 	size_t size = 0;
 
-	/* XXX: unlocked */
 	size += uvmexp.swpgavail;
 	if (!total) {
 		size -= uvmexp.swpgonly;
 	}
-	size += uvmexp.free;
+	size += uvm_availmem(true);
 	size += uvmexp.filepages;
 	if (size > uvmexp.wired) {
 		size -= uvmexp.wired;
@@ -234,8 +233,8 @@ tmpfs_strname_free(struct tmpfs_mount *mp, char *str, size_t len)
 bool
 tmpfs_strname_neqlen(struct componentname *fcnp, struct componentname *tcnp)
 {
-	const size_t fln = roundup2(fcnp->cn_namelen, TMPFS_NAME_QUANTUM);
-	const size_t tln = roundup2(tcnp->cn_namelen, TMPFS_NAME_QUANTUM);
+	const size_t fln = fcnp->cn_namelen;
+	const size_t tln = tcnp->cn_namelen;
 
 	return (fln != tln) || memcmp(fcnp->cn_nameptr, tcnp->cn_nameptr, fln);
 }

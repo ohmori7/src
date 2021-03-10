@@ -1,4 +1,4 @@
-/*	$NetBSD: bootparamd.c,v 1.46 2011/08/30 20:29:41 joerg Exp $	*/
+/*	$NetBSD: bootparamd.c,v 1.48 2020/04/22 23:47:02 joerg Exp $	*/
 
 /*
  * This code is not copyright, and is placed in the public domain.
@@ -11,7 +11,7 @@
 
 #include <sys/cdefs.h>
 #ifndef lint
-__RCSID("$NetBSD: bootparamd.c,v 1.46 2011/08/30 20:29:41 joerg Exp $");
+__RCSID("$NetBSD: bootparamd.c,v 1.48 2020/04/22 23:47:02 joerg Exp $");
 #endif
 
 #include <sys/types.h>
@@ -55,8 +55,8 @@ static char domain_name[MAX_MACHINE_NAME];
 
 extern void bootparamprog_1(struct svc_req *, SVCXPRT *);
 
-int	_rpcsvcdirty = 0;
-int	_rpcpmstart = 0;
+extern int	_rpcsvcdirty;
+extern int	_rpcpmstart;
 int     debug = 0;
 int     dolog = 0;
 struct in_addr route_addr;

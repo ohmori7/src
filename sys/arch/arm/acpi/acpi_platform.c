@@ -1,4 +1,4 @@
-/* $NetBSD: acpi_platform.c,v 1.12 2019/05/23 15:54:28 ryo Exp $ */
+/* $NetBSD: acpi_platform.c,v 1.24 2021/02/12 12:26:09 jmcneill Exp $ */
 
 /*-
  * Copyright (c) 2018 The NetBSD Foundation, Inc.
@@ -35,13 +35,14 @@
 #include "opt_multiprocessor.h"
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: acpi_platform.c,v 1.12 2019/05/23 15:54:28 ryo Exp $");
+__KERNEL_RCSID(0, "$NetBSD: acpi_platform.c,v 1.24 2021/02/12 12:26:09 jmcneill Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/cpu.h>
 #include <sys/device.h>
 #include <sys/termios.h>
+#include <sys/kprintf.h>
 
 #include <dev/fdt/fdtvar.h>
 #include <arm/fdt/arm_fdtvar.h>
@@ -81,18 +82,38 @@ __KERNEL_RCSID(0, "$NetBSD: acpi_platform.c,v 1.12 2019/05/23 15:54:28 ryo Exp $
 
 #include <libfdt.h>
 
-#define	SPCR_BAUD_UNKNOWN			0
+#define	SPCR_BAUD_DEFAULT			0
 #define	SPCR_BAUD_9600				3
 #define	SPCR_BAUD_19200				4
 #define	SPCR_BAUD_57600				6
 #define	SPCR_BAUD_115200			7
 
+static const struct acpi_spcr_baud_rate {
+	uint8_t		id;
+	uint32_t	baud_rate;
+} acpi_spcr_baud_rates[] = {
+	{ SPCR_BAUD_DEFAULT,	0 },
+	{ SPCR_BAUD_9600,	9600 },
+	{ SPCR_BAUD_19200,	19200 },
+	{ SPCR_BAUD_57600,	57600 },
+	{ SPCR_BAUD_115200,	115200 },
+};
+
 extern struct bus_space arm_generic_bs_tag;
-extern struct bus_space arm_generic_a4x_bs_tag;
 
 #if NPLCOM > 0
 static struct plcom_instance plcom_console;
 #endif
+
+struct arm32_bus_dma_tag acpi_coherent_dma_tag;
+static struct arm32_dma_range acpi_coherent_ranges[] = {
+	[0] = {
+		.dr_sysbase = 0,
+		.dr_busbase = 0,
+		.dr_len = UINTPTR_MAX,
+	 	.dr_flags = _BUS_DMAMAP_COHERENT,
+	}
+};
 
 static const struct pmap_devmap *
 acpi_platform_devmap(void)
@@ -107,6 +128,100 @@ acpi_platform_devmap(void)
 static void
 acpi_platform_bootstrap(void)
 {
+	extern struct arm32_bus_dma_tag arm_generic_dma_tag;
+
+	acpi_coherent_dma_tag = arm_generic_dma_tag;
+	acpi_coherent_dma_tag._ranges = acpi_coherent_ranges;
+	acpi_coherent_dma_tag._nranges = __arraycount(acpi_coherent_ranges);
+}
+
+static void
+acpi_platform_attach_uart(ACPI_TABLE_SPCR *spcr)
+{
+#if NCOM > 0
+	struct com_regs regs;
+	bus_space_handle_t dummy_bsh;
+	u_int reg_shift;
+#endif
+	int baud_rate, n;
+
+	/*
+	 * Only MMIO access is supported today.
+	 */
+	if (spcr->SerialPort.SpaceId != ACPI_ADR_SPACE_SYSTEM_MEMORY) {
+		return;
+	}
+	if (le64toh(spcr->SerialPort.Address) == 0) {
+		return;
+	}
+
+	/*
+	 * Lookup SPCR baud rate.
+	 */
+	baud_rate = 0;
+	for (n = 0; n < __arraycount(acpi_spcr_baud_rates); n++) {
+		if (acpi_spcr_baud_rates[n].id == spcr->BaudRate) {
+			baud_rate = acpi_spcr_baud_rates[n].baud_rate;
+			break;
+		}
+	}
+
+	/*
+	 * Attach console device.
+	 */
+	switch (spcr->InterfaceType) {
+#if NPLCOM > 0
+	case ACPI_DBG2_ARM_PL011:
+	case ACPI_DBG2_ARM_SBSA_32BIT:
+	case ACPI_DBG2_ARM_SBSA_GENERIC:
+		plcom_console.pi_type = PLCOM_TYPE_PL011;
+		plcom_console.pi_iot = &arm_generic_bs_tag;
+		plcom_console.pi_iobase = le64toh(spcr->SerialPort.Address);
+		plcom_console.pi_size = PL011COM_UART_SIZE;
+		plcom_console.pi_flags = PLC_FLAG_32BIT_ACCESS;
+
+		plcomcnattach(&plcom_console, baud_rate, 0, TTYDEF_CFLAG, -1);
+		break;
+#endif
+
+#if NCOM > 0
+	case ACPI_DBG2_16550_COMPATIBLE:
+	case ACPI_DBG2_16550_SUBSET:
+		memset(&dummy_bsh, 0, sizeof(dummy_bsh));
+		if (ACPI_ACCESS_BIT_WIDTH(spcr->SerialPort.AccessWidth) == 8) {
+			reg_shift = 0;
+		} else {
+			reg_shift = 2;
+		}
+		com_init_regs_stride(&regs, &arm_generic_bs_tag, dummy_bsh,
+		    le64toh(spcr->SerialPort.Address), reg_shift);
+		comcnattach1(&regs, baud_rate, -1, COM_TYPE_NORMAL,
+		    TTYDEF_CFLAG);
+		break;
+
+	case ACPI_DBG2_BCM2835:
+		memset(&dummy_bsh, 0, sizeof(dummy_bsh));
+		com_init_regs_stride(&regs, &arm_generic_bs_tag, dummy_bsh,
+		    le64toh(spcr->SerialPort.Address) + 0x40, 2);
+		comcnattach1(&regs, baud_rate, -1, COM_TYPE_BCMAUXUART,
+		    TTYDEF_CFLAG);
+		cn_set_magic("+++++");
+		break;
+#endif
+
+	default:
+		printf("SPCR: kernel does not support interface type %#x\n",
+		    spcr->InterfaceType);
+		break;
+	}
+
+	/*
+	 * UEFI firmware may leave the console in an undesireable state (wrong
+	 * foreground/background colour, etc). Reset the terminal and clear
+	 * text from the cursor to the end of the screne.
+	 */
+        printf_flags(TOCONS|NOTSTAMP, "\033[0m");
+        printf_flags(TOCONS|NOTSTAMP, "\033[0J");
 }
 
 static void
@@ -117,73 +232,12 @@ acpi_platform_startup(void)
 #ifdef MULTIPROCESSOR
 	ACPI_TABLE_MADT *madt;
 #endif
-	int baud_rate;
 
 	/*
 	 * Setup serial console device
 	 */
 	if (ACPI_SUCCESS(acpi_table_find(ACPI_SIG_SPCR, (void **)&spcr))) {
-
-		switch (spcr->BaudRate) {
-		case SPCR_BAUD_9600:
-			baud_rate = 9600;
-			break;
-		case SPCR_BAUD_19200:
-			baud_rate = 19200;
-			break;
-		case SPCR_BAUD_57600:
-			baud_rate = 57600;
-			break;
-		case SPCR_BAUD_115200:
-		case SPCR_BAUD_UNKNOWN:
-		default:
-			baud_rate = 115200;
-			break;
-		}
-
-		if (spcr->SerialPort.SpaceId == ACPI_ADR_SPACE_SYSTEM_MEMORY &&
-		    spcr->SerialPort.Address != 0) {
-			switch (spcr->InterfaceType) {
-#if NPLCOM > 0
-			case ACPI_DBG2_ARM_PL011:
-			case ACPI_DBG2_ARM_SBSA_32BIT:
-			case ACPI_DBG2_ARM_SBSA_GENERIC:
-				plcom_console.pi_type = PLCOM_TYPE_PL011;
-				plcom_console.pi_iot = &arm_generic_bs_tag;
-				plcom_console.pi_iobase = spcr->SerialPort.Address;
-				plcom_console.pi_size = PL011COM_UART_SIZE;
-				if (spcr->InterfaceType == ACPI_DBG2_ARM_SBSA_32BIT) {
-					plcom_console.pi_flags = PLC_FLAG_32BIT_ACCESS;
-				} else {
-					plcom_console.pi_flags = ACPI_ACCESS_BIT_WIDTH(spcr->SerialPort.AccessWidth) == 8 ?
-					    0 : PLC_FLAG_32BIT_ACCESS;
-				}
-
-				plcomcnattach(&plcom_console, baud_rate, 0, TTYDEF_CFLAG, -1);
-				break;
-#endif
-#if NCOM > 0
-			case ACPI_DBG2_16550_COMPATIBLE:
-			case ACPI_DBG2_16550_SUBSET:
-				if (ACPI_ACCESS_BIT_WIDTH(spcr->SerialPort.AccessWidth) == 8) {
-					comcnattach(&arm_generic_bs_tag, spcr->SerialPort.Address, baud_rate, -1,
-					    COM_TYPE_NORMAL, TTYDEF_CFLAG);
-				} else {
-					comcnattach(&arm_generic_a4x_bs_tag, spcr->SerialPort.Address, baud_rate, -1,
-					    COM_TYPE_NORMAL, TTYDEF_CFLAG);
-				}
-				break;
-			case ACPI_DBG2_BCM2835:
-				comcnattach(&arm_generic_a4x_bs_tag, spcr->SerialPort.Address + 0x40, baud_rate, -1,
-				    COM_TYPE_BCMAUXUART, TTYDEF_CFLAG);
-				cn_set_magic("+++++");
-				break;
-#endif
-			default:
-				printf("SPCR: kernel does not support interface type %#x\n", spcr->InterfaceType);
-				break;
-			}
-		}
+		acpi_platform_attach_uart(spcr);
 		acpi_table_unmap((ACPI_TABLE_HEADER *)spcr);
 	}
 
@@ -191,8 +245,9 @@ acpi_platform_startup(void)
 	 * Initialize PSCI 0.2+ if implemented
 	 */
 	if (ACPI_SUCCESS(acpi_table_find(ACPI_SIG_FADT, (void **)&fadt))) {
-		if (fadt->ArmBootFlags & ACPI_FADT_PSCI_COMPLIANT) {
-			if (fadt->ArmBootFlags & ACPI_FADT_PSCI_USE_HVC) {
+		const uint16_t boot_flags = le16toh(fadt->ArmBootFlags);
+		if ((boot_flags & ACPI_FADT_PSCI_COMPLIANT) != 0) {
+			if ((boot_flags & ACPI_FADT_PSCI_USE_HVC) != 0) {
 				psci_init(psci_call_hvc);
 			} else {
 				psci_init(psci_call_smc);
@@ -206,10 +261,11 @@ acpi_platform_startup(void)
 	 * Count CPUs
 	 */
 	if (ACPI_SUCCESS(acpi_table_find(ACPI_SIG_MADT, (void **)&madt))) {
-		char *end = (char *)madt + madt->Header.Length;
+		char *end = (char *)madt + le32toh(madt->Header.Length);
 		char *where = (char *)madt + sizeof(ACPI_TABLE_MADT);
 		while (where < end) {
-			ACPI_SUBTABLE_HEADER *subtable = (ACPI_SUBTABLE_HEADER *)where;
+			ACPI_SUBTABLE_HEADER *subtable =
+			    (ACPI_SUBTABLE_HEADER *)where;
 			if (subtable->Type == ACPI_MADT_TYPE_GENERIC_INTERRUPT)
 				arm_cpu_max++;
 			where += subtable->Length;
@@ -222,34 +278,41 @@ acpi_platform_startup(void)
 static void
 acpi_platform_init_attach_args(struct fdt_attach_args *faa)
 {
-	extern struct arm32_bus_dma_tag arm_generic_dma_tag;
 	extern struct bus_space arm_generic_bs_tag;
-	extern struct bus_space arm_generic_a4x_bs_tag;
 
 	faa->faa_bst = &arm_generic_bs_tag;
-	faa->faa_a4x_bst = &arm_generic_a4x_bs_tag;
-	faa->faa_dmat = &arm_generic_dma_tag;
+	faa->faa_dmat = &acpi_coherent_dma_tag;
 }
 
 static void
 acpi_platform_device_register(device_t self, void *aux)
 {
+	/* XXX Not ideal, but the only reasonable solution atm. */
+	acpi_device_register(self, aux);
+	fdtbus_device_register(self, aux);
+
 #if NCOM > 0
 	prop_dictionary_t prop = device_properties(self);
+	ACPI_STATUS rv;
 
 	if (device_is_a(self, "com")) {
 		ACPI_TABLE_SPCR *spcr;
 
-		if (ACPI_FAILURE(acpi_table_find(ACPI_SIG_SPCR, (void **)&spcr)))
+		rv = acpi_table_find(ACPI_SIG_SPCR, (void **)&spcr);
+		if (ACPI_FAILURE(rv)) {
 			return;
+		}
 
-		if (spcr->SerialPort.SpaceId != ACPI_ADR_SPACE_SYSTEM_MEMORY)
+		if (spcr->SerialPort.SpaceId != ACPI_ADR_SPACE_SYSTEM_MEMORY) {
 			goto spcr_unmap;
-		if (spcr->SerialPort.Address == 0)
+		}
+		if (le64toh(spcr->SerialPort.Address) == 0) {
 			goto spcr_unmap;
+		}
 		if (spcr->InterfaceType != ACPI_DBG2_16550_COMPATIBLE &&
-		    spcr->InterfaceType != ACPI_DBG2_16550_SUBSET)
+		    spcr->InterfaceType != ACPI_DBG2_16550_SUBSET) {
 			goto spcr_unmap;
+		}
 
 		if (device_is_a(device_parent(self), "puc")) {
 			const struct puc_attach_args * const paa = aux;
@@ -259,8 +322,10 @@ acpi_platform_device_register(device_t self, void *aux)
 			pci_decompose_tag(paa->pc, paa->tag, &b, &d, &f);
 
 			if (spcr->PciSegment == s && spcr->PciBus == b &&
-			    spcr->PciDevice == d && spcr->PciFunction == f)
-				prop_dictionary_set_bool(prop, "force_console", true);
+			    spcr->PciDevice == d && spcr->PciFunction == f) {
+				prop_dictionary_set_bool(prop,
+				    "force_console", true);
+			}
 		}
 
 		if (device_is_a(device_parent(self), "acpi")) {
@@ -268,16 +333,21 @@ acpi_platform_device_register(device_t self, void *aux)
 			struct acpi_resources res;
 			struct acpi_mem *mem;
 
-			if (ACPI_FAILURE(acpi_resource_parse(self, aa->aa_node->ad_handle, "_CRS",
-			    &res, &acpi_resource_parse_ops_quiet)))
+			if (ACPI_FAILURE(acpi_resource_parse(self,
+					 aa->aa_node->ad_handle, "_CRS", &res,
+					 &acpi_resource_parse_ops_quiet))) {
 				goto spcr_unmap;
+			}
 
 			mem = acpi_res_mem(&res, 0);
-			if (mem == NULL)
+			if (mem == NULL) {
 				goto crs_cleanup;
+			}
 
-			if (mem->ar_base == spcr->SerialPort.Address)
-				prop_dictionary_set_bool(prop, "force_console", true);
+			if (mem->ar_base == le64toh(spcr->SerialPort.Address)) {
+				prop_dictionary_set_bool(prop,
+				    "force_console", true);
+			}
 
 crs_cleanup:
 			acpi_resource_cleanup(&res);
@@ -317,4 +387,4 @@ static const struct arm_platform acpi_platform = {
 	.ap_uart_freq = acpi_platform_uart_freq,
 };
 
-ARM_PLATFORM(virt, "netbsd,generic-acpi", &acpi_platform);
+ARM_PLATFORM(acpi, "netbsd,generic-acpi", &acpi_platform);

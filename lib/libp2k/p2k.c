@@ -1,4 +1,4 @@
-/*	$NetBSD: p2k.c,v 1.70 2017/04/26 03:02:48 riastradh Exp $	*/
+/*	$NetBSD: p2k.c,v 1.73 2020/02/23 15:46:38 ad Exp $	*/
 
 /*
  * Copyright (c) 2007, 2008, 2009  Antti Kantee.  All Rights Reserved.
@@ -157,7 +157,7 @@ static volatile sig_atomic_t dodump;
 static void
 dumpmp(struct puffs_usermount *pu)
 {
-	struct statvfs svfsb;
+	struct puffs_statvfs svfsb;
 
 	if (dodump && p2k_fs_statvfs(pu, &svfsb) == 0) {
 		rump_pub_vfs_mount_print(svfsb.f_mntonname, dodump-1);
@@ -586,12 +586,14 @@ p2k_setup_diskfs(struct p2k_mount *p2m, const char *vfsname,
 }
 
 int
-p2k_fs_statvfs(struct puffs_usermount *pu, struct statvfs *sbp)
+p2k_fs_statvfs(struct puffs_usermount *pu, struct puffs_statvfs *sbp)
 {
 	struct p2k_mount *p2m = puffs_getspecific(pu);
 	struct mount *mp = p2m->p2m_mp;
+	struct statvfs sb;
+	puffs_statvfs_to_statvfs(sbp, &sb);
 
-	return rump_pub_vfs_statvfs(mp, sbp);
+	return rump_pub_vfs_statvfs(mp, &sb);
 }
 
 /*ARGSUSED*/
@@ -606,7 +608,7 @@ p2k_fs_unmount(struct puffs_usermount *pu, int flags)
 
 	if (fs) {
 		if (ukfs_release(fs, 0) != 0) {
-			struct statvfs svfsb;
+			struct puffs_statvfs svfsb;
 
 			if (p2m->p2m_hasdebug
 			    && p2k_fs_statvfs(pu, &svfsb) == 0) {
@@ -789,7 +791,7 @@ do_makenode(struct puffs_usermount *pu, struct p2k_node *p2n_dir,
 	struct p2k_node *p2n;
 	struct componentname *cn;
 	struct vattr *va_x;
-	struct vnode *vp;
+	struct vnode *vp = NULL;
 	int rv;
 
 	p2n = malloc(sizeof(*p2n));
@@ -1384,7 +1386,7 @@ p2k_node_inactive(struct puffs_usermount *pu, puffs_cookie_t opc)
 	 * a way to regain the data from "stable storage".
 	 */
 	if (!p2m->p2m_imtmpfsman) {
-		rump_pub_vp_interlock(vp);
+		rump_pub_vp_vmobjlock(vp, 1);
 		RUMP_VOP_PUTPAGES(vp, 0, 0,
 		    PGO_ALLPAGES|PGO_CLEANIT|PGO_FREE);
 	}

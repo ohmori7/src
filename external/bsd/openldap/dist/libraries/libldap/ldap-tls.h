@@ -1,10 +1,10 @@
-/*	$NetBSD: ldap-tls.h,v 1.1.1.5 2018/02/06 01:53:08 christos Exp $	*/
+/*	$NetBSD: ldap-tls.h,v 1.2 2020/08/11 13:15:37 christos Exp $	*/
 
 /*  ldap-tls.h - TLS defines & prototypes internal to the LDAP library */
 /* $OpenLDAP$ */
 /* This work is part of OpenLDAP Software <http://www.openldap.org/>.
  *
- * Copyright 2008-2017 The OpenLDAP Foundation.
+ * Copyright 2008-2020 The OpenLDAP Foundation.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without

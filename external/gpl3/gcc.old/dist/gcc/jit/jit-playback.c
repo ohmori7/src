@@ -1,5 +1,5 @@
 /* Internals of libgccjit: classes for playing back recorded API calls.
-   Copyright (C) 2013-2016 Free Software Foundation, Inc.
+   Copyright (C) 2013-2018 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -37,6 +37,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "context.h"
 #include "fold-const.h"
 #include "gcc.h"
+#include "diagnostic.h"
 
 #include <pthread.h>
 
@@ -210,10 +211,9 @@ playback::context::
 get_type (enum gcc_jit_types type_)
 {
   tree type_node = get_tree_node_for_type (type_);
-  if (NULL == type_node)
+  if (type_node == NULL)
     {
-      add_error (NULL,
-		 "unrecognized (enum gcc_jit_types) value: %i", type_);
+      add_error (NULL, "unrecognized (enum gcc_jit_types) value: %i", type_);
       return NULL;
     }
 
@@ -628,6 +628,22 @@ new_string_literal (const char *value)
   return new rvalue (this, t_addr);
 }
 
+/* Construct a playback::rvalue instance (wrapping a tree) for a
+   vector.  */
+
+playback::rvalue *
+playback::context::new_rvalue_from_vector (location *,
+					   type *type,
+					   const auto_vec<rvalue *> &elements)
+{
+  vec<constructor_elt, va_gc> *v;
+  vec_alloc (v, elements.length ());
+  for (unsigned i = 0; i < elements.length (); ++i)
+    CONSTRUCTOR_APPEND_ELT (v, NULL_TREE, elements[i]->as_tree ());
+  tree t_ctor = build_constructor (type->as_tree (), v);
+  return new rvalue (this, t_ctor);
+}
+
 /* Coerce a tree expression into a boolean tree expression.  */
 
 tree
@@ -853,7 +869,8 @@ playback::rvalue *
 playback::context::
 build_call (location *loc,
 	    tree fn_ptr,
-	    const auto_vec<rvalue *> *args)
+	    const auto_vec<rvalue *> *args,
+	    bool require_tail_call)
 {
   vec<tree, va_gc> *tree_args;
   vec_alloc (tree_args, args->length ());
@@ -867,9 +884,13 @@ build_call (location *loc,
   tree fn_type = TREE_TYPE (fn);
   tree return_type = TREE_TYPE (fn_type);
 
-  return new rvalue (this,
-		     build_call_vec (return_type,
-				     fn_ptr, tree_args));
+  tree call = build_call_vec (return_type,
+			      fn_ptr, tree_args);
+
+  if (require_tail_call)
+    CALL_EXPR_MUST_TAIL_CALL (call) = 1;
+
+  return new rvalue (this, call);
 
   /* see c-typeck.c: build_function_call
      which calls build_function_call_vec
@@ -889,7 +910,8 @@ playback::rvalue *
 playback::context::
 new_call (location *loc,
 	  function *func,
-	  const auto_vec<rvalue *> *args)
+	  const auto_vec<rvalue *> *args,
+	  bool require_tail_call)
 {
   tree fndecl;
 
@@ -901,7 +923,7 @@ new_call (location *loc,
 
   tree fn = build1 (ADDR_EXPR, build_pointer_type (fntype), fndecl);
 
-  return build_call (loc, fn, args);
+  return build_call (loc, fn, args, require_tail_call);
 }
 
 /* Construct a playback::rvalue instance (wrapping a tree) for a
@@ -911,12 +933,13 @@ playback::rvalue *
 playback::context::
 new_call_through_ptr (location *loc,
 		      rvalue *fn_ptr,
-		      const auto_vec<rvalue *> *args)
+		      const auto_vec<rvalue *> *args,
+		      bool require_tail_call)
 {
   gcc_assert (fn_ptr);
   tree t_fn_ptr = fn_ptr->as_tree ();
 
-  return build_call (loc, t_fn_ptr, args);
+  return build_call (loc, t_fn_ptr, args, require_tail_call);
 }
 
 /* Construct a tree for a cast.  */
@@ -1085,6 +1108,32 @@ new_dereference (tree ptr,
   if (loc)
     set_tree_location (datum, loc);
   return datum;
+}
+
+/* Construct a playback::type instance (wrapping a tree)
+   with the given alignment.  */
+
+playback::type *
+playback::type::
+get_aligned (size_t alignment_in_bytes) const
+{
+  tree t_new_type = build_variant_type_copy (m_inner);
+
+  SET_TYPE_ALIGN (t_new_type, alignment_in_bytes * BITS_PER_UNIT);
+  TYPE_USER_ALIGN (t_new_type) = 1;
+
+  return new type (t_new_type);
+}
+
+/* Construct a playback::type instance (wrapping a tree)
+   for the given vector type.  */
+
+playback::type *
+playback::type::
+get_vector (size_t num_units) const
+{
+  tree t_new_type = build_vector_type (m_inner, num_units);
+  return new type (t_new_type);
 }
 
 /* Construct a playback::lvalue instance (wrapping a tree) for a
@@ -1320,6 +1369,20 @@ new_block (const char *name)
   block *result = new playback::block (this, name);
   m_blocks.safe_push (result);
   return result;
+}
+
+/* Construct a playback::rvalue instance wrapping an ADDR_EXPR for
+   this playback::function.  */
+
+playback::rvalue *
+playback::function::get_address (location *loc)
+{
+  tree t_fndecl = as_fndecl ();
+  tree t_fntype = TREE_TYPE (t_fndecl);
+  tree t_fnptr = build1 (ADDR_EXPR, build_pointer_type (t_fntype), t_fndecl);
+  if (loc)
+    m_ctxt->set_tree_location (t_fnptr, loc);
+  return new rvalue (m_ctxt, t_fnptr);
 }
 
 /* Build a statement list for the function as a whole out of the
@@ -1625,12 +1688,7 @@ add_case (tree *ptr_t_switch_body,
 
 /* Add a switch statement to the function's statement list.
 
-   My initial attempt at implementing this constructed a TREE_VEC
-   of the cases and set it as SWITCH_LABELS (switch_expr).  However,
-   gimplify.c:gimplify_switch_expr is set up to deal with SWITCH_BODY, and
-   doesn't have any logic for gimplifying SWITCH_LABELS.
-
-   Hence we create a switch body, and populate it with case labels, each
+   We create a switch body, and populate it with case labels, each
    followed by a goto to the desired block.  */
 
 void
@@ -1658,18 +1716,12 @@ add_switch (location *loc,
     {
       tree t_low_value = c->m_min_value->as_tree ();
       tree t_high_value = c->m_max_value->as_tree ();
-      add_case (&t_switch_body,
-		t_low_value,
-		t_high_value,
-		c->m_dest_block);
+      add_case (&t_switch_body, t_low_value, t_high_value, c->m_dest_block);
     }
   /* Default label. */
-  add_case (&t_switch_body,
-	    NULL_TREE, NULL_TREE,
-	    default_block);
+  add_case (&t_switch_body, NULL_TREE, NULL_TREE, default_block);
 
-  tree switch_stmt = build3 (SWITCH_EXPR, t_type, t_expr,
-			     t_switch_body, NULL_TREE);
+  tree switch_stmt = build2 (SWITCH_EXPR, t_type, t_expr, t_switch_body);
   if (loc)
     set_tree_location (switch_stmt, loc);
   add_stmt (switch_stmt);
@@ -1996,7 +2048,7 @@ playback::compile_to_file::copy_file (const char *src_path,
   /* Use stat on the filedescriptor to get the mode,
      so that we can copy it over (in particular, the
      "executable" bits).  */
-  if (-1 == fstat (fileno (f_in), &stat_buf))
+  if (fstat (fileno (f_in), &stat_buf) == -1)
     {
       add_error (NULL,
 		 "unable to fstat %s: %s",
@@ -2060,7 +2112,7 @@ playback::compile_to_file::copy_file (const char *src_path,
 
   /* Set the permissions of the copy to those of the original file,
      in particular the "executable" bits.  */
-  if (-1 == fchmod (fileno (f_out), stat_buf.st_mode))
+  if (fchmod (fileno (f_out), stat_buf.st_mode) == -1)
     add_error (NULL,
 	       "error setting mode of %s: %s",
 	       dst_path,
@@ -2086,7 +2138,7 @@ playback::context::acquire_mutex ()
   /* Acquire the big GCC mutex. */
   JIT_LOG_SCOPE (get_logger ());
   pthread_mutex_lock (&jit_mutex);
-  gcc_assert (NULL == active_playback_ctxt);
+  gcc_assert (active_playback_ctxt == NULL);
   active_playback_ctxt = this;
 }
 
@@ -2831,6 +2883,43 @@ add_error_va (location *loc, const char *fmt, va_list ap)
 {
   m_recording_ctxt->add_error_va (loc ? loc->get_recording_loc () : NULL,
 				  fmt, ap);
+}
+
+/* Report a diagnostic up to the jit context as an error,
+   so that the compilation is treated as a failure.
+   For now, any kind of diagnostic is treated as an error by the jit
+   API.  */
+
+void
+playback::context::
+add_diagnostic (struct diagnostic_context *diag_context,
+		struct diagnostic_info *diagnostic)
+{
+  /* At this point the text has been formatted into the pretty-printer's
+     output buffer.  */
+  pretty_printer *pp = diag_context->printer;
+  const char *text = pp_formatted_text (pp);
+
+  /* Get location information (if any) from the diagnostic.
+     The recording::context::add_error[_va] methods require a
+     recording::location.  We can't lookup the playback::location
+     from the file/line/column since any playback location instances
+     may have been garbage-collected away by now, so instead we create
+     another recording::location directly.  */
+  location_t gcc_loc = diagnostic_location (diagnostic);
+  recording::location *rec_loc = NULL;
+  if (gcc_loc)
+    {
+      expanded_location exploc = expand_location (gcc_loc);
+      if (exploc.file)
+	rec_loc = m_recording_ctxt->new_location (exploc.file,
+						  exploc.line,
+						  exploc.column,
+						  false);
+    }
+
+  m_recording_ctxt->add_error (rec_loc, "%s", text);
+  pp_clear_output_area (pp);
 }
 
 /* Dealing with the linemap API.  */

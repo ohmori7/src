@@ -7,13 +7,13 @@
 
 #include <sys/cdefs.h>
 
-__KERNEL_RCSID(0, "$NetBSD: gemini_ipi.c,v 1.6 2012/10/27 17:17:38 chs Exp $");
+__KERNEL_RCSID(0, "$NetBSD: gemini_ipi.c,v 1.9 2020/11/20 18:10:07 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/device.h>
 #include <sys/intr.h>
-#include <sys/malloc.h>
+#include <sys/kmem.h>
 #include <arch/arm/gemini/gemini_obiovar.h>
 #include <arch/arm/gemini/gemini_ipivar.h>
 #include <arch/arm/gemini/gemini_reg.h>
@@ -103,12 +103,7 @@ gemini_ipi_intrq_insert(gemini_ipi_softc_t *sc, int (*func)(void *), void *arg)
 {
 	gemini_ipi_intrq_t *iqp;
 
-        iqp = malloc(sizeof(*iqp), M_DEVBUF, M_NOWAIT|M_ZERO);
-        if (iqp == NULL) {
-		printf("gemini_ipi_intrq_insert: malloc failed\n");
-		return NULL;
-	}
-
+        iqp = kmem_zalloc(sizeof(*iqp), KM_SLEEP);
         iqp->iq_func = func;
         iqp->iq_arg = arg;
         SIMPLEQ_INSERT_TAIL(&sc->sc_intrq, iqp, iq_q);
@@ -125,7 +120,7 @@ gemini_ipi_intrq_remove(gemini_ipi_softc_t *sc, void *cookie)
 		if ((void *)iqp == cookie) {
 			SIMPLEQ_REMOVE(&sc->sc_intrq,
 				iqp, gemini_ipi_intrq, iq_q);
-			free(iqp, M_DEVBUF);
+			kmem_free(iqp, sizeof(*iqp));
 			return;
 		}
 	}
@@ -154,12 +149,6 @@ ipi_intr_establish(int (*func)(void *), void *arg)
 		return NULL;
 
 	ih = gemini_ipi_intrq_insert(sc, func, arg);
-#ifdef DEBUG
-        if (ih == NULL)
-		panic("%s: gemini_ipi_intrq_insert failed",
-			device_xname(sc->sc_dev));
-#endif
-
 	return ih;
 }
 
@@ -169,7 +158,7 @@ ipi_intr_disestablish(void *ih)
         gemini_ipi_softc_t *sc = gemini_ipi_sc;
 
 	if (sc == NULL)
-		panic("%s: NULL gemini_ipi_sc", device_xname(sc->sc_dev));
+		panic("NULL gemini_ipi_sc");
 
         gemini_ipi_intrq_remove(sc, ih);
 }

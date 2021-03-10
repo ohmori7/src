@@ -1,4 +1,4 @@
-/*	$NetBSD: in6_l2tp.c,v 1.17 2018/09/03 02:33:31 knakahara Exp $	*/
+/*	$NetBSD: in6_l2tp.c,v 1.21 2021/02/19 14:52:00 christos Exp $	*/
 
 /*
  * Copyright (c) 2017 Internet Initiative Japan Inc.
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: in6_l2tp.c,v 1.17 2018/09/03 02:33:31 knakahara Exp $");
+__KERNEL_RCSID(0, "$NetBSD: in6_l2tp.c,v 1.21 2021/02/19 14:52:00 christos Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_l2tp.h"
@@ -58,6 +58,7 @@ __KERNEL_RCSID(0, "$NetBSD: in6_l2tp.c,v 1.17 2018/09/03 02:33:31 knakahara Exp 
 
 #include <netinet/ip6.h>
 #include <netinet6/ip6_var.h>
+#include <netinet6/ip6_private.h>
 #include <netinet6/in6_l2tp.h>
 
 #ifdef ALTQ
@@ -90,7 +91,8 @@ int
 in6_l2tp_output(struct l2tp_variant *var, struct mbuf *m)
 {
 	struct rtentry *rt;
-	struct l2tp_ro *lro;
+	struct route *ro_pc;
+	kmutex_t *lock_pc;
 	struct l2tp_softc *sc;
 	struct ifnet *ifp;
 	struct sockaddr_in6 *sin6_src = satosin6(var->lv_psrc);
@@ -191,35 +193,26 @@ in6_l2tp_output(struct l2tp_variant *var, struct mbuf *m)
 	M_PREPEND(m, sizeof(struct ip6_hdr), M_DONTWAIT);
 	if (m == NULL)
 		return ENOBUFS;
-	if (IP_HDR_ALIGNED_P(mtod(m, void *)) == 0) {
-		m = m_copyup(m, sizeof(struct ip), 0);
-	} else {
-		if (m->m_len < sizeof(struct ip6_hdr))
-			m = m_pullup(m, sizeof(struct ip6_hdr));
-	}
-	if (m == NULL)
+	if (M_GET_ALIGNED_HDR(&m, struct ip6_hdr, false) != 0)
 		return ENOBUFS;
 	memcpy(mtod(m, struct ip6_hdr *), &ip6hdr, sizeof(struct ip6_hdr));
 
-	lro = percpu_getref(sc->l2tp_ro_percpu);
-	mutex_enter(lro->lr_lock);
-	if ((rt = rtcache_lookup(&lro->lr_ro, var->lv_pdst)) == NULL) {
-		mutex_exit(lro->lr_lock);
-		percpu_putref(sc->l2tp_ro_percpu);
+	if_tunnel_get_ro(sc->l2tp_ro_percpu, &ro_pc, &lock_pc);
+	if ((rt = rtcache_lookup(ro_pc, var->lv_pdst)) == NULL) {
+		if_tunnel_put_ro(sc->l2tp_ro_percpu, lock_pc);
 		m_freem(m);
 		return ENETUNREACH;
 	}
 
 	/* If the route constitutes infinite encapsulation, punt. */
 	if (rt->rt_ifp == ifp) {
-		rtcache_unref(rt, &lro->lr_ro);
-		rtcache_free(&lro->lr_ro);
-		mutex_exit(lro->lr_lock);
-		percpu_putref(sc->l2tp_ro_percpu);
+		rtcache_unref(rt, ro_pc);
+		rtcache_free(ro_pc);
+		if_tunnel_put_ro(sc->l2tp_ro_percpu, lock_pc);
 		m_freem(m);
 		return ENETUNREACH;	/* XXX */
 	}
-	rtcache_unref(rt, &lro->lr_ro);
+	rtcache_unref(rt, ro_pc);
 
 	/*
 	 * To avoid inappropriate rewrite of checksum,
@@ -227,14 +220,13 @@ in6_l2tp_output(struct l2tp_variant *var, struct mbuf *m)
 	 */
 	m->m_pkthdr.csum_flags  = 0;
 
-	error = ip6_output(m, 0, &lro->lr_ro, 0, NULL, NULL, NULL);
-	mutex_exit(lro->lr_lock);
-	percpu_putref(sc->l2tp_ro_percpu);
+	error = ip6_output(m, 0, ro_pc, 0, NULL, NULL, NULL);
+	if_tunnel_put_ro(sc->l2tp_ro_percpu, lock_pc);
 	return(error);
 
 looped:
 	if (error)
-		ifp->if_oerrors++;
+		if_statinc(ifp, if_oerrors);
 
 	return error;
 }

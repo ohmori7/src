@@ -1,10 +1,10 @@
-#	$NetBSD: Makefile.inc,v 1.20 2017/05/21 15:28:39 riastradh Exp $
+#	$NetBSD: Makefile.inc,v 1.26 2020/11/12 17:53:43 nia Exp $
 
 .include <bsd.own.mk>
 
 USE_FORT?= yes	# network client and server
-CWARNFLAGS.clang+=	-Wno-empty-body -Wno-format-extra-args
-
+CWARNFLAGS.clang+=	-Wno-empty-body -Wno-format-extra-args \
+			-Wno-string-plus-int -Wno-string-compare
 WARNS?=	0
 
 PFIX_DISTDIR=	${NETBSDSRCDIR}/external/ibm-public/postfix/dist
@@ -25,8 +25,8 @@ CPPFLAGS+= -DDEF_CLIENT_SASL_TYPE=\"saslc\"
 DPADD+= ${LIBSASCL} ${LIBSSL}
 LDADD+= -lsaslc -lssl
 .if (${MKKERBEROS} != "no")
-DPADD+= ${LIBGSSAPI}
-LDADD+= -lgssapi
+DPADD+= ${LIBGSSAPI} ${LIBCRYPTO}
+LDADD+= -lgssapi -lcrypto
 .endif
 
 .if defined(HAVE_PCC)
@@ -45,8 +45,8 @@ CPPFLAGS+=	-DNO_IPV6
 # SQLite support.
 CPPFLAGS+=	-DHAS_SQLITE
 . if defined(PROG)
-DPADD+=		${LIBSQLITE3}
-LDADD+=		-lsqlite3
+DPADD+=		${LIBSQLITE3} ${LIBM}
+LDADD+=		-lsqlite3 -lm
 .endif
 
 # LDAP support.

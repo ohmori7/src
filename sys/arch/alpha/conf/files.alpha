@@ -1,4 +1,4 @@
-# $NetBSD: files.alpha,v 1.190 2019/03/25 19:24:30 maxv Exp $
+# $NetBSD: files.alpha,v 1.194 2020/10/21 13:31:50 christos Exp $
 #
 # alpha-specific configuration info
 
@@ -54,6 +54,10 @@ attach	mainbus at root
 device	cpu { }				# not really optional
 attach	cpu at mainbus
 file	arch/alpha/alpha/cpu.c		cpu
+
+device	qemu
+attach	qemu at mainbus
+file	arch/alpha/alpha/qemu.c		qemu
 
 #
 # Machine-independent I2O drivers.
@@ -443,7 +447,7 @@ include "compat/ossaudio/files.ossaudio"
 # needs to be before its isa and pci attachments.  This answer is
 # non-optimal, but I don't have a better answer right now.
 
-# PCIC pcmcia contoller
+# PCIC pcmcia controller
 # XXX this needs to be done very late, so it's done here.  This feels
 # like a kludge, but it might be for the best.
 

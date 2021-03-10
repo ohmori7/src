@@ -1,4 +1,4 @@
-/*	$NetBSD: prompt.c,v 1.4 2018/10/31 23:49:34 jmcneill Exp $	*/
+/*	$NetBSD: prompt.c,v 1.6 2020/01/25 10:09:46 jmcneill Exp $	*/
 
 /*
  * Copyright (c) 1996, 1997
@@ -40,6 +40,7 @@
 #include "efiboot.h"
 
 #include <lib/libsa/net.h>
+#include <sys/syslimits.h>
 
 #define	POLL_FREQ	10
 
@@ -74,23 +75,27 @@ awaitkey(int timeout, int tell)
 {
 	int i = timeout * POLL_FREQ;
 	int last_secs = -1, secs;
+	int last_len = -1, n;
+	char buf[32];
 	char c = 0;
 
 	for (;;) {
 		if (tell) {
-			char buf[32];
 			int len;
 
 			secs = (i + POLL_FREQ - 1) / POLL_FREQ;
 			if (secs != last_secs) {
-				len = snprintf(buf, sizeof(buf), "%d seconds. ", (i + POLL_FREQ - 1) / POLL_FREQ);
-				if (len > 0 && len < sizeof(buf)) {
+				if (last_len != -1) {
 					char *p = buf;
-					printf("%s", buf);
-					while (*p)
+					for (n = 0; n < last_len; n++)
 						*p++ = '\b';
+					*p = '\0';
 					printf("%s", buf);
 				}
+				len = snprintf(buf, sizeof(buf), "%d seconds. ", (i + POLL_FREQ - 1) / POLL_FREQ);
+				if (len > 0 && len < sizeof(buf))
+					printf("%s", buf);
+				last_len = len;
 				last_secs = secs;
 			}
 		}
@@ -108,8 +113,16 @@ awaitkey(int timeout, int tell)
 	}
 
 out:
-	if (tell)
+	if (tell) {
+		if (last_len != -1) {
+			char *p = buf;
+			for (n = 0; n < last_len; n++)
+				*p++ = '\b';
+			*p = '\0';
+			printf("%s", buf);
+		}
 		printf("0 seconds.     \n");
+	}
 
 	return c;
 }
@@ -136,7 +149,7 @@ docommand(char *arg)
 __dead void
 bootprompt(void)
 {
-	char input[80];
+	char input[LINE_MAX];
 
 	for (;;) {
 		char *c = input;

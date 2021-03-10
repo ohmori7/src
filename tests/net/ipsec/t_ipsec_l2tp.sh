@@ -1,4 +1,4 @@
-#	$NetBSD: t_ipsec_l2tp.sh,v 1.7 2017/08/03 03:16:27 ozaki-r Exp $
+#	$NetBSD: t_ipsec_l2tp.sh,v 1.9 2020/02/17 08:46:10 ozaki-r Exp $
 #
 # Copyright (c) 2017 Internet Initiative Japan Inc.
 # All rights reserved.
@@ -62,6 +62,15 @@ make_l2tp_pktstr()
 	echo "$src > $dst: $proto_cap.+$proto_str"
 }
 
+wait_for_all_dad_completions()
+{
+
+	for sock in $SOCK_LOCAL $SOCK_TUN_LOCAL $SOCK_TUN_REMOTE $SOCK_REMOTE; do
+		export RUMP_SERVER=$sock
+		atf_check -s exit:0 rump.ifconfig -w 10
+	done
+}
+
 test_ipsec4_l2tp()
 {
 	local mode=$1
@@ -96,12 +105,12 @@ test_ipsec4_l2tp()
 	export RUMP_SERVER=$SOCK_TUN_LOCAL
 	atf_check -s exit:0 rump.ifconfig shmif0 up
 	atf_check -s exit:0 rump.ifconfig shmif1 $ip_gwlo_tun/24
-	atf_check -s exit:0 rump.ifconfig l2tp0 create
+	rump_server_add_iface $SOCK_TUN_LOCAL l2tp0
 	atf_check -s exit:0 rump.ifconfig l2tp0 \
 	    tunnel $ip_gwlo_tun $ip_gwre_tun
 	atf_check -s exit:0 rump.ifconfig l2tp0 session 1234 4321
 	atf_check -s exit:0 rump.ifconfig l2tp0 up
-	atf_check -s exit:0 rump.ifconfig bridge0 create
+	rump_server_add_iface $SOCK_TUN_LOCAL bridge0
 	atf_check -s exit:0 rump.ifconfig bridge0 up
 	atf_check -s exit:0 $HIJACKING brconfig bridge0 add l2tp0
 	atf_check -s exit:0 $HIJACKING brconfig bridge0 add shmif0
@@ -109,20 +118,20 @@ test_ipsec4_l2tp()
 	export RUMP_SERVER=$SOCK_TUN_REMOTE
 	atf_check -s exit:0 rump.ifconfig shmif0 up
 	atf_check -s exit:0 rump.ifconfig shmif1 $ip_gwre_tun/24
-	atf_check -s exit:0 rump.ifconfig l2tp0 create
+	rump_server_add_iface $SOCK_TUN_REMOTE l2tp0
 	atf_check -s exit:0 rump.ifconfig l2tp0 \
 	    tunnel $ip_gwre_tun $ip_gwlo_tun
 	atf_check -s exit:0 rump.ifconfig l2tp0 session 4321 1234
 	atf_check -s exit:0 rump.ifconfig l2tp0 up
-	atf_check -s exit:0 rump.ifconfig bridge0 create
+	rump_server_add_iface $SOCK_TUN_REMOTE bridge0
 	atf_check -s exit:0 rump.ifconfig bridge0 up
 	atf_check -s exit:0 $HIJACKING brconfig bridge0 add l2tp0
 	atf_check -s exit:0 $HIJACKING brconfig bridge0 add shmif0
 
 	export RUMP_SERVER=$SOCK_REMOTE
 	atf_check -s exit:0 rump.ifconfig shmif0 $ip_remote/24
-	# Run ifconfig -w 10 just once for optimization
-	atf_check -s exit:0 rump.ifconfig -w 10
+
+	wait_for_all_dad_completions
 
 	extract_new_packets $BUS_TUNNEL > $outfile
 
@@ -238,12 +247,12 @@ test_ipsec6_l2tp()
 	export RUMP_SERVER=$SOCK_TUN_LOCAL
 	atf_check -s exit:0 rump.ifconfig shmif0 up
 	atf_check -s exit:0 rump.ifconfig shmif1 inet6 $ip_gwlo_tun/64
-	atf_check -s exit:0 rump.ifconfig l2tp0 create
+	rump_server_add_iface $SOCK_TUN_LOCAL l2tp0
 	atf_check -s exit:0 rump.ifconfig l2tp0 \
 	    tunnel $ip_gwlo_tun $ip_gwre_tun
 	atf_check -s exit:0 rump.ifconfig l2tp0 session 1234 4321
 	atf_check -s exit:0 rump.ifconfig l2tp0 up
-	atf_check -s exit:0 rump.ifconfig bridge0 create
+	rump_server_add_iface $SOCK_TUN_LOCAL bridge0
 	atf_check -s exit:0 rump.ifconfig bridge0 up
 	atf_check -s exit:0 $HIJACKING brconfig bridge0 add l2tp0
 	atf_check -s exit:0 $HIJACKING brconfig bridge0 add shmif0
@@ -251,20 +260,20 @@ test_ipsec6_l2tp()
 	export RUMP_SERVER=$SOCK_TUN_REMOTE
 	atf_check -s exit:0 rump.ifconfig shmif0 up
 	atf_check -s exit:0 rump.ifconfig shmif1 inet6 $ip_gwre_tun/64
-	atf_check -s exit:0 rump.ifconfig l2tp0 create
+	rump_server_add_iface $SOCK_TUN_REMOTE l2tp0
 	atf_check -s exit:0 rump.ifconfig l2tp0 \
 	    tunnel $ip_gwre_tun $ip_gwlo_tun
 	atf_check -s exit:0 rump.ifconfig l2tp0 session 4321 1234
 	atf_check -s exit:0 rump.ifconfig l2tp0 up
-	atf_check -s exit:0 rump.ifconfig bridge0 create
+	rump_server_add_iface $SOCK_TUN_REMOTE bridge0
 	atf_check -s exit:0 rump.ifconfig bridge0 up
 	atf_check -s exit:0 $HIJACKING brconfig bridge0 add l2tp0
 	atf_check -s exit:0 $HIJACKING brconfig bridge0 add shmif0
 
 	export RUMP_SERVER=$SOCK_REMOTE
 	atf_check -s exit:0 rump.ifconfig shmif0 inet6 $ip_remote
-	# Run ifconfig -w 10 just once for optimization
-	atf_check -s exit:0 rump.ifconfig -w 10
+
+	wait_for_all_dad_completions
 
 	extract_new_packets $BUS_TUNNEL > $outfile
 

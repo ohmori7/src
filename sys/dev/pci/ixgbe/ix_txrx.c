@@ -1,4 +1,4 @@
-/* $NetBSD: ix_txrx.c,v 1.52 2019/02/22 06:49:15 msaitoh Exp $ */
+/* $NetBSD: ix_txrx.c,v 1.67 2021/03/09 10:03:18 msaitoh Exp $ */
 
 /******************************************************************************
 
@@ -148,7 +148,7 @@ ixgbe_legacy_start_locked(struct ifnet *ifp, struct tx_ring *txr)
 		return (ENETDOWN);
 	if (txr->txr_no_space)
 		return (ENETDOWN);
-	
+
 	while (!IFQ_IS_EMPTY(&ifp->if_snd)) {
 		if (txr->tx_avail <= IXGBE_QUEUE_MIN_FREE)
 			break;
@@ -233,7 +233,7 @@ ixgbe_mq_start(struct ifnet *ifp, struct mbuf *m)
 		i = (cpu_index(curcpu()) % ncpu) % adapter->num_queues;
 
 	/* Check for a hung queue and pick alternative */
-	if (((1 << i) & adapter->active_queues) == 0)
+	if (((1ULL << i) & adapter->active_queues) == 0)
 		i = ffs64(adapter->active_queues);
 
 	txr = &adapter->tx_rings[i];
@@ -266,8 +266,11 @@ ixgbe_mq_start(struct ifnet *ifp, struct mbuf *m)
 				    &txr->wq_cookie, curcpu());
 			} else
 				percpu_putref(adapter->txr_wq_enqueued);
-		} else
+		} else {
+			kpreempt_disable();
 			softint_schedule(txr->txr_si);
+			kpreempt_enable();
+		}
 	}
 
 	return (0);
@@ -537,12 +540,11 @@ retry:
 	++txr->total_packets.ev_count;
 	IXGBE_WRITE_REG(&adapter->hw, txr->tail, i);
 
-	/*
-	 * XXXX NOMPSAFE: ifp->if_data should be percpu.
-	 */
-	ifp->if_obytes += m_head->m_pkthdr.len;
+	net_stat_ref_t nsr = IF_STAT_GETREF(ifp);
+	if_statadd_ref(nsr, if_obytes, m_head->m_pkthdr.len);
 	if (m_head->m_flags & M_MCAST)
-		ifp->if_omcasts++;
+		if_statinc_ref(nsr, if_omcasts);
+	IF_STAT_PUTREF(ifp);
 
 	/* Mark queue as having work */
 	if (txr->busy == 0)
@@ -607,14 +609,8 @@ ixgbe_allocate_transmit_buffers(struct tx_ring *txr)
 		goto fail;
 	}
 
-	txr->tx_buffers =
-	    (struct ixgbe_tx_buf *) malloc(sizeof(struct ixgbe_tx_buf) *
-	    adapter->num_tx_desc, M_DEVBUF, M_NOWAIT | M_ZERO);
-	if (txr->tx_buffers == NULL) {
-		aprint_error_dev(dev, "Unable to allocate tx_buffer memory\n");
-		error = ENOMEM;
-		goto fail;
-	}
+	txr->tx_buffers = malloc(sizeof(struct ixgbe_tx_buf) *
+	    adapter->num_tx_desc, M_DEVBUF, M_WAITOK | M_ZERO);
 
 	/* Create the descriptor buffer dma maps */
 	txbuf = txr->tx_buffers;
@@ -694,7 +690,7 @@ ixgbe_setup_transmit_ring(struct tx_ring *txr)
 		 * netmap_idx_n2k() handles wraparounds properly.
 		 */
 		if ((adapter->feat_en & IXGBE_FEATURE_NETMAP) && slot) {
-			int si = netmap_idx_n2k(&na->tx_rings[txr->me], i);
+			int si = netmap_idx_n2k(na->tx_rings[txr->me], i);
 			netmap_load_map(na, txr->txtag,
 			    txbuf->map, NMB(na, slot + si));
 		}
@@ -923,7 +919,7 @@ ixgbe_tx_ctx_setup(struct tx_ring *txr, struct mbuf *mp,
 	vlan_macip_lens |= ip_hlen;
 
 	/* No support for offloads for non-L4 next headers */
- 	switch (ipproto) {
+	switch (ipproto) {
 	case IPPROTO_TCP:
 		if (mp->m_pkthdr.csum_flags &
 		    (M_CSUM_TCPv4 | M_CSUM_TCPv6))
@@ -1105,7 +1101,7 @@ ixgbe_txeof(struct tx_ring *txr)
 	if ((adapter->feat_en & IXGBE_FEATURE_NETMAP) &&
 	    (adapter->ifp->if_capenable & IFCAP_NETMAP)) {
 		struct netmap_adapter *na = NA(adapter->ifp);
-		struct netmap_kring *kring = &na->tx_rings[txr->me];
+		struct netmap_kring *kring = na->tx_rings[txr->me];
 		txd = txr->tx_base;
 		bus_dmamap_sync(txr->txdma.dma_tag, txr->txdma.dma_map,
 		    BUS_DMASYNC_POSTREAD);
@@ -1123,9 +1119,8 @@ ixgbe_txeof(struct tx_ring *txr)
 		 * - the driver ignores tx interrupts unless netmap_mitigate=0
 		 *   or the slot has the DD bit set.
 		 */
-		if (!netmap_mitigate ||
-		    (kring->nr_kflags < kring->nkr_num_slots &&
-		     txd[kring->nr_kflags].wb.status & IXGBE_TXD_STAT_DD)) {
+		if (kring->nr_kflags < kring->nkr_num_slots &&
+		    txd[kring->nr_kflags].wb.status & IXGBE_TXD_STAT_DD) {
 			netmap_tx_irq(ifp, txr->me);
 		}
 		return false;
@@ -1195,7 +1190,7 @@ ixgbe_txeof(struct tx_ring *txr)
 		}
 		++txr->packets;
 		++processed;
-		++ifp->if_opackets;
+		if_statinc(ifp, if_opackets);
 
 		/* Try the next packet */
 		++txd;
@@ -1324,6 +1319,11 @@ ixgbe_setup_hw_rsc(struct rx_ring *rxr)
  *      exhaustion are unnecessary, if an mbuf cannot be obtained
  *      it just returns, keeping its placeholder, thus it can simply
  *      be recalled to try again.
+ *
+ *   XXX NetBSD TODO:
+ *    - The ixgbe_rxeof() function always preallocates mbuf cluster (jcl),
+ *      so the ixgbe_refresh_mbufs() function can be simplified.
+ *
  ************************************************************************/
 static void
 ixgbe_refresh_mbufs(struct rx_ring *rxr, int limit)
@@ -1364,7 +1364,9 @@ ixgbe_refresh_mbufs(struct rx_ring *rxr, int limit)
 			error = bus_dmamap_load_mbuf(rxr->ptag->dt_dmat,
 			    rxbuf->pmap, mp, BUS_DMA_NOWAIT);
 			if (error != 0) {
-				printf("Refresh mbufs: payload dmamap load failure - %d\n", error);
+				device_printf(adapter->dev, "Refresh mbufs: "
+				    "payload dmamap load failure - %d\n",
+				    error);
 				m_free(mp);
 				rxbuf->buf = NULL;
 				goto update;
@@ -1405,19 +1407,13 @@ update:
 static int
 ixgbe_allocate_receive_buffers(struct rx_ring *rxr)
 {
-	struct	adapter     *adapter = rxr->adapter;
+	struct adapter      *adapter = rxr->adapter;
 	device_t            dev = adapter->dev;
 	struct ixgbe_rx_buf *rxbuf;
 	int                 bsize, error;
 
 	bsize = sizeof(struct ixgbe_rx_buf) * rxr->num_desc;
-	rxr->rx_buffers = (struct ixgbe_rx_buf *)malloc(bsize, M_DEVBUF,
-	    M_NOWAIT | M_ZERO);
-	if (rxr->rx_buffers == NULL) {
-		aprint_error_dev(dev, "Unable to allocate rx_buffer memory\n");
-		error = ENOMEM;
-		goto fail;
-	}
+	rxr->rx_buffers = malloc(bsize, M_DEVBUF, M_WAITOK | M_ZERO);
 
 	error = ixgbe_dma_tag_create(
 	         /*      parent */ adapter->osdep.dmat,
@@ -1511,7 +1507,7 @@ ixgbe_setup_receive_ring(struct rx_ring *rxr)
 	 * Assume all of rxr->ptag are the same.
 	 */
 	ixgbe_jcl_reinit(adapter, rxr->ptag->dt_dmat, rxr,
-	    (2 * adapter->num_rx_desc), adapter->rx_mbuf_sz);
+	    adapter->num_jcl, adapter->rx_mbuf_sz);
 
 	IXGBE_RX_LOCK(rxr);
 
@@ -1530,7 +1526,7 @@ ixgbe_setup_receive_ring(struct rx_ring *rxr)
 		 * an mbuf, so end the block with a continue;
 		 */
 		if ((adapter->feat_en & IXGBE_FEATURE_NETMAP) && slot) {
-			int sj = netmap_idx_n2k(&na->rx_rings[rxr->me], j);
+			int sj = netmap_idx_n2k(na->rx_rings[rxr->me], j);
 			uint64_t paddr;
 			void *addr;
 
@@ -1564,7 +1560,6 @@ ixgbe_setup_receive_ring(struct rx_ring *rxr)
 		    htole64(rxbuf->pmap->dm_segs[0].ds_addr);
 		rxbuf->addr = htole64(rxbuf->pmap->dm_segs[0].ds_addr);
 	}
-
 
 	/* Setup our descriptor indices */
 	rxr->next_to_check = 0;
@@ -1621,6 +1616,7 @@ ixgbe_setup_receive_structures(struct adapter *adapter)
 	struct rx_ring *rxr = adapter->rx_rings;
 	int            j;
 
+	INIT_DEBUGOUT("ixgbe_setup_receive_structures");
 	for (j = 0; j < adapter->num_queues; j++, rxr++)
 		if (ixgbe_setup_receive_ring(rxr))
 			goto fail;
@@ -1689,6 +1685,10 @@ ixgbe_free_receive_buffers(struct rx_ring *rxr)
 				rxbuf->pmap = NULL;
 			}
 		}
+
+		/* NetBSD specific. See ixgbe_netbsd.c */
+		ixgbe_jcl_destroy(adapter, rxr);
+
 		if (rxr->rx_buffers != NULL) {
 			free(rxr->rx_buffers, M_DEVBUF);
 			rxr->rx_buffers = NULL;
@@ -1804,7 +1804,9 @@ ixgbe_rxeof(struct ix_queue *que)
 	struct ixgbe_rx_buf	*rbuf, *nbuf;
 	int			i, nextp, processed = 0;
 	u32			staterr = 0;
-	u32			count = adapter->rx_process_limit;
+	u32			count = 0;
+	u32			limit = adapter->rx_process_limit;
+	bool			discard_multidesc = false;
 #ifdef RSS
 	u16			pkt_info;
 #endif
@@ -1821,13 +1823,21 @@ ixgbe_rxeof(struct ix_queue *que)
 	}
 #endif /* DEV_NETMAP */
 
-	for (i = rxr->next_to_check; count != 0;) {
+	/*
+	 * The max number of loop is rx_process_limit. If discard_multidesc is
+	 * true, continue processing to not to send broken packet to the upper
+	 * layer.
+	 */
+	for (i = rxr->next_to_check;
+	     (count < limit) || (discard_multidesc == true);) {
+
 		struct mbuf *sendmp, *mp;
+		struct mbuf *newmp;
 		u32         rsc, ptype;
 		u16         len;
 		u16         vtag = 0;
 		bool        eop;
- 
+
 		/* Sync the ring. */
 		ixgbe_dmamap_sync(rxr->rxdma.dma_tag, rxr->rxdma.dma_map,
 		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
@@ -1841,7 +1851,7 @@ ixgbe_rxeof(struct ix_queue *que)
 		if ((staterr & IXGBE_RXD_STAT_DD) == 0)
 			break;
 
-		count--;
+		count++;
 		sendmp = NULL;
 		nbuf = NULL;
 		rsc = 0;
@@ -1862,8 +1872,37 @@ ixgbe_rxeof(struct ix_queue *que)
 #endif
 			rxr->rx_discarded.ev_count++;
 			ixgbe_rx_discard(rxr, i);
+			discard_multidesc = false;
 			goto next_desc;
 		}
+
+		/* pre-alloc new mbuf */
+		if (!discard_multidesc)
+			newmp = ixgbe_getjcl(&rxr->jcl_head, M_NOWAIT, MT_DATA,
+			    M_PKTHDR, rxr->mbuf_sz);
+		else
+			newmp = NULL;
+		if (newmp == NULL) {
+			rxr->no_jmbuf.ev_count++;
+			/*
+			 * Descriptor initialization is already done by the
+			 * above code (cur->wb.upper.status_error = 0).
+			 * So, we can reuse current rbuf->buf for new packet.
+			 *
+			 * Rewrite the buffer addr, see comment in
+			 * ixgbe_rx_discard().
+			 */
+			cur->read.pkt_addr = rbuf->addr;
+			m_freem(rbuf->fmp);
+			rbuf->fmp = NULL;
+			if (!eop) {
+				/* Discard the entire packet. */
+				discard_multidesc = true;
+			} else
+				discard_multidesc = false;
+			goto next_desc;
+		}
+		discard_multidesc = false;
 
 		bus_dmamap_sync(rxr->ptag->dt_dmat, rbuf->pmap, 0,
 		    rbuf->buf->m_pkthdr.len, BUS_DMASYNC_POSTREAD);
@@ -1913,7 +1952,8 @@ ixgbe_rxeof(struct ix_queue *que)
 		 */
 		sendmp = rbuf->fmp;
 		if (sendmp != NULL) {  /* secondary frag */
-			rbuf->buf = rbuf->fmp = NULL;
+			rbuf->buf = newmp;
+			rbuf->fmp = NULL;
 			mp->m_flags &= ~M_PKTHDR;
 			sendmp->m_pkthdr.len += mp->m_len;
 		} else {
@@ -1932,10 +1972,13 @@ ixgbe_rxeof(struct ix_queue *que)
 					sendmp->m_len = len;
 					rxr->rx_copies.ev_count++;
 					rbuf->flags |= IXGBE_RX_COPY;
+
+					m_freem(newmp);
 				}
 			}
 			if (sendmp == NULL) {
-				rbuf->buf = rbuf->fmp = NULL;
+				rbuf->buf = newmp;
+				rbuf->fmp = NULL;
 				sendmp = mp;
 			}
 
@@ -2225,30 +2268,15 @@ ixgbe_allocate_queues(struct adapter *adapter)
 
 	/* First, allocate the top level queue structs */
 	adapter->queues = (struct ix_queue *)malloc(sizeof(struct ix_queue) *
-            adapter->num_queues, M_DEVBUF, M_NOWAIT | M_ZERO);
-        if (adapter->queues == NULL) {
-		aprint_error_dev(dev, "Unable to allocate queue memory\n");
-                error = ENOMEM;
-                goto fail;
-        }
+	    adapter->num_queues, M_DEVBUF, M_WAITOK | M_ZERO);
 
 	/* Second, allocate the TX ring struct memory */
-	adapter->tx_rings = (struct tx_ring *)malloc(sizeof(struct tx_ring) *
-	    adapter->num_queues, M_DEVBUF, M_NOWAIT | M_ZERO);
-	if (adapter->tx_rings == NULL) {
-		aprint_error_dev(dev, "Unable to allocate TX ring memory\n");
-		error = ENOMEM;
-		goto tx_fail;
-	}
+	adapter->tx_rings = malloc(sizeof(struct tx_ring) *
+	    adapter->num_queues, M_DEVBUF, M_WAITOK | M_ZERO);
 
 	/* Third, allocate the RX ring */
 	adapter->rx_rings = (struct rx_ring *)malloc(sizeof(struct rx_ring) *
-	    adapter->num_queues, M_DEVBUF, M_NOWAIT | M_ZERO);
-	if (adapter->rx_rings == NULL) {
-		aprint_error_dev(dev, "Unable to allocate RX ring memory\n");
-		error = ENOMEM;
-		goto rx_fail;
-	}
+	    adapter->num_queues, M_DEVBUF, M_WAITOK | M_ZERO);
 
 	/* For the ring itself */
 	tsize = roundup2(adapter->num_tx_desc * sizeof(union ixgbe_adv_tx_desc),
@@ -2292,7 +2320,7 @@ ixgbe_allocate_queues(struct adapter *adapter)
 			    "Critical Failure setting up transmit buffers\n");
 			error = ENOMEM;
 			goto err_tx_desc;
-        	}
+		}
 		if (!(adapter->feat_en & IXGBE_FEATURE_LEGACY_TX)) {
 			/* Allocate a buf ring */
 			txr->txr_interq = pcq_create(IXGBE_BR_SIZE, KM_SLEEP);
@@ -2307,7 +2335,7 @@ ixgbe_allocate_queues(struct adapter *adapter)
 
 	/*
 	 * Next the RX queues...
-	 */ 
+	 */
 	rsize = roundup2(adapter->num_rx_desc * sizeof(union ixgbe_adv_rx_desc),
 	    DBA_ALIGN);
 	for (int i = 0; i < adapter->num_queues; i++, rxconf++) {
@@ -2368,10 +2396,28 @@ err_tx_desc:
 	for (txr = adapter->tx_rings; txconf > 0; txr++, txconf--)
 		ixgbe_dma_free(adapter, &txr->txdma);
 	free(adapter->rx_rings, M_DEVBUF);
-rx_fail:
 	free(adapter->tx_rings, M_DEVBUF);
-tx_fail:
 	free(adapter->queues, M_DEVBUF);
-fail:
 	return (error);
 } /* ixgbe_allocate_queues */
+
+/************************************************************************
+ * ixgbe_free_queues
+ *
+ *   Free descriptors for the transmit and receive rings, and then
+ *   the memory associated with each.
+ ************************************************************************/
+void
+ixgbe_free_queues(struct adapter *adapter)
+{
+	struct ix_queue *que;
+	int i;
+
+	ixgbe_free_transmit_structures(adapter);
+	ixgbe_free_receive_structures(adapter);
+	for (i = 0; i < adapter->num_queues; i++) {
+		que = &adapter->queues[i];
+		mutex_destroy(&que->dc_mtx);
+	}
+	free(adapter->queues, M_DEVBUF);
+} /* ixgbe_free_queues */

@@ -1,4 +1,4 @@
-/*	$NetBSD: rtld.c,v 1.197 2019/04/14 19:21:37 christos Exp $	 */
+/*	$NetBSD: rtld.c,v 1.207 2020/09/22 00:41:27 kamil Exp $	 */
 
 /*
  * Copyright 1996 John D. Polstra.
@@ -40,7 +40,7 @@
 
 #include <sys/cdefs.h>
 #ifndef lint
-__RCSID("$NetBSD: rtld.c,v 1.197 2019/04/14 19:21:37 christos Exp $");
+__RCSID("$NetBSD: rtld.c,v 1.207 2020/09/22 00:41:27 kamil Exp $");
 #endif /* not lint */
 
 #include <sys/param.h>
@@ -81,7 +81,7 @@ Elf_Addr        _rtld(Elf_Addr *, Elf_Addr);
  */
 static char    *error_message;	/* Message for dlopen(), or NULL */
 
-struct r_debug  _rtld_debug;	/* for GDB; */
+struct r_debug  _rtld_debug;	/* The SVR4 interface for the debugger */
 bool            _rtld_trust;	/* False for setuid and setgid programs */
 Obj_Entry      *_rtld_objlist;	/* Head of linked list of shared objects */
 Obj_Entry     **_rtld_objtail;	/* Link field of last object in list */
@@ -134,6 +134,7 @@ static void _rtld_objlist_clear(Objlist *);
 static void _rtld_unload_object(sigset_t *, Obj_Entry *, bool);
 static void _rtld_unref_dag(Obj_Entry *);
 static Obj_Entry *_rtld_obj_from_addr(const void *);
+static void _rtld_fill_dl_phdr_info(const Obj_Entry *, struct dl_phdr_info *);
 
 static inline void
 _rtld_call_initfini_function(const Obj_Entry *obj, Elf_Addr func, sigset_t *mask)
@@ -344,6 +345,7 @@ restart:
 static void
 _rtld_init(caddr_t mapbase, caddr_t relocbase, const char *execname)
 {
+	const Elf_Ehdr *ehdr;
 
 	/* Conjure up an Obj_Entry structure for the dynamic linker. */
 	_rtld_objself.path = __UNCONST(_rtld_path);
@@ -392,8 +394,14 @@ _rtld_init(caddr_t mapbase, caddr_t relocbase, const char *execname)
 	_rtld_objtail = &_rtld_objlist;
 	_rtld_objcount = 0;
 
+	_rtld_debug.r_version = R_DEBUG_VERSION;
 	_rtld_debug.r_brk = _rtld_debug_state;
 	_rtld_debug.r_state = RT_CONSISTENT;
+	_rtld_debug.r_ldbase = _rtld_objself.relocbase;
+
+	ehdr = (Elf_Ehdr *)mapbase;
+	_rtld_objself.phdr = (Elf_Phdr *)((char *)mapbase + ehdr->e_phoff);
+	_rtld_objself.phsize = ehdr->e_phnum * sizeof(_rtld_objself.phdr[0]);
 }
 
 /*
@@ -670,8 +678,8 @@ _rtld(Elf_Addr *sp, Elf_Addr relocbase)
 	/*
 	 * Get the actual dynamic linker pathname from the executable if
 	 * possible.  (It should always be possible.)  That ensures that
-	 * gdb will find the right dynamic linker even if a non-standard
-	 * one is being used.
+	 * the debugger will find the right dynamic linker even if a
+	 * non-standard one is being used.
 	 */
 	if (_rtld_objmain->interp != NULL &&
 	    strcmp(_rtld_objmain->interp, _rtld_objself.path) != 0) {
@@ -768,7 +776,7 @@ _rtld(Elf_Addr *sp, Elf_Addr relocbase)
 	if (real___mainprog_obj)
 		*real___mainprog_obj = _rtld_objmain;
 
-	_rtld_debug_state();	/* say hello to gdb! */
+	_rtld_debug_state();	/* say hello to the debugger! */
 
 	_rtld_exclusive_enter(&mask);
 
@@ -1092,16 +1100,17 @@ dlopen(const char *name, int mode)
 void *
 _rtld_objmain_sym(const char *name)
 {
-	unsigned long hash;
+	Elf_Hash hash;
 	const Elf_Sym *def;
 	const Obj_Entry *obj;
 	DoneList donelist;
 
-	hash = _rtld_elf_hash(name);
+	hash.sysv = _rtld_sysv_hash(name);
+	hash.gnu = _rtld_gnu_hash(name);
 	obj = _rtld_objmain;
 	_rtld_donelist_init(&donelist);
 
-	def = _rtld_symlook_list(name, hash, &_rtld_list_main, &obj, 0,
+	def = _rtld_symlook_list(name, &hash, &_rtld_list_main, &obj, 0,
 	    NULL, &donelist);
 
 	if (def != NULL)
@@ -1136,7 +1145,7 @@ static void *
 do_dlsym(void *handle, const char *name, const Ver_Entry *ventry, void *retaddr)
 {
 	const Obj_Entry *obj;
-	unsigned long hash;
+	Elf_Hash hash;
 	const Elf_Sym *def;
 	const Obj_Entry *defobj;
 	DoneList donelist;
@@ -1147,7 +1156,8 @@ do_dlsym(void *handle, const char *name, const Ver_Entry *ventry, void *retaddr)
 
 	lookup_mutex_enter();
 
-	hash = _rtld_elf_hash(name);
+	hash.sysv = _rtld_sysv_hash(name);
+	hash.gnu = _rtld_gnu_hash(name);
 	def = NULL;
 	defobj = NULL;
 
@@ -1164,7 +1174,7 @@ do_dlsym(void *handle, const char *name, const Ver_Entry *ventry, void *retaddr)
 
 		switch ((intptr_t)handle) {
 		case (intptr_t)NULL:	 /* Just the caller's shared object. */
-			def = _rtld_symlook_obj(name, hash, obj, flags, ventry);
+			def = _rtld_symlook_obj(name, &hash, obj, flags, ventry);
 			defobj = obj;
 			break;
 
@@ -1174,7 +1184,7 @@ do_dlsym(void *handle, const char *name, const Ver_Entry *ventry, void *retaddr)
 
 		case (intptr_t)RTLD_SELF:	/* Caller included */
 			for (; obj; obj = obj->next) {
-				if ((def = _rtld_symlook_obj(name, hash, obj,
+				if ((def = _rtld_symlook_obj(name, &hash, obj,
 				    flags, ventry)) != NULL) {
 					defobj = obj;
 					break;
@@ -1188,7 +1198,7 @@ do_dlsym(void *handle, const char *name, const Ver_Entry *ventry, void *retaddr)
 			 */
 			if (!def || ELF_ST_BIND(def->st_info) == STB_WEAK) {
 				const Elf_Sym *symp = _rtld_symlook_obj(name,
-				    hash, &_rtld_objself, flags, ventry);
+				    &hash, &_rtld_objself, flags, ventry);
 				if (symp != NULL) {
 					def = symp;
 					defobj = &_rtld_objself;
@@ -1197,7 +1207,7 @@ do_dlsym(void *handle, const char *name, const Ver_Entry *ventry, void *retaddr)
 			break;
 
 		case (intptr_t)RTLD_DEFAULT:
-			def = _rtld_symlook_default(name, hash, obj, &defobj,
+			def = _rtld_symlook_default(name, &hash, obj, &defobj,
 			    flags, ventry);
 			break;
 
@@ -1216,7 +1226,7 @@ do_dlsym(void *handle, const char *name, const Ver_Entry *ventry, void *retaddr)
 
 		if (obj->mainprog) {
 			/* Search main program and all libraries loaded by it */
-			def = _rtld_symlook_list(name, hash, &_rtld_list_main,
+			def = _rtld_symlook_list(name, &hash, &_rtld_list_main,
 			    &defobj, flags, ventry, &donelist);
 		} else {
 			Needed_Entry fake;
@@ -1228,7 +1238,7 @@ do_dlsym(void *handle, const char *name, const Ver_Entry *ventry, void *retaddr)
 			fake.name = 0;
 
 			_rtld_donelist_init(&depth);
-			def = _rtld_symlook_needed(name, hash, &fake, &defobj,
+			def = _rtld_symlook_needed(name, &hash, &fake, &defobj,
 			    flags, ventry, &donelist, &depth);
 		}
 
@@ -1295,7 +1305,7 @@ dlvsym(void *handle, const char *name, const char *version)
 	if (version != NULL) {
 		ver_entry.name = version;
 		ver_entry.file = NULL;
-		ver_entry.hash = _rtld_elf_hash(version);
+		ver_entry.hash = _rtld_sysv_hash(version);
 		ver_entry.flags = 0;
 		ventry = &ver_entry;
 	}
@@ -1433,6 +1443,26 @@ dlinfo(void *handle, int req, void *v)
 	return 0;
 }
 
+static void
+_rtld_fill_dl_phdr_info(const Obj_Entry *obj, struct dl_phdr_info *phdr_info)
+{
+
+	phdr_info->dlpi_addr = (Elf_Addr)obj->relocbase;
+	/* XXX: wrong but not fixing it yet */
+	phdr_info->dlpi_name = obj->path;
+	phdr_info->dlpi_phdr = obj->phdr;
+	phdr_info->dlpi_phnum = obj->phsize / sizeof(obj->phdr[0]);
+#if defined(__HAVE_TLS_VARIANT_I) || defined(__HAVE_TLS_VARIANT_II)
+	phdr_info->dlpi_tls_modid = obj->tlsindex;
+	phdr_info->dlpi_tls_data = obj->tlsinit;
+#else
+	phdr_info->dlpi_tls_modid = 0;
+	phdr_info->dlpi_tls_data = 0;
+#endif
+	phdr_info->dlpi_adds = _rtld_objloads;
+	phdr_info->dlpi_subs = _rtld_objloads - _rtld_objcount;
+}
+
 __strong_alias(__dl_iterate_phdr,dl_iterate_phdr);
 int
 dl_iterate_phdr(int (*callback)(struct dl_phdr_info *, size_t, void *), void *param)
@@ -1446,25 +1476,19 @@ dl_iterate_phdr(int (*callback)(struct dl_phdr_info *, size_t, void *), void *pa
 	_rtld_shared_enter();
 
 	for (obj = _rtld_objlist;  obj != NULL;  obj = obj->next) {
-		phdr_info.dlpi_addr = (Elf_Addr)obj->relocbase;
-		/* XXX: wrong but not fixing it yet */
-		phdr_info.dlpi_name = obj->path;
-		phdr_info.dlpi_phdr = obj->phdr;
-		phdr_info.dlpi_phnum = obj->phsize / sizeof(obj->phdr[0]);
-#if defined(__HAVE_TLS_VARIANT_I) || defined(__HAVE_TLS_VARIANT_II)
-		phdr_info.dlpi_tls_modid = obj->tlsindex;
-		phdr_info.dlpi_tls_data = obj->tlsinit;
-#else
-		phdr_info.dlpi_tls_modid = 0;
-		phdr_info.dlpi_tls_data = 0;
-#endif
-		phdr_info.dlpi_adds = _rtld_objloads;
-		phdr_info.dlpi_subs = _rtld_objloads - _rtld_objcount;
+		_rtld_fill_dl_phdr_info(obj, &phdr_info);
 
 		/* XXXlocking: exit point */
 		error = callback(&phdr_info, sizeof(phdr_info), param);
 		if (error)
 			break;
+	}
+
+	if (error == 0) {
+		_rtld_fill_dl_phdr_info(&_rtld_objself, &phdr_info);
+
+		/* XXXlocking: exit point */
+		error = callback(&phdr_info, sizeof(phdr_info), param);
 	}
 
 	_rtld_shared_exit();
@@ -1508,6 +1532,23 @@ __dl_cxa_refcount(void *addr, ssize_t delta)
 	}
 
 	_rtld_exclusive_exit(&mask);
+}
+
+pid_t __fork(void);
+
+__dso_public pid_t
+__locked_fork(int *my_errno)
+{
+	sigset_t mask;
+	pid_t result;
+
+	_rtld_exclusive_enter(&mask);
+	result = __fork();
+	if (result == -1)
+		*my_errno = errno;
+	_rtld_exclusive_exit(&mask);
+
+	return result;
 }
 
 /*
@@ -1654,7 +1695,7 @@ _rtld_shared_enter(void)
 		if (cur == (self | RTLD_EXCLUSIVE_MASK)) {
 			if (_rtld_mutex_may_recurse)
 				return;
-			_rtld_error("dead lock detected");
+			_rtld_error("%s: dead lock detected", __func__);
 			_rtld_die();
 		}
 		waiter = atomic_swap_uint(&_rtld_waiter_shared, self);
@@ -1718,7 +1759,7 @@ _rtld_exclusive_enter(sigset_t *mask)
 		membar_sync();
 		cur = _rtld_mutex;
 		if (cur == locked_value) {
-			_rtld_error("dead lock detected");
+			_rtld_error("%s: dead lock detected", __func__);
 			_rtld_die();
 		}
 		if (cur)
@@ -1751,13 +1792,25 @@ int
 _rtld_relro(const Obj_Entry *obj, bool wantmain)
 {
 #ifdef GNU_RELRO
-	if (obj->relro_size == 0)
+	/*
+	 * If our VM page size is larger than the page size used by the
+	 * linker when laying out the object, we could end up making data
+	 * read-only that is unintended.  Detect and avoid this situation.
+	 * It may mean we are unable to protect everything we'd like, but
+	 * it's better than crashing.
+	 */
+	uintptr_t relro_end = (uintptr_t)obj->relro_page + obj->relro_size;
+	uintptr_t relro_start = round_down((uintptr_t)obj->relro_page);
+	assert(relro_end >= relro_start);
+	size_t relro_size = round_down(relro_end) - relro_start;
+
+	if (relro_size == 0)
 		return 0;
 	if (wantmain != (obj ==_rtld_objmain))
 		return 0;
 
-	dbg(("RELRO %s %p %lx\n", obj->path, obj->relro_page, obj->relro_size));
-	if (mprotect(obj->relro_page, obj->relro_size, PROT_READ) == -1) {
+	dbg(("RELRO %s %p %zx\n", obj->path, (void *)relro_start, relro_size));
+	if (mprotect((void *)relro_start, relro_size, PROT_READ) == -1) {
 		_rtld_error("%s: Cannot enforce relro " "protection: %s",
 		    obj->path, xstrerror(errno));
 		return -1;

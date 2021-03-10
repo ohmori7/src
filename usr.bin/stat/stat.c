@@ -1,4 +1,4 @@
-/*	$NetBSD: stat.c,v 1.44 2019/02/04 08:07:33 mrg Exp $ */
+/*	$NetBSD: stat.c,v 1.46 2020/09/07 00:46:38 mrg Exp $ */
 
 /*
  * Copyright (c) 2002-2011 The NetBSD Foundation, Inc.
@@ -37,7 +37,7 @@
 
 #include <sys/cdefs.h>
 #if !defined(lint)
-__RCSID("$NetBSD: stat.c,v 1.44 2019/02/04 08:07:33 mrg Exp $");
+__RCSID("$NetBSD: stat.c,v 1.46 2020/09/07 00:46:38 mrg Exp $");
 #endif
 
 #if ! HAVE_NBTOOL_CONFIG_H
@@ -806,8 +806,8 @@ format1(const struct stat *st,
 			nsecs = st->st_ctimensec;
 #endif
 		}
-		/* FALLTHROUGH */
 #if HAVE_STRUCT_STAT_ST_BIRTHTIME
+		/* FALLTHROUGH */
 	case SHOW_st_btime:
 		if (!gottime) {
 			gottime = 1;
@@ -1072,6 +1072,8 @@ format1(const struct stat *st,
 	if ((flags & FLAG_POUND) != 0 && ofmt == FMTF_STRING) {
 		flags &= !FLAG_POUND;
 		strncpy(visbuf, sdata, prefixlen);
+		/* Avoid GCC warnings. */
+		visbuf[prefixlen] = 0;
 		strnvis(visbuf + prefixlen, sizeof(visbuf) - prefixlen,
 		    sdata + prefixlen, VIS_WHITE | VIS_OCTAL | VIS_CSTYLE);
 		sdata = visbuf;

@@ -1,4 +1,4 @@
-/*	$NetBSD: if_bgevar.h,v 1.24 2018/11/27 19:17:02 bouyer Exp $	*/
+/*	$NetBSD: if_bgevar.h,v 1.26 2020/02/01 06:17:23 thorpej Exp $	*/
 /*
  * Copyright (c) 2001 Wind River Systems
  * Copyright (c) 1997, 1998, 1999, 2001
@@ -321,7 +321,7 @@ struct bge_softc {
 #define BGE_STS_BIT(sc, x)	((sc)->bge_sts & (x))
 #define BGE_STS_SETBIT(sc, x)	((sc)->bge_sts |= (x))
 #define BGE_STS_CLRBIT(sc, x)	((sc)->bge_sts &= ~(x))
-	int			bge_if_flags;
+	u_short			bge_if_flags;
 	uint32_t		bge_flags;
 	uint32_t		bge_phy_flags;
 	int			bge_flowflags;
@@ -339,6 +339,7 @@ struct bge_softc {
 	struct evcnt bge_ev_rx_macctl;	/* receive MAC control packets */
 	struct evcnt bge_ev_xoffentered;/* XOFF state entered */
 #endif /* BGE_EVENT_COUNTERS */
+	uint64_t		bge_if_collisions;
 	int			bge_txcnt;
 	struct callout		bge_timeout;
 	int			bge_pending_rxintr_change;

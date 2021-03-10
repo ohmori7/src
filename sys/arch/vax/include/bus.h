@@ -1,4 +1,4 @@
-/*	$NetBSD: bus.h,v 1.33 2016/04/22 18:13:01 christos Exp $	*/
+/*	$NetBSD: bus.h,v 1.36 2021/01/23 19:38:08 christos Exp $	*/
 
 /*-
  * Copyright (c) 1996, 1997, 1998, 2001 The NetBSD Foundation, Inc.
@@ -96,11 +96,16 @@
 typedef paddr_t bus_addr_t;
 typedef psize_t bus_size_t;
 
+#define PRIxBUSADDR	PRIxPADDR
+#define PRIxBUSSIZE	PRIxPSIZE
+#define PRIuBUSSIZE	PRIuPSIZE
 /*
  * Access methods for bus resources and address space.
  */
 typedef	struct vax_bus_space *bus_space_tag_t;
 typedef	vaddr_t bus_space_handle_t;
+
+#define PRIxBSH		PRIxVADDR
 
 struct vax_bus_space {
 	/* cookie */
@@ -215,10 +220,6 @@ struct vax_bus_space {
 	 (__BUS_SPACE_ADDRESS_SANITY((h) + (o), uint32_t, "bus addr"),	\
 	    __USE(t), (*(volatile uint32_t *)((h) + (o))))
 
-#if 0	/* Cause a link error for bus_space_read_8 */
-#define	bus_space_read_8(t, h, o)	!!! bus_space_read_8 unimplemented !!!
-#endif
-
 /*
  *	void bus_space_read_multi_N(bus_space_tag_t tag,
  *	    bus_space_handle_t bsh, bus_size_t offset,
@@ -251,10 +252,6 @@ do {									\
 	__BUS_SPACE_ADDRESS_SANITY((h) + (o), uint32_t, "bus addr");	\
 	vax_mem_read_multi_4((t), (h), (o), (a), (c));		\
 } while (0)
-
-#if 0	/* Cause a link error for bus_space_read_multi_8 */
-#define	bus_space_read_multi_8	!!! bus_space_read_multi_8 unimplemented !!!
-#endif
 
 static __inline void
 vax_mem_read_multi_1(bus_space_tag_t t, bus_space_handle_t h, bus_size_t o,
@@ -322,11 +319,6 @@ do {									\
 	vax_mem_read_region_4((t), (h), (o), (a), (c));		\
 } while (0)
 
-#if 0	/* Cause a link error for bus_space_read_region_8 */
-#define	bus_space_read_region_8					\
-			!!! bus_space_read_region_8 unimplemented !!!
-#endif
-
 static __inline void
 vax_mem_read_region_1(bus_space_tag_t t, bus_space_handle_t h, bus_size_t o,
 	uint8_t *a, size_t c)
@@ -386,10 +378,6 @@ do {									\
 	((void)(*(volatile uint32_t *)((h) + (o)) = (v)));		\
 } while (0)
 
-#if 0	/* Cause a link error for bus_space_write_8 */
-#define	bus_space_write_8	!!! bus_space_write_8 not implemented !!!
-#endif
-
 /*
  *	void bus_space_write_multi_N(bus_space_tag_t tag,
  *	    bus_space_handle_t bsh, bus_size_t offset,
@@ -424,11 +412,6 @@ do {									\
 	__BUS_SPACE_ADDRESS_SANITY((h) + (o), uint32_t, "bus addr");	\
 	vax_mem_write_multi_4((t), (h), (o), (a), (c));		\
 } while (0)
-
-#if 0	/* Cause a link error for bus_space_write_multi_8 */
-#define	bus_space_write_multi_8(t, h, o, a, c)				\
-			!!! bus_space_write_multi_8 unimplemented !!!
-#endif
 
 static __inline void
 vax_mem_write_multi_1(bus_space_tag_t t, bus_space_handle_t h, bus_size_t o,
@@ -492,11 +475,6 @@ do {									\
 	__BUS_SPACE_ADDRESS_SANITY((h) + (o), uint32_t, "bus addr");	\
 	vax_mem_write_region_4((t), (h), (o), (a), (c));		\
 } while (0)
-
-#if 0	/* Cause a link error for bus_space_write_region_8 */
-#define	bus_space_write_region_8					\
-			!!! bus_space_write_region_8 unimplemented !!!
-#endif
 
 static __inline void
 vax_mem_write_region_1(bus_space_tag_t t, bus_space_handle_t h, bus_size_t o,
@@ -590,10 +568,6 @@ vax_mem_set_multi_4(bus_space_tag_t t, bus_space_handle_t h, bus_size_t o,
 		*(volatile uint32_t *)(addr) = v;
 }
 
-#if 0	/* Cause a link error for bus_space_set_multi_8 */
-#define	bus_space_set_multi_8 !!! bus_space_set_multi_8 unimplemented !!!
-#endif
-
 /*
  *	void bus_space_set_region_N(bus_space_tag_t tag,
  *	    bus_space_handle_t bsh, bus_size_t offset, u_intN_t val,
@@ -655,10 +629,6 @@ vax_mem_set_region_4(bus_space_tag_t t, bus_space_handle_t h, bus_size_t o,
 	for (; c != 0; c--, addr += 4)
 		*(volatile uint32_t *)(addr) = v;
 }
-
-#if 0	/* Cause a link error for bus_space_set_region_8 */
-#define	bus_space_set_region_8	!!! bus_space_set_region_8 unimplemented !!!
-#endif
 
 /*
  *	void bus_space_copy_region_N(bus_space_tag_t tag,
@@ -757,10 +727,6 @@ vax_mem_copy_region_4(bus_space_tag_t t, bus_space_handle_t h1, bus_size_t o1,
 			    *(volatile uint32_t *)(addr1);
 	}
 }
-
-#if 0	/* Cause a link error for bus_space_copy_8 */
-#define	bus_space_copy_region_8	!!! bus_space_copy_region_8 unimplemented !!!
-#endif
 
 
 /*

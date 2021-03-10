@@ -1,9 +1,9 @@
-/*	$NetBSD: time.h,v 1.1.1.6 2018/02/06 01:53:07 christos Exp $	*/
+/*	$NetBSD: time.h,v 1.2 2020/08/11 13:15:34 christos Exp $	*/
 
 /* Generic time.h */
 /* $OpenLDAP$ */
 /*
- * Copyright 1998-2017 The OpenLDAP Foundation, Redwood City, California, USA
+ * Copyright 1998-2020 The OpenLDAP Foundation, Redwood City, California, USA
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms are permitted only

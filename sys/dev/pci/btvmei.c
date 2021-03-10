@@ -1,4 +1,4 @@
-/* $NetBSD: btvmei.c,v 1.31 2018/12/09 11:14:01 jdolecek Exp $ */
+/* $NetBSD: btvmei.c,v 1.33 2020/08/24 05:37:41 msaitoh Exp $ */
 
 /*
  * Copyright (c) 1999
@@ -29,7 +29,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: btvmei.c,v 1.31 2018/12/09 11:14:01 jdolecek Exp $");
+__KERNEL_RCSID(0, "$NetBSD: btvmei.c,v 1.33 2020/08/24 05:37:41 msaitoh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -61,7 +61,7 @@ void b3_617_slaveconfig(device_t, struct vme_attach_args *);
 static void b3_617_vmeintr(struct b3_617_softc *, unsigned char);
 
 /*
- * mapping ressources, needed for deallocation
+ * mapping resources, needed for deallocation
  */
 struct b3_617_vmeresc {
 	bus_space_handle_t handle;
@@ -336,7 +336,7 @@ b3_617_halt(struct b3_617_softc *sc)
 {
 	/*
 	 * because detach code checks for existence of children,
-	 * all ressources (mappings, VME IRQs, DMA requests)
+	 * all resources (mappings, VME IRQs, DMA requests)
 	 * should be deallocated at this point
 	 */
 
@@ -447,7 +447,7 @@ b3_617_map_vme(void *vsc, vme_addr_t vmeaddr, vme_size_t len, vme_am_t am, vme_d
 	/*
 	 * save all data needed for later unmapping
 	 */
-	r = malloc(sizeof(*r), M_DEVBUF, M_NOWAIT); /* XXX check! */
+	r = malloc(sizeof(*r), M_DEVBUF, M_WAITOK);
 	r->handle = *handle;
 	r->len = len;
 	r->firstpage = first;
@@ -552,10 +552,7 @@ b3_617_establish_vmeint(void *vsc, vme_intr_handle_t handle, int prior, int (*fu
 	long lv;
 	int s;
 
-	/* no point in sleeping unless someone can free memory. */
-	ih = malloc(sizeof *ih, M_DEVBUF, cold ? M_NOWAIT : M_WAITOK);
-	if (ih == NULL)
-		panic("b3_617_map_vmeint: can't malloc handler info");
+	ih = malloc(sizeof *ih, M_DEVBUF, M_WAITOK);
 
 	lv = (long)handle; /* XXX */
 

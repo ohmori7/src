@@ -1,4 +1,4 @@
-/*	$NetBSD: radeon_r600.c,v 1.1 2018/08/27 14:38:20 riastradh Exp $	*/
+/*	$NetBSD: radeon_r600.c,v 1.5 2020/02/14 14:34:59 maya Exp $	*/
 
 /*
  * Copyright 2008 Advanced Micro Devices, Inc.
@@ -28,9 +28,8 @@
  *          Jerome Glisse
  */
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: radeon_r600.c,v 1.1 2018/08/27 14:38:20 riastradh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: radeon_r600.c,v 1.5 2020/02/14 14:34:59 maya Exp $");
 
-#include <linux/bitops.h>
 #include <linux/slab.h>
 #include <linux/seq_file.h>
 #include <linux/firmware.h>
@@ -45,6 +44,8 @@ __KERNEL_RCSID(0, "$NetBSD: radeon_r600.c,v 1.1 2018/08/27 14:38:20 riastradh Ex
 #include "atom.h"
 #include "avivod.h"
 #include "radeon_ucode.h"
+
+#include <linux/nbsd-namespace.h>
 
 /* Firmware Names */
 MODULE_FIRMWARE("radeon/R600_pfp.bin");
@@ -1008,7 +1009,8 @@ void r600_hpd_init(struct radeon_device *rdev)
 				break;
 			}
 		}
-		enable |= 1 << radeon_connector->hpd.hpd;
+		if (radeon_connector->hpd.hpd != RADEON_HPD_NONE)
+			enable |= 1 << radeon_connector->hpd.hpd;
 		radeon_hpd_set_polarity(rdev, radeon_connector->hpd.hpd);
 	}
 	radeon_irq_kms_enable_hpd(rdev, enable);
@@ -2224,13 +2226,13 @@ static void r600_gpu_init(struct radeon_device *rdev)
 	sq_config &= ~(PS_PRIO(3) |
 		       VS_PRIO(3) |
 		       GS_PRIO(3) |
-		       ES_PRIO(3));
+		       ES_PRIO(3U));
 	sq_config |= (DX9_CONSTS |
 		      VC_ENABLE |
 		      PS_PRIO(0) |
 		      VS_PRIO(1) |
 		      GS_PRIO(2) |
-		      ES_PRIO(3));
+		      ES_PRIO(3U));
 
 	if ((rdev->family) == CHIP_R600) {
 		sq_gpr_resource_mgmt_1 = (NUM_PS_GPRS(124) |
@@ -2319,15 +2321,15 @@ static void r600_gpu_init(struct radeon_device *rdev)
 	WREG32(PA_SC_AA_SAMPLE_LOCS_4S, (S0_X(0xe) | S0_Y(0xe) |
 					 S1_X(0x2) | S1_Y(0x2) |
 					 S2_X(0xa) | S2_Y(0x6) |
-					 S3_X(0x6) | S3_Y(0xa)));
+					 S3_X(0x6) | S3_Y(0xaU)));
 	WREG32(PA_SC_AA_SAMPLE_LOCS_8S_WD0, (S0_X(0xe) | S0_Y(0xb) |
 					     S1_X(0x4) | S1_Y(0xc) |
 					     S2_X(0x1) | S2_Y(0x6) |
-					     S3_X(0xa) | S3_Y(0xe)));
+					     S3_X(0xa) | S3_Y(0xeU)));
 	WREG32(PA_SC_AA_SAMPLE_LOCS_8S_WD1, (S4_X(0x6) | S4_Y(0x1) |
 					     S5_X(0x0) | S5_Y(0x0) |
 					     S6_X(0xb) | S6_Y(0x4) |
-					     S7_X(0x7) | S7_Y(0x8)));
+					     S7_X(0x7) | S7_Y(0x8U)));
 
 	WREG32(VGT_STRMOUT_EN, 0);
 	tmp = rdev->config.r600.max_pipes * 16;
@@ -2494,82 +2496,50 @@ int r600_init_microcode(struct radeon_device *rdev)
 		chip_name = "RV770";
 		rlc_chip_name = "R700";
 		smc_chip_name = "RV770";
-#ifdef __NetBSD__		/* XXX ALIGN means something else.  */
-		smc_req_size = round_up(RV770_SMC_UCODE_SIZE, 4);
-#else
 		smc_req_size = ALIGN(RV770_SMC_UCODE_SIZE, 4);
-#endif
 		break;
 	case CHIP_RV730:
 		chip_name = "RV730";
 		rlc_chip_name = "R700";
 		smc_chip_name = "RV730";
-#ifdef __NetBSD__		/* XXX ALIGN means something else.  */
-		smc_req_size = round_up(RV730_SMC_UCODE_SIZE, 4);
-#else
 		smc_req_size = ALIGN(RV730_SMC_UCODE_SIZE, 4);
-#endif
 		break;
 	case CHIP_RV710:
 		chip_name = "RV710";
 		rlc_chip_name = "R700";
 		smc_chip_name = "RV710";
-#ifdef __NetBSD__		/* XXX ALIGN means something else.  */
-		smc_req_size = round_up(RV710_SMC_UCODE_SIZE, 4);
-#else
 		smc_req_size = ALIGN(RV710_SMC_UCODE_SIZE, 4);
-#endif
 		break;
 	case CHIP_RV740:
 		chip_name = "RV730";
 		rlc_chip_name = "R700";
 		smc_chip_name = "RV740";
-#ifdef __NetBSD__		/* XXX ALIGN means something else.  */
-		smc_req_size = round_up(RV740_SMC_UCODE_SIZE, 4);
-#else
 		smc_req_size = ALIGN(RV740_SMC_UCODE_SIZE, 4);
-#endif
 		break;
 	case CHIP_CEDAR:
 		chip_name = "CEDAR";
 		rlc_chip_name = "CEDAR";
 		smc_chip_name = "CEDAR";
-#ifdef __NetBSD__		/* XXX ALIGN means something else.  */
-		smc_req_size = round_up(CEDAR_SMC_UCODE_SIZE, 4);
-#else
 		smc_req_size = ALIGN(CEDAR_SMC_UCODE_SIZE, 4);
-#endif
 		break;
 	case CHIP_REDWOOD:
 		chip_name = "REDWOOD";
 		rlc_chip_name = "REDWOOD";
 		smc_chip_name = "REDWOOD";
-#ifdef __NetBSD__		/* XXX ALIGN means something else.  */
-		smc_req_size = round_up(REDWOOD_SMC_UCODE_SIZE, 4);
-#else
 		smc_req_size = ALIGN(REDWOOD_SMC_UCODE_SIZE, 4);
-#endif
 		break;
 	case CHIP_JUNIPER:
 		chip_name = "JUNIPER";
 		rlc_chip_name = "JUNIPER";
 		smc_chip_name = "JUNIPER";
-#ifdef __NetBSD__		/* XXX ALIGN means something else.  */
-		smc_req_size = round_up(JUNIPER_SMC_UCODE_SIZE, 4);
-#else
 		smc_req_size = ALIGN(JUNIPER_SMC_UCODE_SIZE, 4);
-#endif
 		break;
 	case CHIP_CYPRESS:
 	case CHIP_HEMLOCK:
 		chip_name = "CYPRESS";
 		rlc_chip_name = "CYPRESS";
 		smc_chip_name = "CYPRESS";
-#ifdef __NetBSD__		/* XXX ALIGN means something else.  */
-		smc_req_size = round_up(CYPRESS_SMC_UCODE_SIZE, 4);
-#else
 		smc_req_size = ALIGN(CYPRESS_SMC_UCODE_SIZE, 4);
-#endif
 		break;
 	case CHIP_PALM:
 		chip_name = "PALM";

@@ -1,4 +1,4 @@
-/*	$NetBSD: malo.c,v 1.15 2018/12/14 21:23:43 jakllsch Exp $ */
+/*	$NetBSD: malo.c,v 1.18 2020/01/29 15:00:39 thorpej Exp $ */
 /*	$OpenBSD: malo.c,v 1.92 2010/08/27 17:08:00 jsg Exp $ */
 
 /*
@@ -19,7 +19,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: malo.c,v 1.15 2018/12/14 21:23:43 jakllsch Exp $");
+__KERNEL_RCSID(0, "$NetBSD: malo.c,v 1.18 2020/01/29 15:00:39 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/types.h>
@@ -616,12 +616,7 @@ malo_alloc_rx_ring(struct malo_softc *sc, struct malo_rx_ring *ring, int count)
 	ring->physaddr = ring->map->dm_segs->ds_addr;
 
 	ring->data = malloc(count * sizeof (struct malo_rx_data), M_DEVBUF,
-	    M_NOWAIT);
-	if (ring->data == NULL) {
-		aprint_error_dev(sc->sc_dev, "could not allocate soft data\n");
-		error = ENOMEM;
-		goto fail;
-	}
+	    M_WAITOK);
 
 	/*
 	 * Pre-allocate Rx buffers and populate Rx ring.
@@ -766,14 +761,8 @@ malo_alloc_tx_ring(struct malo_softc *sc, struct malo_tx_ring *ring,
 	ring->physaddr = ring->map->dm_segs->ds_addr;
 
 	ring->data = malloc(count * sizeof(struct malo_tx_data), M_DEVBUF,
-	    M_NOWAIT);
-	if (ring->data == NULL) {
-		aprint_error_dev(sc->sc_dev, "could not allocate soft data\n");
-		error = ENOMEM;
-		goto fail;
-	}
+	    M_WAITOK | M_ZERO);
 
-	memset(ring->data, 0, count * sizeof(struct malo_tx_data));
 	for (i = 0; i < count; i++) {
 		error = bus_dmamap_create(sc->sc_dmat, MCLBYTES,
 		    MALO_MAX_SCATTER, MCLBYTES, 0, BUS_DMA_NOWAIT,
@@ -1054,14 +1043,14 @@ malo_start(struct ifnet *ifp)
 
 			if (m0->m_len < sizeof (*eh) &&
 			    (m0 = m_pullup(m0, sizeof (*eh))) == NULL) {
-				ifp->if_oerrors++;
+				if_statinc(ifp, if_oerrors);
 				continue;
 			}
 			eh = mtod(m0, struct ether_header *);
 			ni = ieee80211_find_txnode(ic, eh->ether_dhost);
 			if (ni == NULL) {
 				m_freem(m0);
-				ifp->if_oerrors++;
+				if_statinc(ifp, if_oerrors);
 				continue;
 			}
 
@@ -1077,7 +1066,7 @@ malo_start(struct ifnet *ifp)
 
 			if (malo_tx_data(sc, m0, ni) != 0) {
 				ieee80211_free_node(ni);
-				ifp->if_oerrors++;
+				if_statinc(ifp, if_oerrors);
 				break;
 			}
 		}
@@ -1363,12 +1352,12 @@ malo_tx_intr(struct malo_softc *sc)
 		case MALO_TXD_STATUS_OK:
 			DPRINTF(2, "%s: data frame was sent successfully\n",
 			    device_xname(sc->sc_dev));
-			ifp->if_opackets++;
+			if_statinc(ifp, if_opackets);
 			break;
 		default:
 			DPRINTF(1, "%s: data frame sending error\n",
 			    device_xname(sc->sc_dev));
-			ifp->if_oerrors++;
+			if_statinc(ifp, if_oerrors);
 			break;
 		}
 
@@ -1426,7 +1415,7 @@ malo_tx_data(struct malo_softc *sc, struct mbuf *m0,
 	if (m0->m_len < sizeof(struct ieee80211_frame)) {
 		m0 = m_pullup(m0, sizeof(struct ieee80211_frame));
 		if (m0 == NULL) {
-			ifp->if_ierrors++;
+			if_statinc(ifp, if_ierrors);
 			return (ENOBUFS);
 		}
 	}
@@ -1566,14 +1555,14 @@ malo_rx_intr(struct malo_softc *sc)
 
 		MGETHDR(mnew, M_DONTWAIT, MT_DATA);
 		if (mnew == NULL) {
-			ifp->if_ierrors++;
+			if_statinc(ifp, if_ierrors);
 			goto skip;
 		}
 
 		MCLGET(mnew, M_DONTWAIT);
 		if (!(mnew->m_flags & M_EXT)) {
 			m_freem(mnew);
-			ifp->if_ierrors++;
+			if_statinc(ifp, if_ierrors);
 			goto skip;
 		}
 
@@ -1593,7 +1582,7 @@ malo_rx_intr(struct malo_softc *sc)
 				panic("%s: could not load old rx mbuf",
 				    device_xname(sc->sc_dev));
 			}
-			ifp->if_ierrors++;
+			if_statinc(ifp, if_ierrors);
 			goto skip;
 		}
 
@@ -2156,7 +2145,7 @@ malo_cmd_set_txpower(struct malo_softc *sc, unsigned int powerlevel)
 	body->action = htole16(1);
 	if (powerlevel < 30)
 		body->supportpowerlvl = htole16(5);	/* LOW */
-	else if (powerlevel >= 30 && powerlevel < 60)
+	else if (powerlevel < 60)
 		body->supportpowerlvl = htole16(10);	/* MEDIUM */
 	else
 		body->supportpowerlvl = htole16(15);	/* HIGH */

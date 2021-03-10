@@ -1,4 +1,4 @@
-# $NetBSD: Makefile.inc,v 1.4 2018/02/04 03:19:51 christos Exp $
+# $NetBSD: Makefile.inc,v 1.6 2020/07/23 07:53:35 mrg Exp $
 
 HEIMBASE?=	${NETBSDSRCDIR}/crypto/external/bsd/heimdal
 HEIMDIST=	${HEIMBASE}/dist

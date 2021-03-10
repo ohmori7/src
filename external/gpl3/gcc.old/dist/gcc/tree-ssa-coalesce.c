@@ -1,5 +1,5 @@
 /* Coalesce SSA_NAMES together for the out-of-ssa pass.
-   Copyright (C) 2004-2016 Free Software Foundation, Inc.
+   Copyright (C) 2004-2018 Free Software Foundation, Inc.
    Contributed by Andrew MacLeod <amacleod@redhat.com>
 
 This file is part of GCC.
@@ -25,8 +25,10 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree.h"
 #include "gimple.h"
 #include "predict.h"
+#include "memmodel.h"
 #include "tm_p.h"
 #include "ssa.h"
+#include "tree-ssa.h"
 #include "tree-pretty-print.h"
 #include "diagnostic-core.h"
 #include "dumpfile.h"
@@ -162,7 +164,8 @@ coalesce_cost (int frequency, bool optimize_for_size)
 static inline int
 coalesce_cost_bb (basic_block bb)
 {
-  return coalesce_cost (bb->frequency, optimize_bb_for_size_p (bb));
+  return coalesce_cost (bb->count.to_frequency (cfun),
+			optimize_bb_for_size_p (bb));
 }
 
 
@@ -955,12 +958,11 @@ build_ssa_conflict_graph (tree_live_info_p liveinfo)
       if (bb == entry)
 	{
 	  unsigned i;
-	  for (i = 1; i < num_ssa_names; i++)
-	    {
-	      tree var = ssa_name (i);
+	  tree var;
 
-	      if (!var
-		  || !SSA_NAME_IS_DEFAULT_DEF (var)
+	  FOR_EACH_SSA_NAME (i, var, cfun)
+	    {
+	      if (!SSA_NAME_IS_DEFAULT_DEF (var)
 		  || !SSA_NAME_VAR (var)
 		  || VAR_P (SSA_NAME_VAR (var)))
 		continue;
@@ -1040,17 +1042,13 @@ create_default_def (tree var, void *arg ATTRIBUTE_UNUSED)
 /* Register VAR's default def in MAP.  */
 
 static void
-register_default_def (tree var, void *map_)
+register_default_def (tree var, void *arg ATTRIBUTE_UNUSED)
 {
-  var_map map = (var_map)map_;
-
   if (!is_gimple_reg (var))
     return;
 
   tree ssa = ssa_default_def (cfun, var);
   gcc_assert (ssa);
-
-  register_ssa_partition (map, ssa);
 }
 
 /* If VAR is an SSA_NAME associated with a PARM_DECL or a RESULT_DECL,
@@ -1088,7 +1086,6 @@ create_outofssa_var_map (coalesce_list *cl, bitmap used_in_copy)
   gimple *stmt;
   tree first;
   var_map map;
-  ssa_op_iter iter;
   int v1, v2, cost;
   unsigned i;
 
@@ -1096,7 +1093,7 @@ create_outofssa_var_map (coalesce_list *cl, bitmap used_in_copy)
 
   map = init_var_map (num_ssa_names);
 
-  for_all_parms (register_default_def, map);
+  for_all_parms (register_default_def, NULL);
 
   FOR_EACH_BB_FN (bb, cfun)
     {
@@ -1114,7 +1111,6 @@ create_outofssa_var_map (coalesce_list *cl, bitmap used_in_copy)
 
 	  res = gimple_phi_result (phi);
 	  ver = SSA_NAME_VERSION (res);
-	  register_ssa_partition (map, res);
 
 	  /* Register ssa_names and coalesces between the args and the result
 	     of all PHI.  */
@@ -1125,7 +1121,6 @@ create_outofssa_var_map (coalesce_list *cl, bitmap used_in_copy)
 	      if (TREE_CODE (arg) != SSA_NAME)
 		continue;
 
-	      register_ssa_partition (map, arg);
 	      if (gimple_can_coalesce_p (arg, res)
 		  || (e->flags & EDGE_ABNORMAL))
 		{
@@ -1151,10 +1146,6 @@ create_outofssa_var_map (coalesce_list *cl, bitmap used_in_copy)
 
 	  if (is_gimple_debug (stmt))
 	    continue;
-
-	  /* Register USE and DEF operands in each statement.  */
-	  FOR_EACH_SSA_TREE_OPERAND (var, stmt, iter, (SSA_OP_DEF|SSA_OP_USE))
-	    register_ssa_partition (map, var);
 
 	  /* Check for copy coalesces.  */
 	  switch (gimple_code (stmt))
@@ -1261,10 +1252,9 @@ create_outofssa_var_map (coalesce_list *cl, bitmap used_in_copy)
   /* Now process result decls and live on entry variables for entry into
      the coalesce list.  */
   first = NULL_TREE;
-  for (i = 1; i < num_ssa_names; i++)
+  FOR_EACH_SSA_NAME (i, var, cfun)
     {
-      var = ssa_name (i);
-      if (var != NULL_TREE && !virtual_operand_p (var))
+      if (!virtual_operand_p (var))
         {
 	  coalesce_with_default (var, cl, used_in_copy);
 
@@ -1569,16 +1559,10 @@ gimple_can_coalesce_p (tree name1, tree name2)
 			    var2 ? LOCAL_DECL_ALIGNMENT (var2) : TYPE_ALIGN (t2)))
     return false;
 
-  /* If the types are not the same, check for a canonical type match.  This
+  /* If the types are not the same, see whether they are compatible.  This
      (for example) allows coalescing when the types are fundamentally the
-     same, but just have different names. 
-
-     Note pointer types with different address spaces may have the same
-     canonical type.  Those are rejected for coalescing by the
-     types_compatible_p check.  */
-  if (TYPE_CANONICAL (t1)
-      && TYPE_CANONICAL (t1) == TYPE_CANONICAL (t2)
-      && types_compatible_p (t1, t2))
+     same, but just have different names.  */
+  if (types_compatible_p (t1, t2))
     goto check_modes;
 
   return false;
@@ -1704,89 +1688,6 @@ compute_optimized_partition_bases (var_map map, bitmap used_in_copies,
   partition_delete (tentative);
 }
 
-/* Hashtable helpers.  */
-
-struct tree_int_map_hasher : nofree_ptr_hash <tree_int_map>
-{
-  static inline hashval_t hash (const tree_int_map *);
-  static inline bool equal (const tree_int_map *, const tree_int_map *);
-};
-
-inline hashval_t
-tree_int_map_hasher::hash (const tree_int_map *v)
-{
-  return tree_map_base_hash (v);
-}
-
-inline bool
-tree_int_map_hasher::equal (const tree_int_map *v, const tree_int_map *c)
-{
-  return tree_int_map_eq (v, c);
-}
-
-/* This routine will initialize the basevar fields of MAP with base
-   names.  Partitions will share the same base if they have the same
-   SSA_NAME_VAR, or, being anonymous variables, the same type.  This
-   must match gimple_can_coalesce_p in the non-optimized case.  */
-
-static void
-compute_samebase_partition_bases (var_map map)
-{
-  int x, num_part;
-  tree var;
-  struct tree_int_map *m, *mapstorage;
-
-  num_part = num_var_partitions (map);
-  hash_table<tree_int_map_hasher> tree_to_index (num_part);
-  /* We can have at most num_part entries in the hash tables, so it's
-     enough to allocate so many map elements once, saving some malloc
-     calls.  */
-  mapstorage = m = XNEWVEC (struct tree_int_map, num_part);
-
-  /* If a base table already exists, clear it, otherwise create it.  */
-  free (map->partition_to_base_index);
-  map->partition_to_base_index = (int *) xmalloc (sizeof (int) * num_part);
-
-  /* Build the base variable list, and point partitions at their bases.  */
-  for (x = 0; x < num_part; x++)
-    {
-      struct tree_int_map **slot;
-      unsigned baseindex;
-      var = partition_to_var (map, x);
-      if (SSA_NAME_VAR (var)
-	  && (!VAR_P (SSA_NAME_VAR (var))
-	      || !DECL_IGNORED_P (SSA_NAME_VAR (var))))
-	m->base.from = SSA_NAME_VAR (var);
-      else
-	/* This restricts what anonymous SSA names we can coalesce
-	   as it restricts the sets we compute conflicts for.
-	   Using TREE_TYPE to generate sets is the easiest as
-	   type equivalency also holds for SSA names with the same
-	   underlying decl.
-
-	   Check gimple_can_coalesce_p when changing this code.  */
-	m->base.from = (TYPE_CANONICAL (TREE_TYPE (var))
-			? TYPE_CANONICAL (TREE_TYPE (var))
-			: TREE_TYPE (var));
-      /* If base variable hasn't been seen, set it up.  */
-      slot = tree_to_index.find_slot (m, INSERT);
-      if (!*slot)
-	{
-	  baseindex = m - mapstorage;
-	  m->to = baseindex;
-	  *slot = m;
-	  m++;
-	}
-      else
-	baseindex = (*slot)->to;
-      map->partition_to_base_index[x] = baseindex;
-    }
-
-  map->num_basevars = m - mapstorage;
-
-  free (mapstorage);
-}
-
 /* Reduce the number of copies by coalescing variables in the function.  Return
    a partition map with the resulting coalesces.  */
 
@@ -1796,9 +1697,10 @@ coalesce_ssa_name (void)
   tree_live_info_p liveinfo;
   ssa_conflicts *graph;
   coalesce_list *cl;
-  bitmap used_in_copies = BITMAP_ALLOC (NULL);
+  auto_bitmap used_in_copies;
   var_map map;
   unsigned int i;
+  tree a;
 
   cl = create_coalesce_list ();
   map = create_outofssa_var_map (cl, used_in_copies);
@@ -1810,12 +1712,9 @@ coalesce_ssa_name (void)
     {
       hash_table<ssa_name_var_hash> ssa_name_hash (10);
 
-      for (i = 1; i < num_ssa_names; i++)
+      FOR_EACH_SSA_NAME (i, a, cfun)
 	{
-	  tree a = ssa_name (i);
-
-	  if (a
-	      && SSA_NAME_VAR (a)
+	  if (SSA_NAME_VAR (a)
 	      && !DECL_IGNORED_P (SSA_NAME_VAR (a))
 	      && (!has_zero_uses (a) || !SSA_NAME_IS_DEFAULT_DEF (a)
 		  || !VAR_P (SSA_NAME_VAR (a))))
@@ -1850,12 +1749,7 @@ coalesce_ssa_name (void)
 
   partition_view_bitmap (map, used_in_copies);
 
-  if (flag_tree_coalesce_vars)
-    compute_optimized_partition_bases (map, used_in_copies, cl);
-  else
-    compute_samebase_partition_bases (map);
-
-  BITMAP_FREE (used_in_copies);
+  compute_optimized_partition_bases (map, used_in_copies, cl);
 
   if (num_var_partitions (map) < 1)
     {
@@ -1932,7 +1826,7 @@ set_parm_default_def_partition (tree var, void *arg_)
 /* Allocate and return a bitmap that has a bit set for each partition
    that contains a default def for a parameter.  */
 
-extern bitmap
+bitmap
 get_parm_default_def_partitions (var_map map)
 {
   bitmap parm_default_def_parts = BITMAP_ALLOC (NULL);
@@ -1943,4 +1837,29 @@ get_parm_default_def_partitions (var_map map)
   for_all_parms (set_parm_default_def_partition, &arg);
 
   return parm_default_def_parts;
+}
+
+/* Allocate and return a bitmap that has a bit set for each partition
+   that contains an undefined value.  */
+
+bitmap
+get_undefined_value_partitions (var_map map)
+{
+  bitmap undefined_value_parts = BITMAP_ALLOC (NULL);
+
+  for (unsigned int i = 1; i < num_ssa_names; i++)
+    {
+      tree var = ssa_name (i);
+      if (var
+	  && !virtual_operand_p (var)
+	  && !has_zero_uses (var)
+	  && ssa_undefined_value_p (var))
+	{
+	  const int p = var_to_partition (map, var);
+	  if (p != NO_PARTITION)
+	    bitmap_set_bit (undefined_value_parts, p);
+	}
+    }
+
+  return undefined_value_parts;
 }

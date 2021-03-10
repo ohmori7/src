@@ -1,6 +1,6 @@
 // String based streams -*- C++ -*-
 
-// Copyright (C) 1997-2016 Free Software Foundation, Inc.
+// Copyright (C) 1997-2018 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -112,7 +112,8 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
       explicit
       basic_stringbuf(const __string_type& __str,
 		      ios_base::openmode __mode = ios_base::in | ios_base::out)
-      : __streambuf_type(), _M_mode(), _M_string(__str.data(), __str.size())
+      : __streambuf_type(), _M_mode(),
+	_M_string(__str.data(), __str.size(), __str.get_allocator())
       { _M_stringbuf_init(__mode); }
 
 #if __cplusplus >= 201103L
@@ -165,14 +166,14 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
       __string_type
       str() const
       {
-	__string_type __ret;
+	__string_type __ret(_M_string.get_allocator());
 	if (this->pptr())
 	  {
 	    // The current egptr() may not be the actual string end.
 	    if (this->pptr() > this->egptr())
-	      __ret = __string_type(this->pbase(), this->pptr());
+	      __ret.assign(this->pbase(), this->pptr());
 	    else
- 	      __ret = __string_type(this->pbase(), this->egptr());
+	      __ret.assign(this->pbase(), this->egptr());
 	  }
 	else
 	  __ret = _M_string;
@@ -209,7 +210,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 
       virtual streamsize
       showmanyc()
-      { 
+      {
 	streamsize __ret = -1;
 	if (_M_mode & ios_base::in)
 	  {
@@ -248,10 +249,10 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 	    // that an external char_type array of length __n exists
 	    // and has been pre-allocated. If this is not the case,
 	    // things will quickly blow up.
-	    
+
 	    // Step 1: Destroy the current internal array.
 	    _M_string.clear();
-	    
+
 	    // Step 2: Use the external array.
 	    _M_sync(__s, __n, 0);
 	  }

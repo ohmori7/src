@@ -1,4 +1,4 @@
-/*	$NetBSD: md.c,v 1.7 2019/06/17 14:19:44 martin Exp $	*/
+/*	$NetBSD: md.c,v 1.14 2020/10/12 16:14:34 martin Exp $	*/
 
 /*
  * Copyright 1997,2002 Piermont Information Systems Inc.
@@ -58,21 +58,23 @@ md_init_set_status(int flags)
 bool
 md_get_info(struct install_partition_desc *install)
 {
+	int res;
 
 	if (pm->no_mbr || pm->no_part)
 		return true;
 
+again:
 	if (pm->parts == NULL) {
 
 		const struct disk_partitioning_scheme *ps =
 		    select_part_scheme(pm, NULL, true, NULL);
 
 		if (!ps)
-			return true;
+			return false;
 
 		struct disk_partitions *parts =
 		   (*ps->create_new_for_disk)(pm->diskdev,
-		   0, pm->dlsize, pm->dlsize, true);
+		   0, pm->dlsize, true, NULL);
 		if (!parts)
 			return false;
 
@@ -81,13 +83,21 @@ md_get_info(struct install_partition_desc *install)
 			pm->dlsize = ps->size_limit;
 	}
 
-	return set_bios_geom_with_mbr_guess(pm->parts);
+	res = set_bios_geom_with_mbr_guess(pm->parts);
+	if (res == 0)
+		return false;
+	else if (res == 1)
+		return true;
+
+	pm->parts->pscheme->destroy_part_scheme(pm->parts);
+	pm->parts = NULL;
+	goto again;
 }
 
 /*
  * md back-end code for menu-driven BSD disklabel editor.
  */
-bool
+int
 md_make_bsd_partitions(struct install_partition_desc *install)
 {
 	return make_bsd_partitions(install);
@@ -151,12 +161,12 @@ md_post_newfs(struct install_partition_desc *install)
 	char *bootxx;
 	int error;
 
-	msg_display(MSG_dobootblks, pm->diskdev);
+	msg_fmt_display(MSG_dobootblks, "%s", pm->diskdev);
 	cp_to_target("/usr/mdec/boot", "/boot");
 	bootxx = bootxx_name(install);
 	if (bootxx != NULL) {
 		error = run_program(RUN_DISPLAY,
-		    "/usr/sbin/installboot -v /dev/r%sa %s", pm->diskdev, bootxx);
+		    "/usr/sbin/installboot -v /dev/r%sd %s", pm->diskdev, bootxx);
 		free(bootxx);
 	} else
 		error = -1;
@@ -210,7 +220,7 @@ md_parts_use_wholedisk(struct disk_partitions *parts)
 
 
 int
-md_pre_mount(struct install_partition_desc *install)
+md_pre_mount(struct install_partition_desc *install, size_t ndx)
 {
 	return 0;
 }

@@ -1,4 +1,4 @@
-/*	$NetBSD: pcib.c,v 1.24 2011/07/09 16:03:01 matt Exp $	*/
+/*	$NetBSD: pcib.c,v 1.26 2020/11/14 02:23:04 thorpej Exp $	*/
 
 /*-
  * Copyright (c) 2000, 2001 The NetBSD Foundation, Inc.
@@ -31,7 +31,7 @@
 
 #include <sys/cdefs.h>			/* RCS ID & Copyright macro defns */
 
-__KERNEL_RCSID(0, "$NetBSD: pcib.c,v 1.24 2011/07/09 16:03:01 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pcib.c,v 1.26 2020/11/14 02:23:04 thorpej Exp $");
 
 #include "opt_algor_p5064.h" 
 #include "opt_algor_p6032.h"
@@ -41,7 +41,7 @@ __KERNEL_RCSID(0, "$NetBSD: pcib.c,v 1.24 2011/07/09 16:03:01 matt Exp $");
 #include <sys/device.h>
 #include <sys/intr.h>
 #include <sys/kernel.h>
-#include <sys/malloc.h>
+#include <sys/kmem.h>
 #include <sys/systm.h>
 
 #include <algor/autoconf.h>
@@ -449,10 +449,7 @@ pcib_isa_intr_establish(void *v, int irq, int type, int level,
 		return (NULL);
 	}
 
-	ih = malloc(sizeof(*ih), M_DEVBUF, M_NOWAIT);
-	if (ih == NULL)
-		return (NULL);
-
+	ih = kmem_alloc(sizeof(*ih), KM_SLEEP);
 	ih->ih_func = func;
 	ih->ih_arg = arg;
 	ih->ih_irq = irq;
@@ -504,7 +501,7 @@ pcib_isa_intr_disestablish(void *v, void *arg)
 
 	splx(s);
 
-	free(ih, M_DEVBUF);
+	kmem_free(ih, sizeof(*ih));
 }
 
 int

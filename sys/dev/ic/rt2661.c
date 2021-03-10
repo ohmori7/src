@@ -1,4 +1,4 @@
-/*	$NetBSD: rt2661.c,v 1.41 2018/12/22 14:07:53 maxv Exp $	*/
+/*	$NetBSD: rt2661.c,v 1.43 2020/01/29 15:06:12 thorpej Exp $	*/
 /*	$OpenBSD: rt2661.c,v 1.17 2006/05/01 08:41:11 damien Exp $	*/
 /*	$FreeBSD: rt2560.c,v 1.5 2006/06/02 19:59:31 csjp Exp $	*/
 
@@ -25,7 +25,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: rt2661.c,v 1.41 2018/12/22 14:07:53 maxv Exp $");
+__KERNEL_RCSID(0, "$NetBSD: rt2661.c,v 1.43 2020/01/29 15:06:12 thorpej Exp $");
 
 
 #include <sys/param.h>
@@ -456,14 +456,8 @@ rt2661_alloc_tx_ring(struct rt2661_softc *sc, struct rt2661_tx_ring *ring,
 	ring->physaddr = ring->map->dm_segs->ds_addr;
 
 	ring->data = malloc(count * sizeof (struct rt2661_tx_data), M_DEVBUF,
-	    M_NOWAIT);
-	if (ring->data == NULL) {
-		aprint_error_dev(sc->sc_dev, "could not allocate soft data\n");
-		error = ENOMEM;
-		goto fail;
-	}
+	    M_WAITOK | M_ZERO);
 
-	memset(ring->data, 0, count * sizeof (struct rt2661_tx_data));
 	for (i = 0; i < count; i++) {
 		error = bus_dmamap_create(sc->sc_dmat, MCLBYTES,
 		    RT2661_MAX_SCATTER, MCLBYTES, 0, BUS_DMA_NOWAIT,
@@ -596,17 +590,11 @@ rt2661_alloc_rx_ring(struct rt2661_softc *sc, struct rt2661_rx_ring *ring,
 	ring->physaddr = ring->map->dm_segs->ds_addr;
 
 	ring->data = malloc(count * sizeof (struct rt2661_rx_data), M_DEVBUF,
-	    M_NOWAIT);
-	if (ring->data == NULL) {
-		aprint_error_dev(sc->sc_dev, "could not allocate soft data\n");
-		error = ENOMEM;
-		goto fail;
-	}
+	    M_WAITOK | M_ZERO);
 
 	/*
 	 * Pre-allocate Rx buffers and populate Rx ring.
 	 */
-	memset(ring->data, 0, count * sizeof (struct rt2661_rx_data));
 	for (i = 0; i < count; i++) {
 		desc = &sc->rxq.desc[i];
 		data = &sc->rxq.data[i];
@@ -958,7 +946,7 @@ rt2661_tx_intr(struct rt2661_softc *sc)
 			rn->amn.amn_txcnt++;
 			if (retrycnt > 0)
 				rn->amn.amn_retrycnt++;
-			ifp->if_opackets++;
+			if_statinc(ifp, if_opackets);
 			break;
 
 		case RT2661_TX_RETRY_FAIL:
@@ -966,13 +954,13 @@ rt2661_tx_intr(struct rt2661_softc *sc)
 			    "retries)\n"));
 			rn->amn.amn_txcnt++;
 			rn->amn.amn_retrycnt++;
-			ifp->if_oerrors++;
+			if_statinc(ifp, if_oerrors);
 			break;
 
 		default:
 			/* other failure */
 			aprint_error_dev(sc->sc_dev, "sending data frame failed 0x%08x\n", val);
-			ifp->if_oerrors++;
+			if_statinc(ifp, if_oerrors);
 		}
 
 		ieee80211_free_node(data->ni);
@@ -1062,12 +1050,12 @@ rt2661_rx_intr(struct rt2661_softc *sc)
 			 */
 			DPRINTFN(5, ("PHY or CRC error flags 0x%08x\n",
 			    le32toh(desc->flags)));
-			ifp->if_ierrors++;
+			if_statinc(ifp, if_ierrors);
 			goto skip;
 		}
 
 		if ((le32toh(desc->flags) & RT2661_RX_CIPHER_MASK) != 0) {
-			ifp->if_ierrors++;
+			if_statinc(ifp, if_ierrors);
 			goto skip;
 		}
 
@@ -1080,14 +1068,14 @@ rt2661_rx_intr(struct rt2661_softc *sc)
 		 */
 		MGETHDR(mnew, M_DONTWAIT, MT_DATA);
 		if (mnew == NULL) {
-			ifp->if_ierrors++;
+			if_statinc(ifp, if_ierrors);
 			goto skip;
 		}
 
 		MCLGET(mnew, M_DONTWAIT);
 		if (!(mnew->m_flags & M_EXT)) {
 			m_freem(mnew);
-			ifp->if_ierrors++;
+			if_statinc(ifp, if_ierrors);
 			goto skip;
 		}
 
@@ -1111,7 +1099,7 @@ rt2661_rx_intr(struct rt2661_softc *sc)
 			}
 			/* physical address may have changed */
 			desc->physaddr = htole32(data->map->dm_segs->ds_addr);
-			ifp->if_ierrors++;
+			if_statinc(ifp, if_ierrors);
 			goto skip;
 		}
 
@@ -1875,7 +1863,7 @@ rt2661_start(struct ifnet *ifp)
 			ni = ieee80211_find_txnode(ic, eh->ether_dhost);
 			if (ni == NULL) {
 				m_freem(m0);
-				ifp->if_oerrors++;
+				if_statinc(ifp, if_oerrors);
 				continue;
 			}
 
@@ -1883,14 +1871,14 @@ rt2661_start(struct ifnet *ifp)
 			m0 = ieee80211_encap(ic, m0, ni);
 			if (m0 == NULL) {
 				ieee80211_free_node(ni);
-				ifp->if_oerrors++;
+				if_statinc(ifp, if_oerrors);
 				continue;
 			}
 			bpf_mtap3(ic->ic_rawbpf, m0, BPF_D_OUT);
 			if (rt2661_tx_data(sc, m0, ni, 0) != 0) {
 				if (ni != NULL)
 					ieee80211_free_node(ni);
-				ifp->if_oerrors++;
+				if_statinc(ifp, if_oerrors);
 				break;
 			}
 		}
@@ -1911,7 +1899,7 @@ rt2661_watchdog(struct ifnet *ifp)
 		if (--sc->sc_tx_timer == 0) {
 			aprint_error_dev(sc->sc_dev, "device timeout\n");
 			rt2661_init(ifp);
-			ifp->if_oerrors++;
+			if_statinc(ifp, if_oerrors);
 			return;
 		}
 		ifp->if_timer = 1;

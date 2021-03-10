@@ -1,4 +1,4 @@
-/*	$NetBSD: parser.c,v 1.168 2019/05/04 02:52:22 kre Exp $	*/
+/*	$NetBSD: parser.c,v 1.171 2020/08/19 22:41:47 kre Exp $	*/
 
 /*-
  * Copyright (c) 1991, 1993
@@ -37,7 +37,7 @@
 #if 0
 static char sccsid[] = "@(#)parser.c	8.7 (Berkeley) 5/16/95";
 #else
-__RCSID("$NetBSD: parser.c,v 1.168 2019/05/04 02:52:22 kre Exp $");
+__RCSID("$NetBSD: parser.c,v 1.171 2020/08/19 22:41:47 kre Exp $");
 #endif
 #endif /* not lint */
 
@@ -666,6 +666,18 @@ simplecmd(union node **rpp, union node *redir)
 			/* We have a function */
 			consumetoken(TRP);
 			funclinno = plinno;
+			/*
+			 * Make sure there are no unquoted $'s in the
+			 * name (allowing those, not expanding them,
+			 * simply treating '$' as a character, is desireable
+			 * but the parser has converted them to CTLxxx
+			 * chars, and that's not what we want
+			 *
+			 * Fortunately here the user can simply quote
+			 * the name to avoid this restriction.
+			 */
+			if (!noexpand(n->narg.text))
+				synerror("Bad function name (use quotes)");
 			rmescapes(n->narg.text);
 			if (strchr(n->narg.text, '/'))
 				synerror("Bad function name");
@@ -1749,7 +1761,7 @@ readcstyleesc(char *out)
  *
  * The current definition of ISCTL() allows the compiler to
  * optimise away either half, or all, of the test in most of
- * the cases here (0xc0 | anything) cannot be between 08x0 and 0x9f
+ * the cases here (0xc0 | anything) cannot be between 0x80 and 0x9f
  * for example, so there a test is not needed).
  *
  * Which tests can be removed depends upon the actual values
@@ -2091,7 +2103,7 @@ readtoken1(int firstc, char const *syn, int oneword)
 			parenlevel++;
 			VTRACE(DBG_LEXER, ("'('(%d)", parenlevel));
 			USTPUTC(c, out);
-			continue;;
+			continue;
 		case CRP:	/* ')' in arithmetic */
 			if (parenlevel > 0) {
 				USTPUTC(c, out);

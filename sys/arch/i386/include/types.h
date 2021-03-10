@@ -1,4 +1,4 @@
-/*	$NetBSD: types.h,v 1.89 2019/04/06 03:06:25 thorpej Exp $	*/
+/*	$NetBSD: types.h,v 1.92 2020/08/01 12:14:40 jdolecek Exp $	*/
 
 /*-
  * Copyright (c) 1990 The Regents of the University of California.
@@ -99,8 +99,11 @@ typedef __register_t	register_t;
 #define	__SIMPLELOCK_LOCKED	1
 #define	__SIMPLELOCK_UNLOCKED	0
 
+#if !__has_feature(undefined_behavior_sanitizer) && \
+	!defined(__SANITIZE_UNDEFINED__)
 /* The x86 does not have strict alignment requirements. */
 #define	__NO_STRICT_ALIGNMENT
+#endif
 
 #define	__HAVE_NEW_STYLE_BUS_H
 #define	__HAVE_CPU_DATA_FIRST
@@ -130,13 +133,6 @@ typedef __register_t	register_t;
 #define	__HAVE_TLS_VARIANT_II
 #define	__HAVE_COMMON___TLS_GET_ADDR
 #define	__HAVE_UCAS_FULL
-
-#if defined(_KERNEL)
 #define	__HAVE_RAS
-
-#if !defined(XEN) && !defined(NO_PCI_MSI_MSIX)
-#define __HAVE_PCI_MSI_MSIX
-#endif
-#endif
 
 #endif	/* _I386_MACHTYPES_H_ */

@@ -169,38 +169,6 @@ AC_DEFUN([GLIBCXX_CHECK_COMPILER_FEATURES], [
 
 
 dnl
-dnl Check if the assembler used supports disabling generation of hardware
-dnl capabilities.  This is only supported by Sun as at the moment.
-dnl
-dnl Defines:
-dnl  HWCAP_FLAGS='-Wa,-nH' if possible.
-dnl
-AC_DEFUN([GLIBCXX_CHECK_ASSEMBLER_HWCAP], [
-  test -z "$HWCAP_FLAGS" && HWCAP_FLAGS=''
-
-  # Restrict the test to Solaris, other assemblers (e.g. AIX as) have -nH
-  # with a different meaning.
-  case ${target_os} in
-    solaris2*)
-      ac_save_CFLAGS="$CFLAGS"
-      CFLAGS="$CFLAGS -Wa,-nH"
-
-      AC_MSG_CHECKING([for as that supports -Wa,-nH])
-      AC_TRY_COMPILE([], [return 0;], [ac_hwcap_flags=yes],[ac_hwcap_flags=no])
-      if test "$ac_hwcap_flags" = "yes"; then
-	HWCAP_FLAGS="-Wa,-nH $HWCAP_FLAGS"
-      fi
-      AC_MSG_RESULT($ac_hwcap_flags)
-
-      CFLAGS="$ac_save_CFLAGS"
-      ;;
-  esac
-
-  AC_SUBST(HWCAP_FLAGS)
-])
-
-
-dnl
 dnl If GNU ld is in use, check to see if tricky linker opts can be used.  If
 dnl the native linker is in use, all variables will be defined to something
 dnl safe (like an empty string).
@@ -429,7 +397,7 @@ AC_DEFUN([GLIBCXX_CHECK_S_ISREG_OR_S_IFREG], [
   res=no
   if test $glibcxx_cv_S_ISREG = yes; then
     AC_DEFINE(HAVE_S_ISREG, 1,
-	      [Define if S_IFREG is available in <sys/stat.h>.])
+	      [Define if S_ISREG is available in <sys/stat.h>.])
     res=S_ISREG
   elif test $glibcxx_cv_S_IFREG = yes; then
     AC_DEFINE(HAVE_S_IFREG, 1,
@@ -632,10 +600,10 @@ dnl  baseline_dir
 dnl  baseline_subdir_switch
 dnl
 AC_DEFUN([GLIBCXX_CONFIGURE_TESTSUITE], [
-  if $GLIBCXX_IS_NATIVE ; then
-    # Do checks for resource limit functions.
-    GLIBCXX_CHECK_SETRLIMIT
+  # Do checks for resource limit functions.
+  GLIBCXX_CHECK_SETRLIMIT
 
+  if $GLIBCXX_IS_NATIVE ; then
     # Look for setenv, so that extended locale tests can be performed.
     GLIBCXX_CHECK_STDLIB_DECL_AND_LINKAGE_3(setenv)
   fi
@@ -674,34 +642,43 @@ dnl  XSL_STYLE_DIR
 dnl
 AC_DEFUN([GLIBCXX_CONFIGURE_DOCBOOK], [
 
-AC_MSG_CHECKING([for docbook stylesheets for documentation creation])
-glibcxx_stylesheets=no
-if test x${XSLTPROC} = xyes && echo '<title/>' | xsltproc --noout --nonet --xinclude http://docbook.sourceforge.net/release/xsl-ns/current/xhtml-1_1/docbook.xsl - 2>/dev/null; then
-  glibcxx_stylesheets=yes
-fi
-AC_MSG_RESULT($glibcxx_stylesheets)
+glibcxx_docbook_url=http://docbook.sourceforge.net/release/xsl-ns/current/
 
 AC_MSG_CHECKING([for local stylesheet directory])
 glibcxx_local_stylesheets=no
-if test x"$glibcxx_stylesheets" = x"yes"; then
-  if test -d /usr/share/sgml/docbook/xsl-ns-stylesheets; then
-    glibcxx_local_stylesheets=yes
-    XSL_STYLE_DIR=/usr/share/sgml/docbook/xsl-ns-stylesheets
-  fi
-  if test -d /usr/share/xml/docbook/stylesheet/docbook-xsl-ns; then
-    glibcxx_local_stylesheets=yes
-    XSL_STYLE_DIR=/usr/share/xml/docbook/stylesheet/docbook-xsl-ns
-  fi
-  if test -d /usr/share/xml/docbook/stylesheet/nwalsh5/current; then
-    glibcxx_local_stylesheets=yes
-    XSL_STYLE_DIR=/usr/share/xml/docbook/stylesheet/nwalsh5/current
-  fi
+if test x${XMLCATALOG} = xyes && xsl_style_dir=`xmlcatalog "" $glibcxx_docbook_url 2>/dev/null`
+then
+  XSL_STYLE_DIR=`echo $xsl_style_dir | sed -n 's;^file://;;p'`
+  glibcxx_local_stylesheets=yes
+else
+  for dir in \
+    /usr/share/sgml/docbook/xsl-ns-stylesheets \
+    /usr/share/xml/docbook/stylesheet/docbook-xsl-ns \
+    /usr/share/xml/docbook/stylesheet/nwalsh5/current \
+    /usr/share/xml/docbook/stylesheet/nwalsh/current
+  do
+    if test -d $dir; then
+      glibcxx_local_stylesheets=yes
+      XSL_STYLE_DIR=$dir
+      break
+    fi
+  done
 fi
 AC_MSG_RESULT($glibcxx_local_stylesheets)
 
 if test x"$glibcxx_local_stylesheets" = x"yes"; then
   AC_SUBST(XSL_STYLE_DIR)
   AC_MSG_NOTICE($XSL_STYLE_DIR)
+
+  AC_MSG_CHECKING([for docbook stylesheets for documentation creation])
+  glibcxx_stylesheets=no
+  if test x${XMLCATALOG} = xno || xmlcatalog "" $glibcxx_docbook_url/xhtml/docbook.xsl >/dev/null 2>&1; then
+    if test x${XSLTPROC} = xyes && echo '<title/>' | xsltproc --noout --nonet --xinclude $glibcxx_docbook_url/xhtml/docbook.xsl - 2>/dev/null; then
+      glibcxx_stylesheets=yes
+    fi
+  fi
+  AC_MSG_RESULT($glibcxx_stylesheets)
+
 else
   glibcxx_stylesheets=no
 fi
@@ -1436,25 +1413,19 @@ AC_DEFUN([GLIBCXX_ENABLE_LIBSTDCXX_TIME], [
         ac_has_sched_yield=yes
         ;;
       gnu* | linux* | kfreebsd*-gnu | knetbsd*-gnu)
-        AC_MSG_CHECKING([for at least GNU libc 2.17])
-        AC_TRY_COMPILE(
-          [#include <features.h>],
-          [
-          #if ! __GLIBC_PREREQ(2, 17)
-          #error 
-          #endif
-          ],
-          [glibcxx_glibc217=yes], [glibcxx_glibc217=no])
-        AC_MSG_RESULT($glibcxx_glibc217)
-
-        if test x"$glibcxx_glibc217" = x"yes"; then
-          ac_has_clock_monotonic=yes
-          ac_has_clock_realtime=yes
+        # Don't use link test for freestanding library, in case gcc_no_link=yes
+        if test x"$is_hosted" = xyes; then
+          # Versions of glibc before 2.17 needed -lrt for clock_gettime.
+          AC_SEARCH_LIBS(clock_gettime, [rt])
+          if test x"$ac_cv_search_clock_gettime" = x"none required"; then
+            ac_has_clock_monotonic=yes
+            ac_has_clock_realtime=yes
+          fi
         fi
         ac_has_nanosleep=yes
         ac_has_sched_yield=yes
         ;;
-      freebsd*|netbsd*|dragonfly*)
+      freebsd*|netbsd*|dragonfly*|rtems*)
         ac_has_clock_monotonic=yes
         ac_has_clock_realtime=yes
         ac_has_nanosleep=yes
@@ -1922,12 +1893,14 @@ AC_DEFUN([GLIBCXX_CHECK_C99_TR1], [
 		  lgamma(0.0);
 		  lgammaf(0.0f);
 		  lgammal(0.0l);
+		  #ifndef __APPLE__ /* see below */
 		  llrint(0.0);
 		  llrintf(0.0f);
 		  llrintl(0.0l);
 		  llround(0.0);
 		  llroundf(0.0f);
 		  llroundl(0.0l);
+		  #endif
 		  log1p(0.0);
 		  log1pf(0.0f);
 		  log1pl(0.0l);
@@ -1986,6 +1959,29 @@ AC_DEFUN([GLIBCXX_CHECK_C99_TR1], [
     AC_DEFINE(_GLIBCXX_USE_C99_MATH_TR1, 1,
 	      [Define if C99 functions or macros in <math.h> should be imported
 	      in <tr1/cmath> in namespace std::tr1.])
+
+    case "${target_os}" in
+      darwin*)
+        AC_MSG_CHECKING([for ISO C99 rounding functions in <math.h>])
+        AC_CACHE_VAL(glibcxx_cv_c99_math_llround, [
+          AC_TRY_COMPILE([#include <math.h>],
+		 [llrint(0.0);
+		  llrintf(0.0f);
+		  llrintl(0.0l);
+		  llround(0.0);
+		  llroundf(0.0f);
+		  llroundl(0.0l);
+		 ],
+		 [glibcxx_cv_c99_math_llround=yes],
+		 [glibcxx_cv_c99_math_llround=no])
+          ])
+	AC_MSG_RESULT($glibcxx_cv_c99_math_llround)
+        ;;
+    esac
+    if test x"$glibcxx_cv_c99_math_llround" = x"no"; then
+      AC_DEFINE(_GLIBCXX_NO_C99_ROUNDING_FUNCS, 1,
+		[Define if C99 llrint and llround functions are missing from <math.h>.])
+    fi
   fi
 
   # Check for the existence of <inttypes.h> functions (NB: doesn't make
@@ -2423,7 +2419,7 @@ AC_DEFUN([GLIBCXX_ENABLE_CLOCALE], [
       darwin*)
 	enable_clocale_flag=darwin
 	;;
-      dragonfly* | freebsd*)
+      dragonfly* | freebsd* | netbsd*)
 	enable_clocale_flag=dragonfly
 	;;
       openbsd*)
@@ -2519,7 +2515,7 @@ AC_DEFUN([GLIBCXX_ENABLE_CLOCALE], [
       ;;
 
     dragonfly)
-      AC_MSG_RESULT(dragonfly or freebsd)
+      AC_MSG_RESULT(dragonfly or freebsd or netbsd)
 
       CLOCALE_H=config/locale/dragonfly/c_locale.h
       CLOCALE_CC=config/locale/dragonfly/c_locale.cc
@@ -3069,7 +3065,7 @@ dnl Note: also checks that the types aren't standard types.
 dnl
 dnl Defines:
 dnl  _GLIBCXX_USE_INT128
-dnl  _GLIBCXX_USE_FLOAT128
+dnl  ENABLE_FLOAT128
 dnl
 AC_DEFUN([GLIBCXX_ENABLE_INT128_FLOAT128], [
 
@@ -3124,13 +3120,12 @@ EOF
 
     AC_MSG_CHECKING([for __float128])
     if AC_TRY_EVAL(ac_compile); then
-      AC_DEFINE(_GLIBCXX_USE_FLOAT128, 1,
-      [Define if __float128 is supported on this host.])
       enable_float128=yes
     else
       enable_float128=no
     fi
     AC_MSG_RESULT($enable_float128)
+    GLIBCXX_CONDITIONAL(ENABLE_FLOAT128, test $enable_float128 = yes)
     rm -f conftest*
 
   AC_LANG_RESTORE
@@ -3757,7 +3752,7 @@ changequote([,])dnl
 fi
 
 # For libtool versioning info, format is CURRENT:REVISION:AGE
-libtool_VERSION=6:22:0
+libtool_VERSION=6:25:0
 
 # Everything parsed; figure out what files and settings to use.
 case $enable_symvers in
@@ -3770,7 +3765,7 @@ case $enable_symvers in
 	      [Define to use GNU versioning in the shared library.])
     ;;
   gnu-versioned-namespace)
-    libtool_VERSION=7:0:0
+    libtool_VERSION=8:0:0
     SYMVER_FILE=config/abi/pre/gnu-versioned-namespace.ver
     AC_DEFINE(_GLIBCXX_SYMVER_GNU_NAMESPACE, 1,
 	      [Define to use GNU namespace versioning in the shared library.])
@@ -4301,6 +4296,9 @@ AC_DEFUN([GLIBCXX_ENABLE_FILESYSTEM_TS], [
       gnu* | linux* | kfreebsd*-gnu | knetbsd*-gnu)
         enable_libstdcxx_filesystem_ts=yes
         ;;
+      rtems*)
+        enable_libstdcxx_filesystem_ts=yes
+        ;;
       solaris*)
         enable_libstdcxx_filesystem_ts=yes
         ;;
@@ -4485,7 +4483,45 @@ AC_DEFUN([GLIBCXX_CHECK_SIZE_T_MANGLING], [
     [Define to the letter to which size_t is mangled.])
 ])
 
+dnl
+dnl Determine whether std::exception_ptr symbols should be exported with
+dnl the symbol versions from GCC 4.6.0 or GCC 7.1.0, depending on which
+dnl release first added support for std::exception_ptr. Originally it was
+dnl only supported for targets with always-lock-free atomics for int, but
+dnl since GCC 7.1 it is supported for all targets.
+dnl
+AC_DEFUN([GLIBCXX_CHECK_EXCEPTION_PTR_SYMVER], [
+  if test $enable_symvers != no; then
+    AC_MSG_CHECKING([for first version to support std::exception_ptr])
+    case ${target} in
+      aarch64-*-* | alpha-*-* | hppa*-*-* | i?86-*-* | x86_64-*-* | \
+      m68k-*-* | powerpc*-*-* | s390*-*-* | *-*-solaris* )
+        ac_exception_ptr_since_gcc46=yes
+        ;;
+      *)
+        # If the value of this macro changes then we will need to hardcode
+        # yes/no here for additional targets based on the original value.
+        AC_TRY_COMPILE([], [
+          #if __GCC_ATOMIC_INT_LOCK_FREE <= 1
+          # error atomic int not always lock free
+          #endif
+          ],
+          [ac_exception_ptr_since_gcc46=yes],
+          [ac_exception_ptr_since_gcc46=no])
+        ;;
+    esac
+    if test x"$ac_exception_ptr_since_gcc46" = x"yes" ; then
+      AC_DEFINE(HAVE_EXCEPTION_PTR_SINCE_GCC46, 1,
+        [Define to 1 if GCC 4.6 supported std::exception_ptr for the target])
+      AC_MSG_RESULT([4.6.0])
+    else
+      AC_MSG_RESULT([7.1.0])
+    fi
+  fi
+])
+
 # Macros from the top-level gcc directory.
 m4_include([../config/gc++filt.m4])
 m4_include([../config/tls.m4])
 m4_include([../config/gthr.m4])
+m4_include([../config/cet.m4])

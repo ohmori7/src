@@ -1,11 +1,11 @@
-/*	$NetBSD: hash.h,v 1.3 2019/01/09 16:55:15 christos Exp $	*/
+/*	$NetBSD: hash.h,v 1.5 2021/02/19 16:42:19 christos Exp $	*/
 
 /*
  * Copyright (C) Internet Systems Consortium, Inc. ("ISC")
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ * file, you can obtain one at https://mozilla.org/MPL/2.0/.
  *
  * See the COPYRIGHT file distributed with this work for additional
  * information regarding copyright ownership.
@@ -31,14 +31,12 @@ isc_hash_get_initializer(void);
 void
 isc_hash_set_initializer(const void *initializer);
 
+#define isc_hash_function isc_hash64
+
 uint32_t
-isc_hash_function(const void *data, size_t length,
-		  bool case_sensitive,
-		  const uint32_t *previous_hashp);
-uint32_t
-isc_hash_function_reverse(const void *data, size_t length,
-			  bool case_sensitive,
-			  const uint32_t *previous_hashp);
+isc_hash32(const void *data, const size_t length, const bool case_sensitive);
+uint64_t
+isc_hash64(const void *data, const size_t length, const bool case_sensitive);
 /*!<
  * \brief Calculate a hash over data.
  *
@@ -48,11 +46,8 @@ isc_hash_function_reverse(const void *data, size_t length,
  * process using this library is run, but will have uniform
  * distribution.
  *
- * isc_hash_function() calculates the hash from start to end over the
- * input data. isc_hash_function_reverse() calculates the hash from the
- * end to the start over the input data. The difference in order is
- * useful in incremental hashing; for example, a previously hashed
- * value for 'com' can be used as input when hashing 'example.com'.
+ * isc_hash_32/64() calculates the hash from start to end over the
+ * input data.
  *
  * 'data' is the data to be hashed.
  *
@@ -62,9 +57,8 @@ isc_hash_function_reverse(const void *data, size_t length,
  * case_sensitive values.  It should typically be false if the hash key
  * is a DNS name.
  *
- * 'previous_hashp' is a pointer to a previous hash value returned by
- * this function. It can be used to perform incremental hashing. NULL
- * must be passed during first calls.
+ * Returns:
+ * \li 32 or 64-bit hash value
  */
 
 ISC_LANG_ENDDECLS

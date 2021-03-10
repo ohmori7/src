@@ -1,4 +1,4 @@
-/*	$NetBSD: t_fopen.c,v 1.6 2019/02/05 17:30:19 kamil Exp $ */
+/*	$NetBSD: t_fopen.c,v 1.8 2020/02/21 22:14:59 kamil Exp $ */
 
 /*-
  * Copyright (c) 2011 The NetBSD Foundation, Inc.
@@ -29,7 +29,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: t_fopen.c,v 1.6 2019/02/05 17:30:19 kamil Exp $");
+__RCSID("$NetBSD: t_fopen.c,v 1.8 2020/02/21 22:14:59 kamil Exp $");
 
 #include <sys/param.h>
 #include <sys/types.h>
@@ -62,7 +62,7 @@ ATF_TC_BODY(fdopen_close, tc)
 	 * used to fdopen(3) a stream is
 	 * closed once the stream is closed.
 	 */
-	fd = open(path, O_RDWR | O_CREAT);
+	fd = open(path, O_RDWR | O_CREAT, 0600);
 
 	ATF_REQUIRE(fd >= 0);
 
@@ -89,7 +89,7 @@ ATF_TC_BODY(fdopen_err, tc)
 {
 	int fd;
 
-	fd = open(path, O_RDONLY | O_CREAT);
+	fd = open(path, O_RDONLY | O_CREAT, 0600);
 	ATF_REQUIRE(fd >= 0);
 
 	errno = 0;
@@ -130,7 +130,7 @@ ATF_TC_BODY(fdopen_seek, tc)
 	 * with the stream corresponds with the offset
 	 * set earlier for the file descriptor.
 	 */
-	fd = open(path, O_RDWR | O_CREAT);
+	fd = open(path, O_RDWR | O_CREAT, 0600);
 
 	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE(write(fd, "garbage", 7) == 7);
@@ -314,6 +314,7 @@ is_module_present(const char *name)
 	int count;
 	struct iovec iov;
 	modstat_t *ms;
+	modstat_t m;
 
 	for (len = 8192; ;) {
 		iov.iov_base = malloc(len);
@@ -336,7 +337,8 @@ is_module_present(const char *name)
 	count = *(int *)iov.iov_base;
 	ms = (modstat_t *)((char *)iov.iov_base + sizeof(int));
 	while (count > 0) {
-		if (strcmp(ms->ms_name, name) == 0) {
+		memcpy(&m, ms, sizeof(m));
+		if (strcmp(m.ms_name, name) == 0) {
 			found = true;
 			break;
 		}

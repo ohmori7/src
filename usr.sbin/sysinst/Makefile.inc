@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile.inc,v 1.21 2019/06/17 18:36:39 martin Exp $
+#	$NetBSD: Makefile.inc,v 1.38 2020/11/13 17:39:06 martin Exp $
 #
 # Makefile for sysinst
 
@@ -7,7 +7,7 @@
 .endif
 
 PROG=		sysinst
-NOMAN=		# defined
+MAN=		sysinst.8
 
 WARNS=		4
 
@@ -43,6 +43,14 @@ CPPFLAGS.gpt.c+=	-I${GPT_DIR}
 CPPFLAGS+=	-DHAVE_MBR
 SRCS+=	mbr.c
 .endif
+.if ${NO_CLONES:Uno} == "yes"
+CPPFLAGS+=	-DNO_CLONES
+.endif
+
+.if ${CHECK_ENTROPY:Uno} != "no"
+MENUS_MI+=	menus.entropy
+CPPFLAGS+=	-DCHECK_ENTROPY=1
+.endif
 
 MSG_MD?=	msg.md.${SYSINSTLANG}
 MENUS_MD?=	menus.md.${SYSINSTLANG}
@@ -65,6 +73,18 @@ MSG_CMP_SH=	${.CURDIR}/../../msg_cmp.sh
 
 SETS_TAR_SUFF=${"${USE_XZ_SETS:Uno}"!="no":?"tar.xz":"tgz"}
 
+.if ${MKBSDTAR:Uno} == "no"
+CPPFLAGS+=	-DUSING_PAXASTAR
+.endif
+
+.if ${MKDTB:Uno} != "no"
+CPPFLAGS+=	-DHAVE_DTB
+.endif
+
+.if ${MKKMOD:Uno} != "no"
+CPPFLAGS+=	-DHAVE_MODULES
+.endif
+
 CATALOGDIR=	/usr/share/sysinst/catalog
 CPPFLAGS+=	-I. -I${.CURDIR}/../.. -I${.CURDIR} \
 		-I${.CURDIR}/../../../../sbin/fsck \
@@ -74,10 +94,8 @@ CPPFLAGS+=	-I. -I${.CURDIR}/../.. -I${.CURDIR} \
 		${NODISKLABEL:D-DNO_DISKLABEL} \
 		${NOPARTMAN:D-DNO_PARTMAN}
 
-.if ${MACHINE} == "evbarm" \
-    || ${MACHINE} == "evbmips" \
-    || ${MACHINE} == "evbsh3"
-CPPFLAGS+=	-DARCH_SUBDIR="\"${MACHINE}-${MACHINE_ARCH}\""
+.if ${RELEASEMACHINEDIR} != ${MACHINE}
+CPPFLAGS+=	-DARCH_SUBDIR="\"${RELEASEMACHINEDIR}\""
 CPPFLAGS+=	-DPKG_ARCH_SUBDIR="\"${MACHINE_ARCH}\""
 .endif
 
@@ -91,10 +109,10 @@ CPPFLAGS+= -DSYSINST_HTTP_HOST=\"nycdn.NetBSD.org\"
 CPPFLAGS+= -DREL_PATH=\"HEAD\"
 CPPFLAGS+= -DPKG_SUBDIR="\"${DISTRIBVER:C/\.99\.[0-9]*[_A-Z]*$//}.0\""
 .elif (${DISTRIBVER:M*.[0-9].[0-9]*})
-CPPFLAGS+= -DREL_PATH=\"netbsd-${DISTRIBVER:C/\.[0-9][_A-Z]*$//:S/./-/}\"
+CPPFLAGS+= -DREL_PATH=\"netbsd-${DISTRIBVER:C/\.[0-9][_A-Z]*[0-9]*$//:S/./-/}\"
 CPPFLAGS+= -DPKG_SUBDIR="\"${DISTRIBVER:C/_.*$//}\""
 .elif (${DISTRIBVER:M*.[0-9]*})
-CPPFLAGS+= -DREL_PATH=\"netbsd-${DISTRIBVER:C/\.[0-9][_A-Z]*$//}\"
+CPPFLAGS+= -DREL_PATH=\"netbsd-${DISTRIBVER:C/\.[0-9][_A-Z]*[0-9]*$//}\"
 CPPFLAGS+= -DPKG_SUBDIR="\"${DISTRIBVER:C/_.*$//}\""
 .endif
 .endif
@@ -112,22 +130,18 @@ O0TRACKING=	-fvar-tracking-assignments -fvar-tracking
 .endif
 CPPFLAGS+=-DDEBUG
 DBG +=-g -O0 ${O0TRACKING}
-.endif
-
-.if empty(DBG:M-g)
+.else
+.if defined(SMALLPROG)
 COPTS += -Os
 .endif
-
-COPTS.msg_defs.c+=	-Wno-format-nonliteral
+.endif
 
 .if (!defined(SMALLPROG) || defined(SMALLPROG_INET6)) && (${USE_INET6} != "no")
 CPPFLAGS+=-DINET6
 .endif
 
-.if defined(HAVE_GCC) && ${HAVE_GCC} == 7 && ${ACTIVE_CC} == "gcc"
-COPTS+=-Wno-format-truncation	# most useless gcc warning ever
-.endif
-
+COPTS+=	${GCC_NO_FORMAT_TRUNCATION}
+COPTS.disklabel.c+= ${GCC_NO_STRINGOP_TRUNCATION}
 
 # Host to ftp from.  Default:
 #	"ftp.NetBSD.org"
@@ -188,7 +202,11 @@ msgtouch: ${DISTRIBVERDEP}
 	touch ${.TARGET}
 
 .if !defined(NOPARTMAN)
-MSG_MD+=	msg.pm.${SYSINSTLANG}	
+MSG_MD+=	msg.pm.${SYSINSTLANG}
+.endif
+
+.if ${CHECK_ENTROPY:Uno} != "no"
+MSG_MD+=	msg.entropy.${SYSINSTLANG}
 .endif
 
 msg.def: msg.mi.${SYSINSTLANG} ${MSG_MD} msgtouch

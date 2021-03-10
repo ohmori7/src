@@ -1,4 +1,4 @@
-/*	$NetBSD: bus.h,v 1.13 2012/05/07 18:16:38 tsutsui Exp $	*/
+/*	$NetBSD: bus.h,v 1.16 2021/01/23 19:38:08 christos Exp $	*/
 
 /*-
  * Copyright (c) 1996, 1997, 1998 The NetBSD Foundation, Inc.
@@ -70,11 +70,17 @@
 typedef u_long bus_addr_t;
 typedef u_long bus_size_t;
 
+#define PRIxBUSADDR	"lx"
+#define PRIxBUSSIZE	"lx"
+#define PRIuBUSSIZE	"lu"
+
 /*
  * Access methods for bus resources and address space.
  */
 typedef int	bus_space_tag_t;
 typedef u_long	bus_space_handle_t;
+
+#define PRIxBSH		"lx"
 
 /*
  *	int bus_space_map(bus_space_tag_t t, bus_addr_t addr,
@@ -151,10 +157,6 @@ void	bus_space_free(bus_space_tag_t t, bus_space_handle_t bsh,
 #define	bus_space_read_4(t, h, o)					\
     ((void) t, (*(volatile u_int32_t *)((h) + (o))))
 
-#if 0	/* Cause a link error for bus_space_read_8 */
-#define	bus_space_read_8(t, h, o)	!!! bus_space_read_8 unimplemented !!!
-#endif
-
 /*
  *	void bus_space_read_multi_N(bus_space_tag_t tag,
  *	    bus_space_handle_t bsh, bus_size_t offset,
@@ -205,10 +207,6 @@ void	bus_space_free(bus_space_tag_t t, bus_space_handle_t bsh,
 		    "r" ((h) + (o)), "g" (a), "g" ((size_t)(c))	:	\
 		    "a0","a1","d0");					\
 } while (0)
-
-#if 0	/* Cause a link error for bus_space_read_multi_8 */
-#define	bus_space_read_multi_8	!!! bus_space_read_multi_8 unimplemented !!!
-#endif
 
 /*
  *	void bus_space_read_region_N(bus_space_tag_t tag,
@@ -264,10 +262,6 @@ void	bus_space_free(bus_space_tag_t t, bus_space_handle_t bsh,
 		    "a0","a1","d0");					\
 } while (0)
 
-#if 0	/* Cause a link error for bus_space_read_region_8 */
-#define	bus_space_read_region_8	!!! bus_space_read_region_8 unimplemented !!!
-#endif
-
 /*
  *	void bus_space_write_N(bus_space_tag_t tag,
  *	    bus_space_handle_t bsh, bus_size_t offset,
@@ -285,10 +279,6 @@ void	bus_space_free(bus_space_tag_t t, bus_space_handle_t bsh,
 
 #define	bus_space_write_4(t, h, o, v)					\
     ((void) t, ((void)(*(volatile u_int32_t *)((h) + (o)) = (v))))
-
-#if 0	/* Cause a link error for bus_space_write_8 */
-#define	bus_space_write_8	!!! bus_space_write_8 not implemented !!!
-#endif
 
 /*
  *	void bus_space_write_multi_N(bus_space_tag_t tag,
@@ -340,11 +330,6 @@ void	bus_space_free(bus_space_tag_t t, bus_space_handle_t bsh,
 		    "r" ((h) + (o)), "g" (a), "g" ((size_t)(c))	:	\
 		    "a0","a1","d0");					\
 } while (0)
-
-#if 0	/* Cause a link error for bus_space_write_8 */
-#define	bus_space_write_multi_8(t, h, o, a, c)				\
-			!!! bus_space_write_multi_8 unimplimented !!!
-#endif
 
 /*
  *	void bus_space_write_region_N(bus_space_tag_t tag,
@@ -399,11 +384,6 @@ void	bus_space_free(bus_space_tag_t t, bus_space_handle_t bsh,
 		    "a0","a1","d0");					\
 } while (0)
 
-#if 0	/* Cause a link error for bus_space_write_region_8 */
-#define	bus_space_write_region_8					\
-			!!! bus_space_write_region_8 unimplemented !!!
-#endif
-
 /*
  *	void bus_space_set_multi_N(bus_space_tag_t tag,
  *	    bus_space_handle_t bsh, bus_size_t offset, u_intN_t val,
@@ -457,11 +437,6 @@ void	bus_space_free(bus_space_tag_t t, bus_space_handle_t bsh,
 					 "g" ((size_t)(c))	:	\
 		    "a0","d0","d1");					\
 } while (0)
-
-#if 0	/* Cause a link error for bus_space_set_multi_8 */
-#define	bus_space_set_multi_8						\
-			!!! bus_space_set_multi_8 unimplemented !!!
-#endif
 
 /*
  *	void bus_space_set_region_N(bus_space_tag_t tag,
@@ -519,11 +494,6 @@ void	bus_space_free(bus_space_tag_t t, bus_space_handle_t bsh,
 		    "a0","d0","d1");					\
 } while (0)
 
-#if 0	/* Cause a link error for bus_space_set_region_8 */
-#define	bus_space_set_region_8						\
-			!!! bus_space_set_region_8 unimplemented !!!
-#endif
-
 /*
  *	void bus_space_copy_N(bus_space_tag_t tag,
  *	    bus_space_handle_t bsh1, bus_size_t off1,
@@ -567,10 +537,6 @@ __CONCAT(bus_space_copy_region_,BYTES)(					\
 __MACHINE_copy_region_N(1)
 __MACHINE_copy_region_N(2)
 __MACHINE_copy_region_N(4)
-#if 0	/* Cause a link error for bus_space_copy_8 */
-#define	bus_space_copy_8						\
-			!!! bus_space_copy_8 unimplemented !!!
-#endif
 
 #undef __MACHINE_copy_region_N
 

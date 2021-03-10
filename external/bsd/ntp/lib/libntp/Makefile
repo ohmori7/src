@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.20 2018/02/02 01:02:40 mrg Exp $
+#	$NetBSD: Makefile,v 1.24 2020/05/29 20:16:07 christos Exp $
 
 LIBISPRIVATE=yes
 
@@ -50,6 +50,7 @@ mstolfp.c \
 msyslog.c \
 netof.c \
 ntp_calendar.c \
+ntp_calgps.c \
 ntp_crypto_rnd.c \
 ntp_intres.c \
 ntp_libopts.c \
@@ -72,16 +73,17 @@ statestr.c \
 strdup.c \
 syssignal.c \
 systime.c \
+timespecops.c \
 timetoa.c \
+timexsup.c \
 uglydate.c \
 vint64ops.c \
 work_fork.c \
 work_thread.c \
+xsbprintf.c \
 ymd2yd.c
 
 CPPFLAGS+= -I${IDIST}/sntp/libopts
-
-COPTS.msyslog.c+=	-Wno-error=format-nonliteral
 
 # For MKREPRO, avoid using __DATE__ and __TIME__.
 # Instead, use the date and time from ${IMPORTDATE_FILE}.
@@ -98,5 +100,7 @@ MKREPRO_TIME != ${TOOL_AWK} '{print $$4}' \
 CPPFLAGS.ntp_calendar.c += -DMKREPRO_DATE=\"${MKREPRO_DATE:Q}\"
 CPPFLAGS.ntp_calendar.c += -DMKREPRO_TIME=\"${MKREPRO_TIME:Q}\"
 .endif
+
+COPTS.timetoa.c+=	${GCC_NO_FORMAT_TRUNCATION}
 
 .include <bsd.lib.mk>

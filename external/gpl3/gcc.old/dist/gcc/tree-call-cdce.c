@@ -1,5 +1,5 @@
 /* Conditional Dead Call Elimination pass for the GNU compiler.
-   Copyright (C) 2008-2016 Free Software Foundation, Inc.
+   Copyright (C) 2008-2018 Free Software Foundation, Inc.
    Contributed by Xinliang David Li <davidxl@google.com>
 
 This file is part of GCC.
@@ -35,6 +35,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-into-ssa.h"
 #include "builtins.h"
 #include "internal-fn.h"
+#include "tree-dfa.h"
 
 
 /* This pass serves two closely-related purposes:
@@ -313,6 +314,7 @@ can_test_argument_range (gcall *call)
     CASE_FLT_FN (BUILT_IN_POW10):
     /* Sqrt.  */
     CASE_FLT_FN (BUILT_IN_SQRT):
+    CASE_FLT_FN_FLOATN_NX (BUILT_IN_SQRT):
       return check_builtin_call (call);
     /* Special one: two argument pow.  */
     case BUILT_IN_POW:
@@ -341,6 +343,7 @@ edom_only_function (gcall *call)
     CASE_FLT_FN (BUILT_IN_SIGNIFICAND):
     CASE_FLT_FN (BUILT_IN_SIN):
     CASE_FLT_FN (BUILT_IN_SQRT):
+    CASE_FLT_FN_FLOATN_NX (BUILT_IN_SQRT):
     CASE_FLT_FN (BUILT_IN_FMOD):
     CASE_FLT_FN (BUILT_IN_REMAINDER):
       return true;
@@ -348,6 +351,15 @@ edom_only_function (gcall *call)
     default:
       return false;
     }
+}
+
+/* Return true if it is structurally possible to guard CALL.  */
+
+static bool
+can_guard_call_p (gimple *call)
+{
+  return (!stmt_ends_bb_p (call)
+	  || find_fallthru_edge (gimple_bb (call)->succs));
 }
 
 /* A helper function to generate gimple statements for one bound
@@ -693,6 +705,7 @@ get_no_error_domain (enum built_in_function fnc)
                          308, true, false);
     /* sqrt: [0, +inf)  */
     CASE_FLT_FN (BUILT_IN_SQRT):
+    CASE_FLT_FN_FLOATN_NX (BUILT_IN_SQRT):
       return get_domain (0, true, true,
                          0, false, false);
     default:
@@ -742,16 +755,10 @@ gen_shrink_wrap_conditions (gcall *bi_call, vec<gimple *> conds,
   return;
 }
 
-
-/* Probability of the branch (to the call) is taken.  */
-#define ERR_PROB 0.01
-
 /* Shrink-wrap BI_CALL so that it is only called when one of the NCONDS
-   conditions in CONDS is false.
+   conditions in CONDS is false.  */
 
-   Return true on success, in which case the cfg will have been updated.  */
-
-static bool
+static void
 shrink_wrap_one_built_in_call_with_conds (gcall *bi_call, vec <gimple *> conds,
 					  unsigned int nconds)
 {
@@ -795,12 +802,10 @@ shrink_wrap_one_built_in_call_with_conds (gcall *bi_call, vec <gimple *> conds,
   /* Now find the join target bb -- split bi_call_bb if needed.  */
   if (stmt_ends_bb_p (bi_call))
     {
-      /* If the call must be the last in the bb, don't split the block,
-	 it could e.g. have EH edges.  */
+      /* We checked that there was a fallthrough edge in
+	 can_guard_call_p.  */
       join_tgt_in_edge_from_call = find_fallthru_edge (bi_call_bb->succs);
-      if (join_tgt_in_edge_from_call == NULL)
-        return false;
-      free_dominance_info (CDI_DOMINATORS);
+      gcc_assert (join_tgt_in_edge_from_call);
       /* We don't want to handle PHIs.  */
       if (EDGE_COUNT (join_tgt_in_edge_from_call->dest->preds) > 1)
 	join_tgt_bb = split_edge (join_tgt_in_edge_from_call);
@@ -900,8 +905,7 @@ shrink_wrap_one_built_in_call_with_conds (gcall *bi_call, vec <gimple *> conds,
 
      Here we take the second approach because it's slightly simpler
      and because it's easy to see that it doesn't lose profile counts.  */
-  bi_call_bb->count = 0;
-  bi_call_bb->frequency = 0;
+  bi_call_bb->count = profile_count::zero ();
   while (!edges.is_empty ())
     {
       edge_pair e = edges.pop ();
@@ -910,23 +914,14 @@ shrink_wrap_one_built_in_call_with_conds (gcall *bi_call, vec <gimple *> conds,
       basic_block src_bb = call_edge->src;
       gcc_assert (src_bb == nocall_edge->src);
 
-      call_edge->probability = REG_BR_PROB_BASE * ERR_PROB;
-      call_edge->count = apply_probability (src_bb->count,
-					    call_edge->probability);
-      nocall_edge->probability = inverse_probability (call_edge->probability);
-      nocall_edge->count = src_bb->count - call_edge->count;
+      call_edge->probability = profile_probability::very_unlikely ();
+      nocall_edge->probability = profile_probability::always ()
+				 - call_edge->probability;
 
-      unsigned int call_frequency = apply_probability (src_bb->frequency,
-						       call_edge->probability);
-
-      bi_call_bb->count += call_edge->count;
-      bi_call_bb->frequency += call_frequency;
+      bi_call_bb->count += call_edge->count ();
 
       if (nocall_edge->dest != join_tgt_bb)
-	{
-	  nocall_edge->dest->count = nocall_edge->count;
-	  nocall_edge->dest->frequency = src_bb->frequency - call_frequency;
-	}
+	nocall_edge->dest->count = src_bb->count - bi_call_bb->count;
     }
 
   if (dom_info_available_p (CDI_DOMINATORS))
@@ -947,28 +942,19 @@ shrink_wrap_one_built_in_call_with_conds (gcall *bi_call, vec <gimple *> conds,
                " into error conditions.\n",
                LOCATION_FILE (loc), LOCATION_LINE (loc));
     }
-
-  return true;
 }
 
 /* Shrink-wrap BI_CALL so that it is only called when it might set errno
-   (but is always called if it would set errno).
+   (but is always called if it would set errno).  */
 
-   Return true on success, in which case the cfg will have been updated.  */
-
-static bool
+static void
 shrink_wrap_one_built_in_call (gcall *bi_call)
 {
   unsigned nconds = 0;
   auto_vec<gimple *, 12> conds;
   gen_shrink_wrap_conditions (bi_call, conds, &nconds);
-  /* This can happen if the condition generator decides
-     it is not beneficial to do the transformation.  Just
-     return false and do not do any transformation for
-     the call.  */
-  if (nconds == 0)
-    return false;
-  return shrink_wrap_one_built_in_call_with_conds (bi_call, conds, nconds);
+  gcc_assert (nconds != 0);
+  shrink_wrap_one_built_in_call_with_conds (bi_call, conds, nconds);
 }
 
 /* Return true if built-in function call CALL could be implemented using
@@ -980,11 +966,6 @@ can_use_internal_fn (gcall *call)
 {
   /* Only replace calls that set errno.  */
   if (!gimple_vdef (call))
-    return false;
-
-  /* Punt if we can't conditionalize the call.  */
-  basic_block bb = gimple_bb (call);
-  if (stmt_ends_bb_p (call) && !find_fallthru_edge (bb->succs))
     return false;
 
   /* See whether there is an internal function for this built-in.  */
@@ -1000,18 +981,25 @@ can_use_internal_fn (gcall *call)
   return true;
 }
 
-/* Implement built-in function call CALL using an internal function.
-   Return true on success, in which case the cfg will have changed.  */
+/* Implement built-in function call CALL using an internal function.  */
 
-static bool
+static void
 use_internal_fn (gcall *call)
 {
+  /* We'll be inserting another call with the same arguments after the
+     lhs has been set, so prevent any possible coalescing failure from
+     having both values live at once.  See PR 71020.  */
+  replace_abnormal_ssa_names (call);
+
   unsigned nconds = 0;
   auto_vec<gimple *, 12> conds;
   if (can_test_argument_range (call))
-    gen_shrink_wrap_conditions (call, conds, &nconds);
-  if (nconds == 0 && !edom_only_function (call))
-    return false;
+    {
+      gen_shrink_wrap_conditions (call, conds, &nconds);
+      gcc_assert (nconds != 0);
+    }
+  else
+    gcc_assert (edom_only_function (call));
 
   internal_fn ifn = replacement_internal_fn (call);
   gcc_assert (ifn != IFN_LAST);
@@ -1023,6 +1011,7 @@ use_internal_fn (gcall *call)
     args.safe_push (gimple_call_arg (call, i));
   gcall *new_call = gimple_build_call_internal_vec (ifn, args);
   gimple_set_location (new_call, gimple_location (call));
+  gimple_call_set_nothrow (new_call, gimple_call_nothrow_p (call));
 
   /* Transfer the LHS to the new call.  */
   tree lhs = gimple_call_lhs (call);
@@ -1057,35 +1046,26 @@ use_internal_fn (gcall *call)
 	}
     }
 
-  if (!shrink_wrap_one_built_in_call_with_conds (call, conds, nconds))
-    /* It's too late to back out now.  */
-    gcc_unreachable ();
-  return true;
+  shrink_wrap_one_built_in_call_with_conds (call, conds, nconds);
 }
 
 /* The top level function for conditional dead code shrink
    wrapping transformation.  */
 
-static bool
+static void
 shrink_wrap_conditional_dead_built_in_calls (vec<gcall *> calls)
 {
-  bool changed = false;
   unsigned i = 0;
 
   unsigned n = calls.length ();
-  if (n == 0)
-    return false;
-
   for (; i < n ; i++)
     {
       gcall *bi_call = calls[i];
       if (gimple_call_lhs (bi_call))
-	changed |= use_internal_fn (bi_call);
+	use_internal_fn (bi_call);
       else
-	changed |= shrink_wrap_one_built_in_call (bi_call);
+	shrink_wrap_one_built_in_call (bi_call);
     }
-
-  return changed;
 }
 
 namespace {
@@ -1128,7 +1108,6 @@ pass_call_cdce::execute (function *fun)
 {
   basic_block bb;
   gimple_stmt_iterator i;
-  bool something_changed = false;
   auto_vec<gcall *> cond_dead_built_in_calls;
   FOR_EACH_BB_FN (bb, fun)
     {
@@ -1145,7 +1124,8 @@ pass_call_cdce::execute (function *fun)
 	      && gimple_call_builtin_p (stmt, BUILT_IN_NORMAL)
 	      && (gimple_call_lhs (stmt)
 		  ? can_use_internal_fn (stmt)
-		  : can_test_argument_range (stmt)))
+		  : can_test_argument_range (stmt))
+	      && can_guard_call_p (stmt))
             {
               if (dump_file && (dump_flags & TDF_DETAILS))
                 {
@@ -1163,19 +1143,12 @@ pass_call_cdce::execute (function *fun)
   if (!cond_dead_built_in_calls.exists ())
     return 0;
 
-  something_changed
-    = shrink_wrap_conditional_dead_built_in_calls (cond_dead_built_in_calls);
-
-  if (something_changed)
-    {
-      free_dominance_info (CDI_POST_DOMINATORS);
-      /* As we introduced new control-flow we need to insert PHI-nodes
-         for the call-clobbers of the remaining call.  */
-      mark_virtual_operands_for_renaming (fun);
-      return TODO_update_ssa;
-    }
-
-  return 0;
+  shrink_wrap_conditional_dead_built_in_calls (cond_dead_built_in_calls);
+  free_dominance_info (CDI_POST_DOMINATORS);
+  /* As we introduced new control-flow we need to insert PHI-nodes
+     for the call-clobbers of the remaining call.  */
+  mark_virtual_operands_for_renaming (fun);
+  return TODO_update_ssa;
 }
 
 } // anon namespace

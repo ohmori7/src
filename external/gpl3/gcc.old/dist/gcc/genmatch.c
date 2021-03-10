@@ -1,7 +1,7 @@
 /* Generate pattern matching and transform code shared between
    GENERIC and GIMPLE folding code from match-and-simplify description.
 
-   Copyright (C) 2014-2016 Free Software Foundation, Inc.
+   Copyright (C) 2014-2018 Free Software Foundation, Inc.
    Contributed by Richard Biener <rguenther@suse.de>
    and Prathamesh Kulkarni  <bilbotheelffriend@gmail.com>
 
@@ -61,7 +61,8 @@ static struct line_maps *line_table;
    This is the implementation for genmatch.  */
 
 expanded_location
-linemap_client_expand_location_to_spelling_point (source_location loc)
+linemap_client_expand_location_to_spelling_point (source_location loc,
+						  enum location_aspect)
 {
   const struct line_map_ordinary *map;
   loc = linemap_resolve_location (line_table, loc, LRK_SPELLING_LOCATION, &map);
@@ -192,6 +193,11 @@ output_line_directive (FILE *f, source_location location,
     {
       /* When writing to a dumpfile only dump the filename.  */
       const char *file = strrchr (loc.file, DIR_SEPARATOR);
+#if defined(DIR_SEPARATOR_2)
+      const char *pos2 = strrchr (loc.file, DIR_SEPARATOR_2);
+      if (pos2 && (!file || (pos2 > file)))
+	file = pos2;
+#endif
       if (!file)
 	file = loc.file;
       else
@@ -283,6 +289,35 @@ commutative_ternary_tree_code (enum tree_code code)
     case WIDEN_MULT_MINUS_EXPR:
     case DOT_PROD_EXPR:
     case FMA_EXPR:
+      return true;
+
+    default:
+      break;
+    }
+  return false;
+}
+
+/* Return true if CODE is a comparison.  */
+
+bool
+comparison_code_p (enum tree_code code)
+{
+  switch (code)
+    {
+    case EQ_EXPR:
+    case NE_EXPR:
+    case ORDERED_EXPR:
+    case UNORDERED_EXPR:
+    case LTGT_EXPR:
+    case UNEQ_EXPR:
+    case GT_EXPR:
+    case GE_EXPR:
+    case LT_EXPR:
+    case LE_EXPR:
+    case UNGT_EXPR:
+    case UNGE_EXPR:
+    case UNLT_EXPR:
+    case UNLE_EXPR:
       return true;
 
     default:
@@ -528,6 +563,42 @@ get_operator (const char *id, bool allow_null = false)
   return operators->find_with_hash (&tem, tem.hashval);
 }
 
+/* Return the comparison operators that results if the operands are
+   swapped.  This is safe for floating-point.  */
+
+id_base *
+swap_tree_comparison (operator_id *p)
+{
+  switch (p->code)
+    {
+    case EQ_EXPR:
+    case NE_EXPR:
+    case ORDERED_EXPR:
+    case UNORDERED_EXPR:
+    case LTGT_EXPR:
+    case UNEQ_EXPR:
+      return p;
+    case GT_EXPR:
+      return get_operator ("LT_EXPR");
+    case GE_EXPR:
+      return get_operator ("LE_EXPR");
+    case LT_EXPR:
+      return get_operator ("GT_EXPR");
+    case LE_EXPR:
+      return get_operator ("GE_EXPR");
+    case UNGT_EXPR:
+      return get_operator ("UNLT_EXPR");
+    case UNGE_EXPR:
+      return get_operator ("UNLE_EXPR");
+    case UNLT_EXPR:
+      return get_operator ("UNGT_EXPR");
+    case UNLE_EXPR:
+      return get_operator ("UNGE_EXPR");
+    default:
+      gcc_unreachable ();
+    }
+}
+
 typedef hash_map<nofree_string_hash, unsigned> cid_map_t;
 
 
@@ -628,10 +699,15 @@ struct c_expr : public operand
 
 struct capture : public operand
 {
-  capture (source_location loc, unsigned where_, operand *what_)
-      : operand (OP_CAPTURE, loc), where (where_), what (what_) {}
+  capture (source_location loc, unsigned where_, operand *what_, bool value_)
+      : operand (OP_CAPTURE, loc), where (where_), value_match (value_),
+        what (what_) {}
   /* Identifier index for the value.  */
   unsigned where;
+  /* Whether in a match of two operands the compare should be for
+     equal values rather than equal atoms (boils down to a type
+     check or not).  */
+  bool value_match;
   /* The captured value.  */
   operand *what;
   virtual void gen_transform (FILE *f, int, const char *, bool, int,
@@ -717,13 +793,17 @@ struct simplify
 {
   enum simplify_kind { SIMPLIFY, MATCH };
 
-  simplify (simplify_kind kind_, operand *match_, operand *result_,
-	    vec<vec<user_id *> > for_vec_, cid_map_t *capture_ids_)
-      : kind (kind_), match (match_), result (result_),
+  simplify (simplify_kind kind_, unsigned id_, operand *match_,
+	    operand *result_, vec<vec<user_id *> > for_vec_,
+	    cid_map_t *capture_ids_)
+      : kind (kind_), id (id_), match (match_), result (result_),
       for_vec (for_vec_), for_subst_vec (vNULL),
       capture_ids (capture_ids_), capture_max (capture_ids_->elements () - 1) {}
 
   simplify_kind kind;
+  /* ID.  This is kept to easily associate related simplifies expanded
+     from the same original one.  */
+  unsigned id;
   /* The expression that is matched against the GENERIC or GIMPLE IL.  */
   operand *match;
   /* For a (simplify ...) an expression with ifs and withs with the expression
@@ -816,7 +896,7 @@ cartesian_product (const vec< vec<operand *> >& ops_vector,
 /* Lower OP to two operands in case it is marked as commutative.  */
 
 static vec<operand *>
-commutate (operand *op)
+commutate (operand *op, vec<vec<user_id *> > &for_vec)
 {
   vec<operand *> ret = vNULL;
 
@@ -827,10 +907,11 @@ commutate (operand *op)
 	  ret.safe_push (op);
 	  return ret;
 	}
-      vec<operand *> v = commutate (c->what);
+      vec<operand *> v = commutate (c->what, for_vec);
       for (unsigned i = 0; i < v.length (); ++i)
 	{
-	  capture *nc = new capture (c->location, c->where, v[i]);
+	  capture *nc = new capture (c->location, c->where, v[i],
+				     c->value_match);
 	  ret.safe_push (nc);
 	}
       return ret;
@@ -845,7 +926,7 @@ commutate (operand *op)
 
   vec< vec<operand *> > ops_vector = vNULL;
   for (unsigned i = 0; i < e->ops.length (); ++i)
-    ops_vector.safe_push (commutate (e->ops[i]));
+    ops_vector.safe_push (commutate (e->ops[i], for_vec));
 
   auto_vec< vec<operand *> > result;
   auto_vec<operand *> v (e->ops.length ());
@@ -868,6 +949,50 @@ commutate (operand *op)
   for (unsigned i = 0; i < result.length (); ++i)
     {
       expr *ne = new expr (e);
+      if (operator_id *p = dyn_cast <operator_id *> (ne->operation))
+	{
+	  if (comparison_code_p (p->code))
+	    ne->operation = swap_tree_comparison (p);
+	}
+      else if (user_id *p = dyn_cast <user_id *> (ne->operation))
+	{
+	  bool found_compare = false;
+	  for (unsigned j = 0; j < p->substitutes.length (); ++j)
+	    if (operator_id *q = dyn_cast <operator_id *> (p->substitutes[j]))
+	      {
+		if (comparison_code_p (q->code)
+		    && swap_tree_comparison (q) != q)
+		  {
+		    found_compare = true;
+		    break;
+		  }
+	      }
+	  if (found_compare)
+	    {
+	      user_id *newop = new user_id ("<internal>");
+	      for (unsigned j = 0; j < p->substitutes.length (); ++j)
+		{
+		  id_base *subst = p->substitutes[j];
+		  if (operator_id *q = dyn_cast <operator_id *> (subst))
+		    {
+		      if (comparison_code_p (q->code))
+			subst = swap_tree_comparison (q);
+		    }
+		  newop->substitutes.safe_push (subst);
+		}
+	      ne->operation = newop;
+	      /* Search for 'p' inside the for vector and push 'newop'
+	         to the same level.  */
+	      for (unsigned j = 0; newop && j < for_vec.length (); ++j)
+		for (unsigned k = 0; k < for_vec[j].length (); ++k)
+		  if (for_vec[j][k] == p)
+		    {
+		      for_vec[j].safe_push (newop);
+		      newop = NULL;
+		      break;
+		    }
+	    }
+	}
       ne->is_commutative = false;
       // result[i].length () is 2 since e->operation is binary
       for (unsigned j = result[i].length (); j; --j)
@@ -884,10 +1009,10 @@ commutate (operand *op)
 static void
 lower_commutative (simplify *s, vec<simplify *>& simplifiers)
 {
-  vec<operand *> matchers = commutate (s->match);
+  vec<operand *> matchers = commutate (s->match, s->for_vec);
   for (unsigned i = 0; i < matchers.length (); ++i)
     {
-      simplify *ns = new simplify (s->kind, matchers[i], s->result,
+      simplify *ns = new simplify (s->kind, s->id, matchers[i], s->result,
 				   s->for_vec, s->capture_ids);
       simplifiers.safe_push (ns);
     }
@@ -904,7 +1029,8 @@ lower_opt_convert (operand *o, enum tree_code oper,
     {
       if (c->what)
 	return new capture (c->location, c->where,
-			    lower_opt_convert (c->what, oper, to_oper, strip));
+			    lower_opt_convert (c->what, oper, to_oper, strip),
+			    c->value_match);
       else
 	return c;
     }
@@ -1015,7 +1141,7 @@ lower_opt_convert (simplify *s, vec<simplify *>& simplifiers)
   vec<operand *> matchers = lower_opt_convert (s->match);
   for (unsigned i = 0; i < matchers.length (); ++i)
     {
-      simplify *ns = new simplify (s->kind, matchers[i], s->result,
+      simplify *ns = new simplify (s->kind, s->id, matchers[i], s->result,
 				   s->for_vec, s->capture_ids);
       simplifiers.safe_push (ns);
     }
@@ -1037,7 +1163,8 @@ lower_cond (operand *o)
 	  lop = lower_cond (c->what);
 
 	  for (unsigned i = 0; i < lop.length (); ++i)
-	    ro.safe_push (new capture (c->location, c->where, lop[i]));
+	    ro.safe_push (new capture (c->location, c->where, lop[i],
+				       c->value_match));
 	  return ro;
 	}
     }
@@ -1087,7 +1214,8 @@ lower_cond (operand *o)
 	      for (unsigned j = 0; j < ocmp->ops.length (); ++j)
 		cmp->append_op (ocmp->ops[j]);
 	      cmp->is_generic = true;
-	      ne->ops[0] = new capture (c->location, c->where, cmp);
+	      ne->ops[0] = new capture (c->location, c->where, cmp,
+					c->value_match);
 	    }
 	  else
 	    {
@@ -1114,7 +1242,7 @@ lower_cond (simplify *s, vec<simplify *>& simplifiers)
   vec<operand *> matchers = lower_cond (s->match);
   for (unsigned i = 0; i < matchers.length (); ++i)
     {
-      simplify *ns = new simplify (s->kind, matchers[i], s->result,
+      simplify *ns = new simplify (s->kind, s->id, matchers[i], s->result,
 				   s->for_vec, s->capture_ids);
       simplifiers.safe_push (ns);
     }
@@ -1166,7 +1294,7 @@ replace_id (operand *o, user_id *id, id_base *with)
       if (!c->what)
 	return c;
       return new capture (c->location, c->where,
-			  replace_id (c->what, id, with));
+			  replace_id (c->what, id, with), c->value_match);
     }
   else if (expr *e = dyn_cast<expr *> (o))
     {
@@ -1307,8 +1435,7 @@ lower_for (simplify *sin, vec<simplify *>& simplifiers)
 	    {
 	      operand *match_op = s->match;
 	      operand *result_op = s->result;
-	      vec<std::pair<user_id *, id_base *> > subst;
-	      subst.create (n_ids);
+	      auto_vec<std::pair<user_id *, id_base *> > subst (n_ids);
 	      bool skip = false;
 	      for (unsigned i = 0; i < n_ids; ++i)
 		{
@@ -1328,18 +1455,15 @@ lower_for (simplify *sin, vec<simplify *>& simplifiers)
 		    result_op = replace_id (result_op, id, oper);
 		}
 	      if (skip)
-		{
-		  subst.release ();
-		  continue;
-		}
-	      simplify *ns = new simplify (s->kind, match_op, result_op,
+		continue;
+
+	      simplify *ns = new simplify (s->kind, s->id, match_op, result_op,
 					   vNULL, s->capture_ids);
 	      ns->for_subst_vec.safe_splice (s->for_subst_vec);
 	      if (result_op
 		  && can_delay_subst)
 		ns->for_subst_vec.safe_splice (subst);
-	      else
-		subst.release ();
+
 	      worklist.safe_push (ns);
 	    }
 	}
@@ -1407,8 +1531,11 @@ struct sinfo_hashmap_traits : simple_hashmap_traits<pointer_hash<dt_simplify>,
 typedef hash_map<void * /* unused */, sinfo *, sinfo_hashmap_traits>
   sinfo_map_t;
 
+/* Current simplifier ID we are processing during insertion into the
+   decision tree.  */
+static unsigned current_id;
 
-/* Decision tree base class, used for DT_TRUE and DT_NODE.  */
+/* Decision tree base class, used for DT_NODE.  */
 
 struct dt_node
 {
@@ -1416,6 +1543,7 @@ struct dt_node
 
   enum dt_type type;
   unsigned level;
+  dt_node *parent;
   vec<dt_node *> kids;
 
   /* Statistics.  */
@@ -1423,12 +1551,14 @@ struct dt_node
   unsigned total_size;
   unsigned max_level;
 
-  dt_node (enum dt_type type_): type (type_), level (0), kids (vNULL) {}
+  dt_node (enum dt_type type_, dt_node *parent_)
+    : type (type_), level (0), parent (parent_), kids (vNULL) {}
 
   dt_node *append_node (dt_node *);
-  dt_node *append_op (operand *, dt_node *parent = 0, unsigned pos = 0);
-  dt_node *append_true_op (dt_node *parent = 0, unsigned pos = 0);
-  dt_node *append_match_op (dt_operand *, dt_node *parent = 0, unsigned pos = 0);
+  dt_node *append_op (operand *, dt_node *parent, unsigned pos);
+  dt_node *append_true_op (operand *, dt_node *parent, unsigned pos);
+  dt_node *append_match_op (operand *, dt_operand *, dt_node *parent,
+			    unsigned pos);
   dt_node *append_simplify (simplify *, unsigned, dt_operand **);
 
   virtual void gen (FILE *, int, bool) {}
@@ -1441,23 +1571,24 @@ struct dt_node
   void analyze (sinfo_map_t &);
 };
 
-/* Generic decision tree node used for DT_OPERAND and DT_MATCH.  */
+/* Generic decision tree node used for DT_OPERAND, DT_MATCH and DT_TRUE.  */
 
 struct dt_operand : public dt_node
 {
   operand *op;
   dt_operand *match_dop;
-  dt_operand *parent;
   unsigned pos;
+  bool value_match;
+  unsigned for_id;
 
   dt_operand (enum dt_type type, operand *op_, dt_operand *match_dop_,
-	      dt_operand *parent_ = 0, unsigned pos_ = 0)
-      : dt_node (type), op (op_), match_dop (match_dop_),
-      parent (parent_), pos (pos_) {}
+	      dt_operand *parent_, unsigned pos_)
+      : dt_node (type, parent_), op (op_), match_dop (match_dop_),
+      pos (pos_), value_match (false), for_id (current_id) {}
 
   void gen (FILE *, int, bool);
   unsigned gen_predicate (FILE *, int, const char *, bool);
-  unsigned gen_match_op (FILE *, int, const char *);
+  unsigned gen_match_op (FILE *, int, const char *, bool);
 
   unsigned gen_gimple_expr (FILE *, int);
   unsigned gen_generic_expr (FILE *, int, const char *);
@@ -1476,7 +1607,7 @@ struct dt_simplify : public dt_node
   sinfo *info;
 
   dt_simplify (simplify *s_, unsigned pattern_no_, dt_operand **indexes_)
-	: dt_node (DT_SIMPLIFY), s (s_), pattern_no (pattern_no_),
+	: dt_node (DT_SIMPLIFY, NULL), s (s_), pattern_no (pattern_no_),
 	  indexes (indexes_), info (NULL)  {}
 
   void gen_1 (FILE *, int, bool, operand *);
@@ -1489,7 +1620,8 @@ inline bool
 is_a_helper <dt_operand *>::test (dt_node *n)
 {
   return (n->type == dt_node::DT_OPERAND
-	  || n->type == dt_node::DT_MATCH);
+	  || n->type == dt_node::DT_MATCH
+	  || n->type == dt_node::DT_TRUE);
 }
 
 template<>
@@ -1512,7 +1644,7 @@ struct decision_tree
   void gen (FILE *f, bool gimple);
   void print (FILE *f = stderr);
 
-  decision_tree () { root = new dt_node (dt_node::DT_NODE); }
+  decision_tree () { root = new dt_node (dt_node::DT_NODE, NULL); }
 
   static dt_node *insert_operand (dt_node *, operand *, dt_operand **indexes,
 				  unsigned pos = 0, dt_node *parent = 0);
@@ -1565,8 +1697,10 @@ decision_tree::cmp_node (dt_node *n1, dt_node *n2)
     return cmp_operand ((as_a<dt_operand *> (n1))->op,
 			(as_a<dt_operand *> (n2))->op);
   else if (n1->type == dt_node::DT_MATCH)
-    return ((as_a<dt_operand *> (n1))->match_dop
-	    == (as_a<dt_operand *> (n2))->match_dop);
+    return (((as_a<dt_operand *> (n1))->match_dop
+	     == (as_a<dt_operand *> (n2))->match_dop)
+	    && ((as_a<dt_operand *> (n1))->value_match
+		== (as_a<dt_operand *> (n2))->value_match));
   return false;
 }
 
@@ -1580,15 +1714,48 @@ decision_tree::find_node (vec<dt_node *>& ops, dt_node *p)
       && !ops.is_empty ()
       && ops.last ()->type == dt_node::DT_TRUE)
     return ops.last ();
+  dt_operand *true_node = NULL;
   for (int i = ops.length () - 1; i >= 0; --i)
     {
       /* But we can't merge across DT_TRUE nodes as they serve as
          pattern order barriers to make sure that patterns apply
 	 in order of appearance in case multiple matches are possible.  */
       if (ops[i]->type == dt_node::DT_TRUE)
-	return NULL;
+	{
+	  if (! true_node
+	      || as_a <dt_operand *> (ops[i])->for_id > true_node->for_id)
+	    true_node = as_a <dt_operand *> (ops[i]);
+	}
       if (decision_tree::cmp_node (ops[i], p))
-	return ops[i];
+	{
+	  /* Unless we are processing the same pattern or the blocking
+	     pattern is before the one we are going to merge with.  */
+	  if (true_node
+	      && true_node->for_id != current_id
+	      && true_node->for_id > as_a <dt_operand *> (ops[i])->for_id)
+	    {
+	      if (verbose >= 1)
+		{
+		  source_location p_loc = 0;
+		  if (p->type == dt_node::DT_OPERAND)
+		    p_loc = as_a <dt_operand *> (p)->op->location;
+		  source_location op_loc = 0;
+		  if (ops[i]->type == dt_node::DT_OPERAND)
+		    op_loc = as_a <dt_operand *> (ops[i])->op->location;
+		  source_location true_loc = 0;
+		  true_loc = true_node->op->location;
+		  warning_at (p_loc,
+			      "failed to merge decision tree node");
+		  warning_at (op_loc,
+			      "with the following");
+		  warning_at (true_loc,
+			      "because of the following which serves as ordering "
+			      "barrier");
+		}
+	      return NULL;
+	    }
+	  return ops[i];
+	}
     }
   return NULL;
 }
@@ -1624,20 +1791,21 @@ dt_node::append_op (operand *op, dt_node *parent, unsigned pos)
 /* Append a DT_TRUE decision tree node.  */
 
 dt_node *
-dt_node::append_true_op (dt_node *parent, unsigned pos)
+dt_node::append_true_op (operand *op, dt_node *parent, unsigned pos)
 {
   dt_operand *parent_ = safe_as_a<dt_operand *> (parent);
-  dt_operand *n = new dt_operand (DT_TRUE, 0, 0, parent_, pos);
+  dt_operand *n = new dt_operand (DT_TRUE, op, 0, parent_, pos);
   return append_node (n);
 }
 
 /* Append a DT_MATCH decision tree node.  */
 
 dt_node *
-dt_node::append_match_op (dt_operand *match_dop, dt_node *parent, unsigned pos)
+dt_node::append_match_op (operand *op, dt_operand *match_dop,
+			  dt_node *parent, unsigned pos)
 {
   dt_operand *parent_ = as_a<dt_operand *> (parent);
-  dt_operand *n = new dt_operand (DT_MATCH, 0, match_dop, parent_, pos);
+  dt_operand *n = new dt_operand (DT_MATCH, op, match_dop, parent_, pos);
   return append_node (n);
 }
 
@@ -1716,7 +1884,7 @@ decision_tree::insert_operand (dt_node *p, operand *o, dt_operand **indexes,
 	    q = insert_operand (p, c->what, indexes, pos, parent);
 	  else
 	    {
-	      q = elm = p->append_true_op (parent, pos);
+	      q = elm = p->append_true_op (o, parent, pos);
 	      goto at_assert_elm;
 	    }
 	  // get to the last capture
@@ -1730,18 +1898,19 @@ decision_tree::insert_operand (dt_node *p, operand *o, dt_operand **indexes,
 	      unsigned cc_index = c->where;
 	      dt_operand *match_op = indexes[cc_index];
 
-	      dt_operand temp (dt_node::DT_TRUE, 0, 0);
+	      dt_operand temp (dt_node::DT_TRUE, 0, 0, 0, 0);
 	      elm = decision_tree::find_node (p->kids, &temp);
 
 	      if (elm == 0)
 		{
-		  dt_operand temp (dt_node::DT_MATCH, 0, match_op);
+		  dt_operand temp (dt_node::DT_MATCH, 0, match_op, 0, 0);
+		  temp.value_match = c->value_match;
 		  elm = decision_tree::find_node (p->kids, &temp);
 		}
 	    }
 	  else
 	    {
-	      dt_operand temp (dt_node::DT_OPERAND, c->what, 0);
+	      dt_operand temp (dt_node::DT_OPERAND, c->what, 0, 0, 0);
 	      elm = decision_tree::find_node (p->kids, &temp);
 	    }
 
@@ -1754,7 +1923,8 @@ at_assert_elm:
 	}
       else
 	{
-	  p = p->append_match_op (indexes[capt_index], parent, pos);
+	  p = p->append_match_op (o, indexes[capt_index], parent, pos);
+	  as_a <dt_operand *>(p)->value_match = c->value_match;
 	  if (c->what)
 	    return insert_operand (p, c->what, indexes, 0, p);
 	  else
@@ -1778,6 +1948,7 @@ at_assert_elm:
 void
 decision_tree::insert (struct simplify *s, unsigned pattern_no)
 {
+  current_id = s->id;
   dt_operand **indexes = XCNEWVEC (dt_operand *, s->capture_max + 1);
   dt_node *p = decision_tree::insert_operand (root, s->match, indexes);
   p->append_simplify (s, pattern_no, indexes);
@@ -1813,9 +1984,12 @@ decision_tree::print_node (dt_node *p, FILE *f, unsigned indent)
 	    fprintf (f, "%p, ", (void *) s->indexes[i]);
 	  fprintf (f, " } ");
 	}
+      if (is_a <dt_operand *> (p))
+	fprintf (f, " [%u]", as_a <dt_operand *> (p)->for_id);
     }
 
-  fprintf (stderr, " (%p), %u, %u\n", (void *) p, p->level, p->kids.length ());
+  fprintf (stderr, " (%p, %p), %u, %u\n",
+	   (void *) p, (void *) p->parent, p->level, p->kids.length ());
 
   for (unsigned i = 0; i < p->kids.length (); ++i)
     decision_tree::print_node (p->kids[i], f, indent + 2);
@@ -2093,8 +2267,10 @@ capture_info::walk_c_expr (c_expr *e)
 	    id = (const char *)n->val.str.text;
 	  else
 	    id = (const char *)CPP_HASHNODE (n->val.node.node)->ident.str;
-	  unsigned where = *e->capture_ids->get(id);
-	  info[info[where].same_as].force_no_side_effects_p = true;
+	  unsigned *where = e->capture_ids->get(id);
+	  if (! where)
+	    fatal_at (n, "unknown capture id '%s'", id);
+	  info[info[*where].same_as].force_no_side_effects_p = true;
 	  if (verbose >= 1
 	      && !gimple)
 	    warning_at (t, "capture escapes");
@@ -2115,11 +2291,12 @@ is_conversion (id_base *op)
 	  || *op == VIEW_CONVERT_EXPR);
 }
 
-/* Get the type to be used for generating operands of OP from the
+/* Get the type to be used for generating operand POS of OP from the
    various sources.  */
 
 static const char *
-get_operand_type (id_base *op, const char *in_type,
+get_operand_type (id_base *op, unsigned pos,
+		  const char *in_type,
 		  const char *expr_type,
 		  const char *other_oprnd_type)
 {
@@ -2134,6 +2311,9 @@ get_operand_type (id_base *op, const char *in_type,
   else if (is_a <operator_id *> (op)
 	   && strcmp (as_a <operator_id *> (op)->tcc, "tcc_comparison") == 0)
     return other_oprnd_type;
+  else if (*op == COND_EXPR
+	   && pos == 0)
+    return "boolean_type_node";
   else
     {
       /* Otherwise all types should match - choose one in order of
@@ -2183,8 +2363,14 @@ expr::gen_transform (FILE *f, int indent, const char *dest, bool gimple,
     {
       /* comparisons use boolean_type_node (or what gets in), but
          their operands need to figure out the types themselves.  */
-      sprintf (optype, "boolean_type_node");
-      type = optype;
+      if (in_type)
+	type = in_type;
+      else
+	{
+	  sprintf (optype, "boolean_type_node");
+	  type = optype;
+	}
+      in_type = NULL;
     }
   else if (*opr == COND_EXPR
 	   || *opr == VEC_COND_EXPR)
@@ -2212,7 +2398,7 @@ expr::gen_transform (FILE *f, int indent, const char *dest, bool gimple,
       char dest[32];
       snprintf (dest, 32, "ops%d[%u]", depth, i);
       const char *optype
-	= get_operand_type (opr, in_type, expr_type,
+	= get_operand_type (opr, i, in_type, expr_type,
 			    i == 0 ? NULL : op0type);
       ops[i]->gen_transform (f, indent, dest, gimple, depth + 1, optype,
 			     cinfo, indexes,
@@ -2439,12 +2625,12 @@ capture::gen_transform (FILE *f, int indent, const char *dest, bool gimple,
 char *
 dt_operand::get_name (char *name)
 {
-  if (!parent)
+  if (! parent)
     sprintf (name, "t");
   else if (parent->level == 1)
     sprintf (name, "op%u", pos);
   else if (parent->type == dt_node::DT_MATCH)
-    return parent->get_name (name);
+    return as_a <dt_operand *> (parent)->get_name (name);
   else
     sprintf (name, "o%u%u", parent->level, pos);
   return name;
@@ -2455,7 +2641,7 @@ dt_operand::get_name (char *name)
 void
 dt_operand::gen_opname (char *name, unsigned pos)
 {
-  if (!parent)
+  if (! parent)
     sprintf (name, "op%u", pos);
   else
     sprintf (name, "o%u%u", level, pos);
@@ -2489,12 +2675,20 @@ dt_operand::gen_predicate (FILE *f, int indent, const char *opname, bool gimple)
    a capture-match.  */
 
 unsigned
-dt_operand::gen_match_op (FILE *f, int indent, const char *opname)
+dt_operand::gen_match_op (FILE *f, int indent, const char *opname, bool)
 {
   char match_opname[20];
   match_dop->get_name (match_opname);
-  fprintf_indent (f, indent, "if (%s == %s || operand_equal_p (%s, %s, 0))\n",
-		  opname, match_opname, opname, match_opname);
+  if (value_match)
+    fprintf_indent (f, indent, "if ((%s == %s && ! TREE_SIDE_EFFECTS (%s)) "
+		    "|| operand_equal_p (%s, %s, 0))\n",
+		    opname, match_opname, opname, opname, match_opname);
+  else
+    fprintf_indent (f, indent, "if ((%s == %s && ! TREE_SIDE_EFFECTS (%s)) "
+		    "|| (operand_equal_p (%s, %s, 0) "
+		    "&& types_match (%s, %s)))\n",
+		    opname, match_opname, opname, opname, match_opname,
+		    opname, match_opname);
   fprintf_indent (f, indent + 2, "{\n");
   return 1;
 }
@@ -2507,6 +2701,7 @@ dt_operand::gen_gimple_expr (FILE *f, int indent)
   expr *e = static_cast<expr *> (op);
   id_base *id = e->operation;
   unsigned n_ops = e->ops.length ();
+  unsigned n_braces = 0;
 
   for (unsigned i = 0; i < n_ops; ++i)
     {
@@ -2522,21 +2717,32 @@ dt_operand::gen_gimple_expr (FILE *f, int indent)
 	      /* ???  If this is a memory operation we can't (and should not)
 		 match this.  The only sensible operand types are
 		 SSA names and invariants.  */
-	      fprintf_indent (f, indent,
-			      "tree %s = TREE_OPERAND (gimple_assign_rhs1 (def), %i);\n",
-			      child_opname, i);
+	      if (e->is_generic)
+		{
+		  char opname[20];
+		  get_name (opname);
+		  fprintf_indent (f, indent,
+				  "tree %s = TREE_OPERAND (%s, %i);\n",
+				  child_opname, opname, i);
+		}
+	      else
+		fprintf_indent (f, indent,
+				"tree %s = TREE_OPERAND "
+				"(gimple_assign_rhs1 (def), %i);\n",
+				child_opname, i);
 	      fprintf_indent (f, indent,
 			      "if ((TREE_CODE (%s) == SSA_NAME\n",
 			      child_opname);
 	      fprintf_indent (f, indent,
-			      "     || is_gimple_min_invariant (%s))\n",
+			      "     || is_gimple_min_invariant (%s)))\n",
 			      child_opname);
-	      fprintf_indent (f, indent,
-			      "    && (%s = do_valueize (valueize, %s)))\n",
-			      child_opname, child_opname);
 	      fprintf_indent (f, indent,
 			      "  {\n");
 	      indent += 4;
+	      n_braces++;
+	      fprintf_indent (f, indent,
+			      "%s = do_valueize (valueize, %s);\n",
+			      child_opname, child_opname);
 	      continue;
 	    }
 	  else
@@ -2549,10 +2755,8 @@ dt_operand::gen_gimple_expr (FILE *f, int indent)
 			"tree %s = gimple_call_arg (def, %u);\n",
 			child_opname, i);
       fprintf_indent (f, indent,
-		      "if ((%s = do_valueize (valueize, %s)))\n",
+		      "%s = do_valueize (valueize, %s);\n",
 		      child_opname, child_opname);
-      fprintf_indent (f, indent, "  {\n");
-      indent += 4;
     }
   /* While the toplevel operands are canonicalized by the caller
      after valueizing operands of sub-expressions we have to
@@ -2569,7 +2773,7 @@ dt_operand::gen_gimple_expr (FILE *f, int indent)
 	  gen_opname (child_opname0, 0);
 	  gen_opname (child_opname1, 1);
 	  fprintf_indent (f, indent,
-			  "if (tree_swap_operands_p (%s, %s, false))\n",
+			  "if (tree_swap_operands_p (%s, %s))\n",
 			  child_opname0, child_opname1);
 	  fprintf_indent (f, indent,
 			  "  std::swap (%s, %s);\n",
@@ -2577,7 +2781,7 @@ dt_operand::gen_gimple_expr (FILE *f, int indent)
 	}
     }
 
-  return n_ops;
+  return n_braces;
 }
 
 /* Generate GENERIC matching code for the decision tree operand.  */
@@ -2718,14 +2922,10 @@ dt_node::gen_kids_1 (FILE *f, int indent, bool gimple,
       fprintf_indent (f, indent,
 		      "case SSA_NAME:\n");
       fprintf_indent (f, indent,
-		      "  if (do_valueize (valueize, %s) != NULL_TREE)\n",
+		      "  if (gimple *def_stmt = get_def (valueize, %s))\n",
 		      kid_opname);
       fprintf_indent (f, indent,
 		      "    {\n");
-      fprintf_indent (f, indent,
-		      "      gimple *def_stmt = SSA_NAME_DEF_STMT (%s);\n",
-		      kid_opname);
-
       indent += 6;
       if (exprs_len)
 	{
@@ -2781,6 +2981,20 @@ dt_node::gen_kids_1 (FILE *f, int indent, bool gimple,
 
       indent -= 6;
       fprintf_indent (f, indent, "    }\n");
+      /* See if there is SSA_NAME among generic_exprs and if yes, emit it
+	 here rather than in the next loop.  */
+      for (unsigned i = 0; i < generic_exprs.length (); ++i)
+	{
+	  expr *e = as_a <expr *>(generic_exprs[i]->op);
+	  id_base *op = e->operation;
+	  if (*op == SSA_NAME && (exprs_len || fns_len))
+	    {
+	      fprintf_indent (f, indent + 4, "{\n");
+	      generic_exprs[i]->gen (f, indent + 6, gimple);
+	      fprintf_indent (f, indent + 4, "}\n");
+	    }
+	}
+
       fprintf_indent (f, indent, "  break;\n");
     }
 
@@ -2790,6 +3004,9 @@ dt_node::gen_kids_1 (FILE *f, int indent, bool gimple,
       id_base *op = e->operation;
       if (*op == CONVERT_EXPR || *op == NOP_EXPR)
 	fprintf_indent (f, indent, "CASE_CONVERT:\n");
+      else if (*op == SSA_NAME && (exprs_len || fns_len))
+	/* Already handled above.  */
+	continue;
       else
 	fprintf_indent (f, indent, "case %s:\n", op->id);
       fprintf_indent (f, indent, "  {\n");
@@ -2840,6 +3057,8 @@ dt_node::gen_kids_1 (FILE *f, int indent, bool gimple,
       expr *e = as_a <expr *> (preds[i]->op);
       predicate_id *p = as_a <predicate_id *> (e->operation);
       preds[i]->get_name (kid_opname);
+      fprintf_indent (f, indent, "{\n");
+      indent += 2;
       fprintf_indent (f, indent, "tree %s_pops[%d];\n", kid_opname, p->nargs);
       fprintf_indent (f, indent, "if (%s_%s (%s, %s_pops%s))\n",
 	       gimple ? "gimple" : "tree",
@@ -2855,6 +3074,8 @@ dt_node::gen_kids_1 (FILE *f, int indent, bool gimple,
 	}
       preds[i]->gen_kids (f, indent + 4, gimple);
       fprintf (f, "}\n");
+      indent -= 2;
+      fprintf_indent (f, indent, "}\n");
     }
 
   for (unsigned i = 0; i < others.length (); ++i)
@@ -2891,7 +3112,7 @@ dt_operand::gen (FILE *f, int indent, bool gimple)
   else if (type == DT_TRUE)
     ;
   else if (type == DT_MATCH)
-    n_braces = gen_match_op (f, indent, opname);
+    n_braces = gen_match_op (f, indent, opname, gimple);
   else
     gcc_unreachable ();
 
@@ -3022,7 +3243,7 @@ dt_simplify::gen_1 (FILE *f, int indent, bool gimple, operand *result)
 	}
     }
 
-  fprintf_indent (f, indent, "if (dump_file && (dump_flags & TDF_DETAILS)) "
+  fprintf_indent (f, indent, "if (dump_file && (dump_flags & TDF_FOLDING)) "
 	   "fprintf (dump_file, \"Applying pattern ");
   output_line_directive (f,
 			 result ? result->location : s->match->location, true);
@@ -3061,7 +3282,7 @@ dt_simplify::gen_1 (FILE *f, int indent, bool gimple, operand *result)
 	      char dest[32];
 	      snprintf (dest, 32, "res_ops[%d]", j);
 	      const char *optype
-		= get_operand_type (opr,
+		= get_operand_type (opr, j,
 				    "type", e->expr_type,
 				    j == 0 ? NULL : "TREE_TYPE (res_ops[0])");
 	      /* We need to expand GENERIC conditions we captured from
@@ -3151,7 +3372,7 @@ dt_simplify::gen_1 (FILE *f, int indent, bool gimple, operand *result)
 		  snprintf (dest, 32, "res_op%d", j);
 		}
 	      const char *optype
-	        = get_operand_type (opr,
+	        = get_operand_type (opr, j,
 				    "type", e->expr_type,
 				    j == 0
 				    ? NULL : "TREE_TYPE (res_op0)");
@@ -3263,7 +3484,8 @@ dt_simplify::gen (FILE *f, int indent, bool gimple)
 	  fprintf_indent (f, indent, "if (%s (res_code, res_ops, seq, "
 			  "valueize, type, captures", info->fname);
 	  for (unsigned i = 0; i < s->for_subst_vec.length (); ++i)
-	    fprintf (f, ", %s", s->for_subst_vec[i].second->id);
+	    if (s->for_subst_vec[i].first->used)
+	      fprintf (f, ", %s", s->for_subst_vec[i].second->id);
 	  fprintf (f, "))\n");
 	  fprintf_indent (f, indent, "  return true;\n");
 	}
@@ -3275,7 +3497,10 @@ dt_simplify::gen (FILE *f, int indent, bool gimple)
 	    fprintf (f, ", op%d", i);
 	  fprintf (f, ", captures");
 	  for (unsigned i = 0; i < s->for_subst_vec.length (); ++i)
-	    fprintf (f, ", %s", s->for_subst_vec[i].second->id);
+	    {
+	      if (s->for_subst_vec[i].first->used)
+		fprintf (f, ", %s", s->for_subst_vec[i].second->id);
+	    }
 	  fprintf (f, ");\n");
 	  fprintf_indent (f, indent, "if (res) return res;\n");
 	}
@@ -3284,12 +3509,14 @@ dt_simplify::gen (FILE *f, int indent, bool gimple)
     {
       for (unsigned i = 0; i < s->for_subst_vec.length (); ++i)
 	{
+	  if (! s->for_subst_vec[i].first->used)
+	    continue;
 	  if (is_a <operator_id *> (s->for_subst_vec[i].second))
-	    fprintf_indent (f, indent, "enum tree_code %s = %s;\n",
+	    fprintf_indent (f, indent, "const enum tree_code %s = %s;\n",
 			    s->for_subst_vec[i].first->id,
 			    s->for_subst_vec[i].second->id);
 	  else if (is_a <fn_id *> (s->for_subst_vec[i].second))
-	    fprintf_indent (f, indent, "combined_fn %s = %s;\n",
+	    fprintf_indent (f, indent, "const combined_fn %s = %s;\n",
 			    s->for_subst_vec[i].first->id,
 			    s->for_subst_vec[i].second->id);
 	  else
@@ -3425,13 +3652,13 @@ decision_tree::gen (FILE *f, bool gimple)
 		 "%s (code_helper *res_code, tree *res_ops,\n"
 		 "                 gimple_seq *seq, tree (*valueize)(tree) "
 		 "ATTRIBUTE_UNUSED,\n"
-		 "                 tree ARG_UNUSED (type), tree *ARG_UNUSED "
+		 "                 const tree ARG_UNUSED (type), tree *ARG_UNUSED "
 		 "(captures)\n",
 		 s->fname);
       else
 	{
 	  fprintf (f, "\nstatic tree\n"
-		   "%s (location_t ARG_UNUSED (loc), tree ARG_UNUSED (type),\n",
+		   "%s (location_t ARG_UNUSED (loc), const tree ARG_UNUSED (type),\n",
 		   (*iter).second->fname);
 	  for (unsigned i = 0;
 	       i < as_a <expr *>(s->s->s->match)->ops.length (); ++i)
@@ -3440,11 +3667,13 @@ decision_tree::gen (FILE *f, bool gimple)
 	}
       for (unsigned i = 0; i < s->s->s->for_subst_vec.length (); ++i)
 	{
+	  if (! s->s->s->for_subst_vec[i].first->used)
+	    continue;
 	  if (is_a <operator_id *> (s->s->s->for_subst_vec[i].second))
-	    fprintf (f, ", enum tree_code ARG_UNUSED (%s)",
+	    fprintf (f, ", const enum tree_code ARG_UNUSED (%s)",
 		     s->s->s->for_subst_vec[i].first->id);
 	  else if (is_a <fn_id *> (s->s->s->for_subst_vec[i].second))
-	    fprintf (f, ", combined_fn ARG_UNUSED (%s)",
+	    fprintf (f, ", const combined_fn ARG_UNUSED (%s)",
 		     s->s->s->for_subst_vec[i].first->id);
 	}
 
@@ -3485,7 +3714,7 @@ decision_tree::gen (FILE *f, bool gimple)
 	  else
 	    fprintf (f, "\nstatic tree\n"
 		     "generic_simplify_%s (location_t ARG_UNUSED (loc), enum "
-		     "tree_code ARG_UNUSED (code), tree ARG_UNUSED (type)",
+		     "tree_code ARG_UNUSED (code), const tree ARG_UNUSED (type)",
 		     e->operation->id);
 	  for (unsigned i = 0; i < n; ++i)
 	    fprintf (f, ", tree op%d", i);
@@ -3505,11 +3734,11 @@ decision_tree::gen (FILE *f, bool gimple)
 	fprintf (f, "\nstatic bool\n"
 		 "gimple_simplify (code_helper *res_code, tree *res_ops,\n"
 		 "                 gimple_seq *seq, tree (*valueize)(tree),\n"
-		 "                 code_helper code, tree type");
+		 "                 code_helper code, const tree type");
       else
 	fprintf (f, "\ntree\n"
 		 "generic_simplify (location_t loc, enum tree_code code, "
-		 "tree type ATTRIBUTE_UNUSED");
+		 "const tree type ATTRIBUTE_UNUSED");
       for (unsigned i = 0; i < n; ++i)
 	fprintf (f, ", tree op%d", i);
       fprintf (f, ")\n");
@@ -3571,9 +3800,9 @@ write_predicate (FILE *f, predicate_id *p, decision_tree &dt, bool gimple)
 	   "%s%s (tree t%s%s)\n"
 	   "{\n", gimple ? "gimple_" : "tree_", p->id,
 	   p->nargs > 0 ? ", tree *res_ops" : "",
-	   gimple ? ", tree (*valueize)(tree)" : "");
+	   gimple ? ", tree (*valueize)(tree) ATTRIBUTE_UNUSED" : "");
   /* Conveniently make 'type' available.  */
-  fprintf_indent (f, 2, "tree type = TREE_TYPE (t);\n");
+  fprintf_indent (f, 2, "const tree type = TREE_TYPE (t);\n");
 
   if (!gimple)
     fprintf_indent (f, 2, "if (TREE_SIDE_EFFECTS (t)) return false;\n");
@@ -3615,6 +3844,8 @@ private:
   const cpp_token *eat_ident (const char *);
   const char *get_number ();
 
+  unsigned get_internal_capture_id ();
+
   id_base *parse_operation ();
   operand *parse_capture (operand *, bool);
   operand *parse_expr ();
@@ -3634,6 +3865,8 @@ private:
   void parse_predicates (source_location);
   void parse_operator_list (source_location);
 
+  void finish_match_operand (operand *);
+
   cpp_reader *r;
   vec<c_expr *> active_ifs;
   vec<vec<user_id *> > active_fors;
@@ -3641,6 +3874,7 @@ private:
   vec<user_id *> oper_lists;
 
   cid_map_t *capture_ids;
+  unsigned last_id;
 
 public:
   vec<simplify *> simplifiers;
@@ -3660,8 +3894,7 @@ parser::next ()
     {
       token = cpp_get_token (r);
     }
-  while (token->type == CPP_PADDING
-	 && token->type != CPP_EOF);
+  while (token->type == CPP_PADDING);
   return token;
 }
 
@@ -3676,8 +3909,7 @@ parser::peek (unsigned num)
     {
       token = cpp_peek_token (r, i++);
     }
-  while ((token->type == CPP_PADDING
-	  && token->type != CPP_EOF)
+  while (token->type == CPP_PADDING
 	 || (--num > 0));
   /* If we peek at EOF this is a fatal error as it leaves the
      cpp_reader in unusable state.  Assume we really wanted a
@@ -3770,6 +4002,21 @@ parser::get_number ()
   return (const char *)token->val.str.text;
 }
 
+/* Return a capture ID that can be used internally.  */
+
+unsigned
+parser::get_internal_capture_id ()
+{
+  unsigned newid = capture_ids->elements ();
+  /* Big enough for a 32-bit UINT_MAX plus prefix.  */
+  char id[13];
+  bool existed;
+  sprintf (id, "__%u", newid);
+  capture_ids->get_or_insert (xstrdup (id), &existed);
+  if (existed)
+    fatal ("reserved capture id '%s' already used", id);
+  return newid;
+}
 
 /* Record an operator-list use for transparent for handling.  */
 
@@ -3851,6 +4098,16 @@ parser::parse_capture (operand *op, bool require_existing)
   source_location src_loc = eat_token (CPP_ATSIGN)->src_loc;
   const cpp_token *token = peek ();
   const char *id = NULL;
+  bool value_match = false;
+  /* For matches parse @@ as a value-match denoting the prevailing operand.  */
+  if (token->type == CPP_ATSIGN
+      && ! (token->flags & PREV_WHITE)
+      && parsing_match_operand)
+    {
+      eat_token (CPP_ATSIGN);
+      token = peek ();
+      value_match = true;
+    }
   if (token->type == CPP_NUMBER)
     id = get_number ();
   else if (token->type == CPP_NAME)
@@ -3866,7 +4123,7 @@ parser::parse_capture (operand *op, bool require_existing)
 	fatal_at (src_loc, "unknown capture id");
       num = next_id;
     }
-  return new capture (src_loc, num, op);
+  return new capture (src_loc, num, op, value_match);
 }
 
 /* Parse an expression
@@ -3900,6 +4157,30 @@ parser::parse_expr ()
 	      while (*sp)
 		{
 		  if (*sp == 'c')
+		    {
+		      if (operator_id *p
+			    = dyn_cast<operator_id *> (e->operation))
+			{
+			  if (!commutative_tree_code (p->code)
+			      && !comparison_code_p (p->code))
+			    fatal_at (token, "operation is not commutative");
+			}
+		      else if (user_id *p = dyn_cast<user_id *> (e->operation))
+			for (unsigned i = 0;
+			     i < p->substitutes.length (); ++i)
+			  {
+			    if (operator_id *q
+				  = dyn_cast<operator_id *> (p->substitutes[i]))
+			      {
+				if (!commutative_tree_code (q->code)
+				    && !comparison_code_p (q->code))
+				  fatal_at (token, "operation %s is not "
+					    "commutative", q->id);
+			      }
+			  }
+		      is_commutative = true;
+		    }
+		  else if (*sp == 'C')
 		    is_commutative = true;
 		  else if (*sp == 's')
 		    {
@@ -3922,14 +4203,8 @@ parser::parse_expr ()
     op = parse_capture (e, false);
   else if (force_capture)
     {
-      unsigned num = capture_ids->elements ();
-      char id[8];
-      bool existed;
-      sprintf (id, "__%u", num);
-      capture_ids->get_or_insert (xstrdup (id), &existed);
-      if (existed)
-	fatal_at (token, "reserved capture id '%s' already used", id);
-      op = new capture (token->src_loc, num, e);
+      unsigned num = get_internal_capture_id ();
+      op = new capture (token->src_loc, num, e, false);
     }
   else
     op = e;
@@ -3991,6 +4266,8 @@ parser::parse_c_expr (cpp_ttype start)
       else if (token->type == end
 	       && --opencnt == 0)
 	break;
+      else if (token->type == CPP_EOF)
+	fatal_at (token, "unexpected end of file");
 
       /* This is a lame way of counting the number of statements.  */
       if (token->type == CPP_SEMICOLON)
@@ -4093,7 +4370,7 @@ parser::push_simplify (simplify::simplify_kind kind,
     active_fors.safe_push (oper_lists);
 
   simplifiers.safe_push
-    (new simplify (kind, match, result,
+    (new simplify (kind, last_id++, match, result,
 		   active_fors.copy (), capture_ids));
 
   if (!oper_lists.is_empty ())
@@ -4241,6 +4518,7 @@ parser::parse_simplify (simplify::simplify_kind kind,
   const cpp_token *loc = peek ();
   parsing_match_operand = true;
   struct operand *match = parse_op ();
+  finish_match_operand (match);
   parsing_match_operand = false;
   if (match->type == operand::OP_CAPTURE && !matcher)
     fatal_at (loc, "outermost expression cannot be captured");
@@ -4581,6 +4859,69 @@ parser::parse_pattern ()
   eat_token (CPP_CLOSE_PAREN);
 }
 
+/* Helper for finish_match_operand, collecting captures of OP in CPTS
+   recursively.  */
+
+static void
+walk_captures (operand *op, vec<vec<capture *> > cpts)
+{
+  if (! op)
+    return;
+
+  if (capture *c = dyn_cast <capture *> (op))
+    {
+      cpts[c->where].safe_push (c);
+      walk_captures (c->what, cpts);
+    }
+  else if (expr *e = dyn_cast <expr *> (op))
+    for (unsigned i = 0; i < e->ops.length (); ++i)
+      walk_captures (e->ops[i], cpts);
+}
+
+/* Finish up OP which is a match operand.  */
+
+void
+parser::finish_match_operand (operand *op)
+{
+  /* Look for matching captures, diagnose mis-uses of @@ and apply
+     early lowering and distribution of value_match.  */
+  auto_vec<vec<capture *> > cpts;
+  cpts.safe_grow_cleared (capture_ids->elements ());
+  walk_captures (op, cpts);
+  for (unsigned i = 0; i < cpts.length (); ++i)
+    {
+      capture *value_match = NULL;
+      for (unsigned j = 0; j < cpts[i].length (); ++j)
+	{
+	  if (cpts[i][j]->value_match)
+	    {
+	      if (value_match)
+		fatal_at (cpts[i][j]->location, "duplicate @@");
+	      value_match = cpts[i][j];
+	    }
+	}
+      if (cpts[i].length () == 1 && value_match)
+	fatal_at (value_match->location, "@@ without a matching capture");
+      if (value_match)
+	{
+	  /* Duplicate prevailing capture with the existing ID, create
+	     a fake ID and rewrite all captures to use it.  This turns
+	     @@1 into @__<newid>@1 and @1 into @__<newid>.  */
+	  value_match->what = new capture (value_match->location,
+					   value_match->where,
+					   value_match->what, false);
+	  /* Create a fake ID and rewrite all captures to use it.  */
+	  unsigned newid = get_internal_capture_id ();
+	  for (unsigned j = 0; j < cpts[i].length (); ++j)
+	    {
+	      cpts[i][j]->where = newid;
+	      cpts[i][j]->value_match = true;
+	    }
+	}
+      cpts[i].release ();
+    }
+}
+
 /* Main entry of the parser.  Repeatedly parse outer control structures.  */
 
 parser::parser (cpp_reader *r_)
@@ -4594,6 +4935,7 @@ parser::parser (cpp_reader *r_)
   capture_ids = NULL;
   user_predicates = vNULL;
   parsing_match_operand = false;
+  last_id = 0;
 
   const cpp_token *token = next ();
   while (token->type != CPP_EOF)

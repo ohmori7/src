@@ -1,13 +1,13 @@
-/*	$NetBSD: hb.c,v 1.19 2011/02/20 07:56:31 matt Exp $	*/
+/*	$NetBSD: hb.c,v 1.21 2020/11/21 17:54:47 thorpej Exp $	*/
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: hb.c,v 1.19 2011/02/20 07:56:31 matt Exp $");
+__KERNEL_RCSID(0, "$NetBSD: hb.c,v 1.21 2020/11/21 17:54:47 thorpej Exp $");
 
 #define __INTR_PRIVATE
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/device.h>
-#include <sys/malloc.h>
+#include <sys/kmem.h>
 #include <sys/intr.h>
 
 #include <machine/autoconf.h>
@@ -99,10 +99,7 @@ hb_intr_establish(int level, int mask, int priority, int (*func)(void *),
 
 	ip = &hbintr_tab[level];
 
-	ih = malloc(sizeof(*ih), M_DEVBUF, M_NOWAIT);
-	if (ih == NULL)
-		panic("%s: malloc failed", __func__);
-
+	ih = kmem_alloc(sizeof(*ih), KM_SLEEP);
 	ih->ih_func = func;
 	ih->ih_arg = arg;
 	ih->ih_level = level;

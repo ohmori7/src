@@ -145,7 +145,7 @@ base-sysutil-examples	example configuration files for miscellaneous system utili
 base-sysutil-root	root file system support for system utilities
 base-sysutil-share	shared data files for system utilities
 base-sysutil_locale-share	shared locale support for system utilities
-base-termcap-share	shared files for terminal capability database
+base-terminfo-share	shared files for terminal capability database
 base-texinfo-bin	the GNU texinfo software
 base-texinfo-share	shared data files for the GNU texinfo software
 base-texinfo_locale-cs	Czech language support for the GNU texinfo software
@@ -501,6 +501,7 @@ comp-util-catman	formatted manual pages for programming utilities
 comp-util-man	manual pages source for programming utilities
 comp-util-sbin	system development utilities
 comp-util-share	reference files for programming utilities 
+dtb-base-boot	devicetree blobs
 etc-amd-rc	startup script for auto-mounter daemon
 etc-audio-rc startup script for audio mixer control utility
 etc-bind-etc	configuration files for BIND DNS server
@@ -843,3 +844,10 @@ text-groff-share		Swedish language;
 text-groff-share		ms - the Manuscript macros, set of macros for writing manuscripts;
 text-texinfo-bin	the GNU texinfo software
 text-texinfo-share	shared files for the GNU texinfo software
+xbase-i810-lib	Intel i810 video driver
+xbase-libdrm-amdgpu	AMD RADEON GPU video driver
+xbase-libdrm-intel	Intel integrated graphics chipsets
+xbase-libdrm-nouveau	NVIDIA video driver
+xbase-libvdpau-lib	Video Decode and Presentation API for Unix
+xbase-openchrome-lib	video driver for VIA Unichromes
+xbase-xvmc-lib	X-VideoMotion Compensation

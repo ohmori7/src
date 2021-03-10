@@ -1,4 +1,4 @@
-/*	$NetBSD: exynos_wdt.c,v 1.10 2016/01/07 04:41:46 marty Exp $	*/
+/*	$NetBSD: exynos_wdt.c,v 1.12 2021/01/27 03:10:19 thorpej Exp $	*/
 
 /*-
  * Copyright (c) 2012 The NetBSD Foundation, Inc.
@@ -32,7 +32,7 @@
 #include "exynos_wdt.h"
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: exynos_wdt.c,v 1.10 2016/01/07 04:41:46 marty Exp $");
+__KERNEL_RCSID(0, "$NetBSD: exynos_wdt.c,v 1.12 2021/01/27 03:10:19 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -86,14 +86,18 @@ exynos_wdt_wdog_write(struct exynos_wdt_softc *sc, bus_size_t o, uint32_t v)
 	bus_space_write_4(sc->sc_bst, sc->sc_wdog_bsh, o, v);
 }
 
+static const struct device_compatible_entry compat_data[] = {
+	{ .compat = "samsung,exynos5420-wdt" },
+	DEVICE_COMPAT_EOL
+};
+
 /* ARGSUSED */
 static int
 exynos_wdt_match(device_t parent, cfdata_t cf, void *aux)
 {
-	const char * const compatible[] = { "samsung,exynos5420-wdt", NULL };
 	struct fdt_attach_args * const faa = aux;
 
-	return of_match_compatible(faa->faa_phandle, compatible);
+	return of_compatible_match(faa->faa_phandle, compat_data);
 }
 
 static int
@@ -192,7 +196,7 @@ exynos_wdt_attach(device_t parent, device_t self, void *aux)
 
 	error = bus_space_map(sc->sc_bst, addr, size, 0, &sc->sc_wdog_bsh);
 	if (error) {
-		aprint_error(": couldn't map %#llx: %d", (uint64_t)addr, error);
+		aprint_error(": couldn't map %#" PRIxBUSADDR ": %d", addr, error);
 		return;
 	}
 

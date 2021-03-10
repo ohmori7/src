@@ -1,5 +1,5 @@
 /* Command line option handling.
-   Copyright (C) 2006-2016 Free Software Foundation, Inc.
+   Copyright (C) 2006-2018 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -24,8 +24,27 @@ along with GCC; see the file COPYING3.  If not see
 #include "opts.h"
 #include "options.h"
 #include "diagnostic.h"
+#include "spellcheck.h"
 
 static void prune_options (struct cl_decoded_option **, unsigned int *);
+
+/* An option that is undocumented, that takes a joined argument, and
+   that doesn't fit any of the classes of uses (language/common,
+   driver, target) is assumed to be a prefix used to catch
+   e.g. negated options, and stop them from being further shortened to
+   a prefix that could use the negated option as an argument.  For
+   example, we want -gno-statement-frontiers to be taken as a negation
+   of -gstatement-frontiers, but without catching the gno- prefix and
+   signaling it's to be used for option remapping, it would end up
+   backtracked to g with no-statemnet-frontiers as the debug level.  */
+
+static bool
+remapping_prefix_p (const struct cl_option *opt)
+{
+  return opt->flags & CL_UNDOCUMENTED
+    && opt->flags & CL_JOINED
+    && !(opt->flags & (CL_DRIVER | CL_TARGET | CL_COMMON | CL_LANG_ALL));
+}
 
 /* Perform a binary search to find which option the command-line INPUT
    matches.  Returns its index in the option array, and
@@ -96,6 +115,9 @@ find_opt (const char *input, unsigned int lang_mask)
 	  /* If language is OK, return it.  */
 	  if (opt->flags & lang_mask)
 	    return mn;
+
+	  if (remapping_prefix_p (opt))
+	    return OPT_SPECIAL_unknown;
 
 	  /* If we haven't remembered a prior match, remember this
 	     one.  Any prior match is necessarily better.  */
@@ -285,7 +307,8 @@ generate_canonical_option (size_t opt_index, const char *arg, int value,
 
   if (value == 0
       && !option->cl_reject_negative
-      && (opt_text[1] == 'W' || opt_text[1] == 'f' || opt_text[1] == 'm'))
+      && (opt_text[1] == 'W' || opt_text[1] == 'f'
+	  || opt_text[1] == 'g' || opt_text[1] == 'm'))
     {
       char *t = XOBNEWVEC (&opts_obstack, char, option->opt_len + 5);
       t[0] = '-';
@@ -348,6 +371,7 @@ static const struct option_map option_map[] =
   {
     { "-Wno-", NULL, "-W", false, true },
     { "-fno-", NULL, "-f", false, true },
+    { "-gno-", NULL, "-g", false, true },
     { "-mno-", NULL, "-m", false, true },
     { "--debug=", NULL, "-g", false, false },
     { "--machine-", NULL, "-m", true, false },
@@ -393,6 +417,8 @@ add_misspelling_candidates (auto_vec<char *> *candidates,
   gcc_assert (candidates);
   gcc_assert (option);
   gcc_assert (opt_text);
+  if (remapping_prefix_p (option))
+    return;
   candidates->safe_push (xstrdup (opt_text + 1));
   for (unsigned i = 0; i < ARRAY_SIZE (option_map); i++)
     {
@@ -437,7 +463,8 @@ decode_cmdline_option (const char **argv, unsigned int lang_mask,
 
   extra_args = 0;
 
-  opt_index = find_opt (argv[0] + 1, lang_mask);
+  const char *opt_value = argv[0] + 1;
+  opt_index = find_opt (opt_value, lang_mask);
   i = 0;
   while (opt_index == OPT_SPECIAL_unknown
 	 && i < ARRAY_SIZE (option_map))
@@ -640,6 +667,23 @@ decode_cmdline_option (const char **argv, unsigned int lang_mask,
   /* Check if this is a switch for a different front end.  */
   if (!option_ok_for_language (option, lang_mask))
     errors |= CL_ERR_WRONG_LANG;
+  else if (strcmp (option->opt_text, "-Werror=") == 0
+	   && strchr (opt_value, ',') == NULL)
+    {
+      /* Verify that -Werror argument is a valid warning
+	 for a language.  */
+      char *werror_arg = xstrdup (opt_value + 6);
+      werror_arg[0] = 'W';
+
+      size_t warning_index = find_opt (werror_arg, lang_mask);
+      if (warning_index != OPT_SPECIAL_unknown)
+	{
+	  const struct cl_option *warning_option
+	    = &cl_options[warning_index];
+	  if (!option_ok_for_language (warning_option, lang_mask))
+	    errors |= CL_ERR_WRONG_LANG;
+	}
+    }
 
   /* Convert the argument to lowercase if appropriate.  */
   if (arg && option->cl_tolower)
@@ -660,6 +704,11 @@ decode_cmdline_option (const char **argv, unsigned int lang_mask,
       value = integral_argument (arg);
       if (value == -1)
 	errors |= CL_ERR_UINT_ARG;
+
+      /* Reject value out of a range.  */
+      if (option->range_max != -1
+	  && (value < option->range_min || value > option->range_max))
+	errors |= CL_ERR_INT_RANGE_ARG;
     }
 
   /* If the switch takes an enumerated argument, convert it.  */
@@ -958,9 +1007,10 @@ keep:
    option for options from the source file, UNKNOWN_LOCATION
    otherwise.  GENERATED_P is true for an option generated as part of
    processing another option or otherwise generated internally, false
-   for one explicitly passed by the user.  Returns false if the switch
-   was invalid.  DC is the diagnostic context for options affecting
-   diagnostics state, or NULL.  */
+   for one explicitly passed by the user.  control_warning_option
+   generated options are considered explicitly passed by the user.
+   Returns false if the switch was invalid.  DC is the diagnostic
+   context for options affecting diagnostics state, or NULL.  */
 
 static bool
 handle_option (struct gcc_options *opts,
@@ -1005,13 +1055,13 @@ handle_generated_option (struct gcc_options *opts,
 			 size_t opt_index, const char *arg, int value,
 			 unsigned int lang_mask, int kind, location_t loc,
 			 const struct cl_option_handlers *handlers,
-			 diagnostic_context *dc)
+			 bool generated_p, diagnostic_context *dc)
 {
   struct cl_decoded_option decoded;
 
   generate_option (opt_index, arg, value, lang_mask, &decoded);
   return handle_option (opts, opts_set, &decoded, lang_mask, kind, loc,
-			handlers, true, dc);
+			handlers, generated_p, dc);
 }
 
 /* Fill in *DECODED with an option described by OPT_INDEX, ARG and
@@ -1069,6 +1119,38 @@ generate_option_input_file (const char *file,
   decoded->errors = 0;
 }
 
+/* Helper function for listing valid choices and hint for misspelled
+   value.  CANDIDATES is a vector containing all valid strings,
+   STR is set to a heap allocated string that contains all those
+   strings concatenated, separated by spaces, and the return value
+   is the closest string from those to ARG, or NULL if nothing is
+   close enough.  Callers should XDELETEVEC (STR) after using it
+   to avoid memory leaks.  */
+
+const char *
+candidates_list_and_hint (const char *arg, char *&str,
+			  const auto_vec <const char *> &candidates)
+{
+  size_t len = 0;
+  int i;
+  const char *candidate;
+  char *p;
+
+  FOR_EACH_VEC_ELT (candidates, i, candidate)
+    len += strlen (candidate) + 1;
+
+  str = p = XNEWVEC (char, len);
+  FOR_EACH_VEC_ELT (candidates, i, candidate)
+    {
+      len = strlen (candidate);
+      memcpy (p, candidate, len);
+      p[len] = ' ';
+      p += len + 1;
+    }
+  p[-1] = '\0';
+  return find_closest_string (arg, &candidates);
+}
+
 /* Perform diagnostics for read_cmdline_option and control_warning_option
    functions.  Returns true if an error has been diagnosed.
    LOC and LANG_MASK arguments like in read_cmdline_option.
@@ -1104,35 +1186,39 @@ cmdline_handle_error (location_t loc, const struct cl_option *option,
       return true;
     }
 
+  if (errors & CL_ERR_INT_RANGE_ARG)
+    {
+      error_at (loc, "argument to %qs is not between %d and %d",
+		option->opt_text, option->range_min, option->range_max);
+      return true;
+    }
+
   if (errors & CL_ERR_ENUM_ARG)
     {
       const struct cl_enum *e = &cl_enums[option->var_enum];
       unsigned int i;
-      size_t len;
-      char *s, *p;
+      char *s;
 
       if (e->unknown_error)
 	error_at (loc, e->unknown_error, arg);
       else
 	error_at (loc, "unrecognized argument in option %qs", opt);
 
-      len = 0;
-      for (i = 0; e->values[i].arg != NULL; i++)
-	len += strlen (e->values[i].arg) + 1;
-
-      s = XALLOCAVEC (char, len);
-      p = s;
+      auto_vec <const char *> candidates;
       for (i = 0; e->values[i].arg != NULL; i++)
 	{
 	  if (!enum_arg_ok_for_language (&e->values[i], lang_mask))
 	    continue;
-	  size_t arglen = strlen (e->values[i].arg);
-	  memcpy (p, e->values[i].arg, arglen);
-	  p[arglen] = ' ';
-	  p += arglen + 1;
+	  candidates.safe_push (e->values[i].arg);
 	}
-      p[-1] = 0;
-      inform (loc, "valid arguments to %qs are: %s", option->opt_text, s);
+      const char *hint = candidates_list_and_hint (arg, s, candidates);
+      if (hint)
+	inform (loc, "valid arguments to %qs are: %s; did you mean %qs?",
+		option->opt_text, s, hint);
+      else
+	inform (loc, "valid arguments to %qs are: %s", option->opt_text, s);
+      XDELETEVEC (s);
+
       return true;
     }
 
@@ -1474,7 +1560,7 @@ control_warning_option (unsigned int opt_index, int kind, const char *arg,
 
 	  handle_generated_option (opts, opts_set,
 				   opt_index, arg, value, lang_mask,
-				   kind, loc, handlers, dc);
+				   kind, loc, handlers, false, dc);
 	}
     }
 }

@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.5 2019/06/17 14:57:57 christos Exp $
+#	$NetBSD: Makefile,v 1.7 2020/01/21 02:37:16 pgoyette Exp $
 
 .include "../Makefile.inc"
 
@@ -7,7 +7,6 @@
 KMOD=	compat_50
 
 CPPFLAGS+=	-DCOMPAT_50 -DCOMPAT_60 -DCOMPAT_70 -DCOMPAT_80
-CPPFLAGS+=	-DQUOTA
 
 SRCS+=	compat_50_mod.c
 SRCS+=	kern_50.c kern_time_50.c kern_select_50.c
@@ -21,6 +20,8 @@ CPPFLAGS+=	-DINET -DINET6
 
 SRCS+=	rtsock_50.c
 
+COPTS.rtsock_50.c+=-Wno-sign-compare
+
 .PATH:	${S}/fs/puffs
 
 SRCS+=	puffs_compat.c
@@ -32,7 +33,5 @@ SRCS+=  wsevent_50.c
 .PATH:	${S}/dev
 
 SRCS+=	vnd_50.c
-
-WARNS=	3
 
 .include <bsd.kmodule.mk>

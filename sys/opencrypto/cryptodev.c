@@ -1,4 +1,4 @@
-/*	$NetBSD: cryptodev.c,v 1.101 2019/06/13 02:02:45 christos Exp $ */
+/*	$NetBSD: cryptodev.c,v 1.106 2020/06/30 04:14:55 riastradh Exp $ */
 /*	$FreeBSD: src/sys/opencrypto/cryptodev.c,v 1.4.2.4 2003/06/03 00:09:02 sam Exp $	*/
 /*	$OpenBSD: cryptodev.c,v 1.53 2002/07/10 22:21:30 mickey Exp $	*/
 
@@ -64,7 +64,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: cryptodev.c,v 1.101 2019/06/13 02:02:45 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: cryptodev.c,v 1.106 2020/06/30 04:14:55 riastradh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -1576,7 +1576,7 @@ cryptodev_session(struct fcrypt *fcr, struct session_op *sop)
 		txform = &enc_xform_skipjack;
 		break;
 	case CRYPTO_AES_CBC:
-		txform = &enc_xform_rijndael128;
+		txform = &enc_xform_aes;
 		break;
 	case CRYPTO_CAMELLIA_CBC:
 		txform = &enc_xform_camellia;
@@ -1643,6 +1643,12 @@ cryptodev_session(struct fcrypt *fcr, struct session_op *sop)
 			DPRINTF("Invalid mackeylen %d\n", sop->mackeylen);
 			return EINVAL;
 		}
+		break;
+	case CRYPTO_SHA2_384_HMAC:
+		thash = &auth_hash_hmac_sha2_384;
+		break;
+	case CRYPTO_SHA2_512_HMAC:
+		thash = &auth_hash_hmac_sha2_512;
 		break;
 	case CRYPTO_RIPEMD160_HMAC:
 		thash = &auth_hash_hmac_ripemd_160;
@@ -1781,6 +1787,7 @@ cryptodev_msession(struct fcrypt *fcr, struct session_n_op *sn_ops,
 		s_op.key =		sn_ops->key;
 		s_op.mackeylen =	sn_ops->mackeylen;
 		s_op.mackey =		sn_ops->mackey;
+		s_op.ses =		~0;
 
 		sn_ops->status = cryptodev_session(fcr, &s_op);
 
@@ -2110,7 +2117,6 @@ cryptof_poll(struct file *fp, int events)
 void
 cryptoattach(int num)
 {
-	int error;
 
 	crypto_init();
 
@@ -2128,9 +2134,8 @@ cryptoattach(int num)
 	 * the negotiation, plus HMAC_SHA1 for the actual SSL records,
 	 * consuming one session here for each algorithm.
 	 */
-	if ((error = pool_prime(&fcrpl, 64)) != 0 ||
-	    (error = pool_prime(&csepl, 64 * 5)) != 0)
-		panic("%s: can't prime pool: %d", __func__, error);
+	pool_prime(&fcrpl, 64);
+	pool_prime(&csepl, 64 * 5);
 }
 
 void	crypto_attach(device_t, device_t, void *);
@@ -2194,6 +2199,7 @@ crypto_modcmd(modcmd_t cmd, void *arg)
 {
 	int error = 0;
 #ifdef _MODULE
+	int error2;
 	devmajor_t cmajor = NODEVMAJOR, bmajor = NODEVMAJOR;
 #endif
 
@@ -2228,14 +2234,14 @@ crypto_modcmd(modcmd_t cmd, void *arg)
 		error = devsw_attach(crypto_cd.cd_name, NULL, &bmajor,
 		    &crypto_cdevsw, &cmajor);
 		if (error) {
-			error = config_cfdata_detach(crypto_cfdata);
-			if (error) {
-				return error;
+			error2 = config_cfdata_detach(crypto_cfdata);
+			if (error2) {
+				return error2;
 			}
 			config_cfattach_detach(crypto_cd.cd_name, &crypto_ca);
 			config_cfdriver_detach(&crypto_cd);
-			aprint_error("%s: unable to register devsw\n",
-				crypto_cd.cd_name);
+			aprint_error("%s: unable to register devsw, error %d\n",
+				crypto_cd.cd_name, error);
 
 			return error;
 		}

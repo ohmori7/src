@@ -1,4 +1,4 @@
-/*	$NetBSD: md.c,v 1.4 2019/06/12 06:20:20 martin Exp $	*/
+/*	$NetBSD: md.c,v 1.6 2020/10/12 16:14:34 martin Exp $	*/
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -124,7 +124,7 @@ md_post_newfs(struct install_partition_desc *install)
 	return 0;
 }
 
-bool
+int
 md_make_bsd_partitions(struct install_partition_desc *install)
 {
 
@@ -188,7 +188,7 @@ md_post_extract(struct install_partition_desc *install)
 }
 
 int
-md_pre_mount(struct install_partition_desc *install)
+md_pre_mount(struct install_partition_desc *install, size_t ndx)
 {
 	return 0;
 }

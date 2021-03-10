@@ -1,4 +1,4 @@
-/*	$NetBSD: md.c,v 1.5 2019/06/12 06:20:21 martin Exp $	*/
+/*	$NetBSD: md.c,v 1.9 2020/10/12 16:14:35 martin Exp $	*/
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -110,7 +110,7 @@ md_get_info(struct install_partition_desc *install)
 /*
  * md back-end code for menu-driven BSD disklabel editor.
  */
-bool
+int
 md_make_bsd_partitions(struct install_partition_desc *install)
 {
 
@@ -164,7 +164,7 @@ copy_bootloader(const char *diskdev)
 {
 	const char *mntdir = "/mnt2";
 
-	msg_display(MSG_copybootloader, diskdev);
+	msg_fmt_display(MSG_copybootloader, "%s", diskdev);
 	if (!run_program(RUN_SILENT | RUN_ERROR_OK,
 	    "mount %s %s", diskdev, mntdir)) {
 		mnt2_mounted = 1;
@@ -193,11 +193,11 @@ md_post_newfs(struct install_partition_desc *install)
 
 	if (!install->infos[0].parts->pscheme->get_part_device(
 	    install->infos[0].parts, install->infos[0].cur_part_id,
- 	    rdisk, sizeof rdisk, NULL, raw_dev_name, true))
+ 	    rdisk, sizeof rdisk, NULL, raw_dev_name, true, true))
 		return 1;
 	if (!install->infos[0].parts->pscheme->get_part_device(
 	    install->infos[0].parts, install->infos[0].cur_part_id,
-	    disk, sizeof disk, NULL, plain_name, true))
+	    disk, sizeof disk, NULL, plain_name, true, true))
 		return 1;
 
 	if (run_program(RUN_DISPLAY | RUN_PROGRESS,
@@ -246,7 +246,7 @@ md_update(struct install_partition_desc *install)
 
 	if (!install->infos[0].parts->pscheme->get_part_device(
 	    install->infos[0].parts, install->infos[0].cur_part_id,
- 	    disk, sizeof disk, NULL, plain_name, true))
+ 	    disk, sizeof disk, NULL, plain_name, true, true))
 		return 0;
 
 	/*
@@ -268,7 +268,7 @@ md_update(struct install_partition_desc *install)
 }
 
 int
-md_pre_mount(struct install_partition_desc *install)
+md_pre_mount(struct install_partition_desc *install, size_t ndx)
 {
 	return 0;
 }

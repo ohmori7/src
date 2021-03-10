@@ -1,4 +1,4 @@
-/* $NetBSD: loadfile_elf32.c,v 1.53 2018/08/23 17:35:42 jmcneill Exp $ */
+/* $NetBSD: loadfile_elf32.c,v 1.59 2020/09/13 13:31:36 jmcneill Exp $ */
 
 /*
  * Copyright (c) 1997, 2008, 2017 The NetBSD Foundation, Inc.
@@ -59,12 +59,18 @@
 #define	ELFROUND	(ELFSIZE / 8)
 
 #ifndef _STANDALONE
-#include "byteorder.h"
-
 /*
  * Byte swapping may be necessary in the non-_STANDLONE case because
  * we may be built with a host compiler.
  */
+#ifndef LIBSA_BIENDIAN_SUPPORT
+#define LIBSA_BIENDIAN_SUPPORT
+#endif
+#endif
+
+#ifdef LIBSA_BIENDIAN_SUPPORT
+#include "byteorder.h"
+
 #define	E16(f)								\
 	f = (bo == ELFDATA2LSB) ? sa_htole16(f) : sa_htobe16(f)
 #define	E32(f)								\
@@ -168,12 +174,12 @@ internalize_phdr(Elf_Byte bo, Elf_Phdr *phdr)
 	I32(phdr->p_align);
 #elif ELFSIZE == 64
 	I32(phdr->p_type);
-	I32(phdr->p_offset);
+	I64(phdr->p_offset);
 	I64(phdr->p_vaddr);
 	I64(phdr->p_paddr);
 	I64(phdr->p_filesz);
 	I64(phdr->p_memsz);
-	I64(phdr->p_flags);
+	I32(phdr->p_flags);
 	I64(phdr->p_align);
 #else
 #error ELFSIZE is not 32 or 64
@@ -241,10 +247,10 @@ externalize_shdr(Elf_Byte bo, Elf_Shdr *shdr)
 #error ELFSIZE is not 32 or 64
 #endif
 }
-#else /* _STANDALONE */
+#else /* LIBSA_BIENDIAN_SUPPORT */
 /*
- * Byte swapping is never necessary in the _STANDALONE case because
- * we are being built with the target compiler.
+ * Byte swapping is never necessary in the !LIBSA_BIENDIAN_SUPPORT case
+ * because we are being built with the target compiler.
  */
 #define	internalize_ehdr(bo, ehdr)	/* nothing */
 #define	externalize_ehdr(bo, ehdr)	/* nothing */
@@ -253,7 +259,7 @@ externalize_shdr(Elf_Byte bo, Elf_Shdr *shdr)
 
 #define	internalize_shdr(bo, shdr)	/* nothing */
 #define	externalize_shdr(bo, shdr)	/* nothing */
-#endif /* _STANDALONE */
+#endif /* LIBSA_BIENDIAN_SUPPORT */
 
 #define IS_TEXT(p)	(p.p_flags & PF_X)
 #define IS_DATA(p)	((p.p_flags & PF_X) == 0)
@@ -326,9 +332,9 @@ ELFNAMEEND(readfile_global)(int fd, u_long offset, Elf_Off elfoff,
 
 /*
  * Load a dynamic ELF binary into memory. Layout of the memory:
- * +------------+-----------------+-----------------+------------------+
- * | ELF HEADER | SECTION HEADERS | KERNEL SECTIONS | SYM+REL SECTIONS |
- * +------------+-----------------+-----------------+------------------+
+ * +------------+--------------+------------+------------------------+
+ * | ELF HEADER | SECT HEADERS | KERN SECTS | REL/RELA/SYM/STR SECTS |
+ * +------------+--------------+------------+------------------------+
  * The ELF HEADER start address is marks[MARK_END]. We then map the rest
  * by increasing maxp. An alignment is enforced between the code sections.
  *
@@ -340,7 +346,7 @@ ELFNAMEEND(readfile_global)(int fd, u_long offset, Elf_Off elfoff,
 static int
 ELFNAMEEND(loadfile_dynamic)(int fd, Elf_Ehdr *elf, u_long *marks, int flags)
 {
-	const u_long offset = 0;
+	const u_long offset = marks[MARK_START];
 	Elf_Shdr *shdr;
 	Elf_Addr shpp, addr;
 	int i, j, loaded;
@@ -348,7 +354,7 @@ ELFNAMEEND(loadfile_dynamic)(int fd, Elf_Ehdr *elf, u_long *marks, int flags)
 	Elf_Addr maxp, elfp = 0;
 	int ret;
 
-	maxp = marks[MARK_END];
+	maxp = marks[MARK_END] - offset;
 
 	internalize_ehdr(elf->e_ident[EI_DATA], elf);
 
@@ -379,7 +385,7 @@ ELFNAMEEND(loadfile_dynamic)(int fd, Elf_Ehdr *elf, u_long *marks, int flags)
 	internalize_ehdr(elf->e_ident[EI_DATA], elf);
 	maxp += sizeof(Elf_Ehdr);
 
-#ifndef _STANDALONE
+#ifdef LIBSA_BIENDIAN_SUPPORT
 	for (i = 0; i < elf->e_shnum; i++)
 		internalize_shdr(elf->e_ident[EI_DATA], &shdr[i]);
 #endif
@@ -432,7 +438,7 @@ ELFNAMEEND(loadfile_dynamic)(int fd, Elf_Ehdr *elf, u_long *marks, int flags)
 	maxp = roundup(maxp, KERNALIGN_LARGE);
 
 	/*
-	 * Load the SYM+REL SECTIONS.
+	 * Load the REL/RELA/SYM/STR SECTIONS.
 	 */
 	maxp = roundup(maxp, ELFROUND);
 	for (i = 0; i < elf->e_shnum; i++) {
@@ -472,7 +478,7 @@ ELFNAMEEND(loadfile_dynamic)(int fd, Elf_Ehdr *elf, u_long *marks, int flags)
 	/*
 	 * Finally, load the SECTION HEADERS.
 	 */
-#ifndef _STANDALONE
+#ifdef LIBSA_BIENDIAN_SUPPORT
 	for (i = 0; i < elf->e_shnum; i++)
 		externalize_shdr(elf->e_ident[EI_DATA], &shdr[i]);
 #endif
@@ -526,7 +532,7 @@ ELFNAMEEND(loadsym)(int fd, Elf_Ehdr *elf, Elf_Addr maxp, Elf_Addr elfp,
 	shpp = maxp;
 	maxp += roundup(sz, ELFROUND);
 
-#ifndef _STANDALONE
+#ifdef LIBSA_BIENDIAN_SUPPORT
 	for (i = 0; i < elf->e_shnum; i++)
 		internalize_shdr(elf->e_ident[EI_DATA], &shp[i]);
 #endif
@@ -636,7 +642,7 @@ havesym:
 		}
 	}
 	if (flags & LOAD_SYM) {
-#ifndef _STANDALONE
+#ifdef LIBSA_BIENDIAN_SUPPORT
 		for (i = 0; i < elf->e_shnum; i++)
 			externalize_shdr(elf->e_ident[EI_DATA], &shp[i]);
 #endif
@@ -692,6 +698,11 @@ ELFNAMEEND(loadfile_static)(int fd, Elf_Ehdr *elf, u_long *marks, int flags)
 	marks[MARK_DATA] = 0;
 
 	internalize_ehdr(elf->e_ident[EI_DATA], elf);
+
+	if (elf->e_type != ET_EXEC) {
+		errno = EINVAL;
+		return 1;
+	}
 
 	sz = elf->e_phnum * sizeof(Elf_Phdr);
 	phdr = ALLOC(sz);

@@ -1,6 +1,6 @@
 /* Target-dependent code for NetBSD/sh.
 
-   Copyright (C) 2002-2019 Free Software Foundation, Inc.
+   Copyright (C) 2002-2020 Free Software Foundation, Inc.
 
    Contributed by Wasabi Systems, Inc.
 
@@ -8,7 +8,7 @@
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2 of the License, or
+   the Free Software Foundation; either version 3 of the License, or
    (at your option) any later version.
 
    This program is distributed in the hope that it will be useful,
@@ -17,9 +17,7 @@
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin Street, Fifth Floor,
-   Boston, MA 02110-1301, USA.  */
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include "defs.h"
 #include "gdbcore.h"
@@ -32,13 +30,12 @@
 #include "trad-frame.h"
 #include "tramp-frame.h"
 
-#include "common/gdb_assert.h"
-
 #include "solib-svr4.h"
 
 #include "sh-tdep.h"
-#include "sh-nbsd-tdep.h"
 #include "nbsd-tdep.h"
+#include "solib-svr4.h"
+#include "gdbarch.h"
 
 /* Convert a register number into an offset into a ptrace
    register structure.  */
@@ -143,25 +140,25 @@ static const struct tramp_frame shnbsd_sigtramp_si2 =
   SIGTRAMP_FRAME,
   2,
   {
-    { 0x64f3, (ULONGEST)-1 },			/* mov     r15,r4 */
-    { 0xd002, (ULONGEST)-1 },			/* mov.l   .LSYS_setcontext */
-    { 0xc380, (ULONGEST)-1 },			/* trapa   #-128 */
-    { 0xa003, (ULONGEST)-1 },			/* bra     .Lskip1 */
-    { 0x0009, (ULONGEST)-1 },			/* nop */
-    { 0x0009, (ULONGEST)-1 },			/* nop */
+    { 0x64f3, ULONGEST_MAX },			/* mov     r15,r4 */
+    { 0xd002, ULONGEST_MAX },			/* mov.l   .LSYS_setcontext */
+    { 0xc380, ULONGEST_MAX },			/* trapa   #-128 */
+    { 0xa003, ULONGEST_MAX },			/* bra     .Lskip1 */
+    { 0x0009, ULONGEST_MAX },			/* nop */
+    { 0x0009, ULONGEST_MAX },			/* nop */
  /* .LSYS_setcontext */
-    { 0x0134, (ULONGEST)-1 }, { 0x0000, (ULONGEST)-1 },     /* 0x134 */
+    { 0x0134, ULONGEST_MAX }, { 0x0000, ULONGEST_MAX },     /* 0x134 */
  /* .Lskip1 */
-    { 0x6403, (ULONGEST)-1 },			/* mov     r0,r4 */
-    { 0xd002, (ULONGEST)-1 },			/* mov.l   .LSYS_exit  */
-    { 0xc380, (ULONGEST)-1 },			/* trapa   #-128 */
-    { 0xa003, (ULONGEST)-1 },			/* bra     .Lskip2 */
-    { 0x0009, (ULONGEST)-1 },			/* nop */
-    { 0x0009, (ULONGEST)-1 },			/* nop */
+    { 0x6403, ULONGEST_MAX },			/* mov     r0,r4 */
+    { 0xd002, ULONGEST_MAX },			/* mov.l   .LSYS_exit  */
+    { 0xc380, ULONGEST_MAX },			/* trapa   #-128 */
+    { 0xa003, ULONGEST_MAX },			/* bra     .Lskip2 */
+    { 0x0009, ULONGEST_MAX },			/* nop */
+    { 0x0009, ULONGEST_MAX },			/* nop */
  /* .LSYS_exit */
-    { 0x0001, (ULONGEST)-1 }, { 0x0000, (ULONGEST)-1 },     /* 0x1 */
+    { 0x0001, ULONGEST_MAX }, { 0x0000, ULONGEST_MAX },     /* 0x1 */
 /* .Lskip2 */
-    { TRAMP_SENTINEL_INSN, (ULONGEST)-1 }
+    { TRAMP_SENTINEL_INSN, ULONGEST_MAX }
   },
   shnbsd_sigtramp_cache_init
 };
@@ -173,7 +170,7 @@ shnbsd_sigtramp_cache_init (const struct tramp_frame *self,
 			    CORE_ADDR func)
 {
   struct gdbarch *gdbarch = get_frame_arch (next_frame);
-  struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
+  // struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
   int sp_regnum = gdbarch_sp_regnum (gdbarch);
   CORE_ADDR sp = get_frame_register_unsigned (next_frame, sp_regnum);
   CORE_ADDR base;
@@ -201,6 +198,7 @@ shnbsd_init_abi (struct gdbarch_info info,
                   struct gdbarch *gdbarch)
 {
   struct gdbarch_tdep *tdep = gdbarch_tdep (gdbarch);
+  nbsd_init_abi (info, gdbarch);
 
   tdep->core_gregmap = (struct sh_corefile_regmap *)gregs_table;
   tdep->sizeof_gregset = 88;
@@ -214,8 +212,9 @@ shnbsd_init_abi (struct gdbarch_info info,
   tramp_frame_prepend_unwinder (gdbarch, &shnbsd_sigtramp_si2);
 }
 
+void _initialize_shnbsd_tdep ();
 void
-_initialize_shnbsd_tdep (void)
+_initialize_shnbsd_tdep ()
 {
   gdbarch_register_osabi (bfd_arch_sh, 0, GDB_OSABI_NETBSD,
 			  shnbsd_init_abi);

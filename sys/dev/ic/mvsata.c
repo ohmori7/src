@@ -1,4 +1,4 @@
-/*	$NetBSD: mvsata.c,v 1.46 2018/11/12 20:54:03 jdolecek Exp $	*/
+/*	$NetBSD: mvsata.c,v 1.58 2020/12/25 12:33:03 skrll Exp $	*/
 /*
  * Copyright (c) 2008 KIYOHARA Takashi
  * All rights reserved.
@@ -26,7 +26,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: mvsata.c,v 1.46 2018/11/12 20:54:03 jdolecek Exp $");
+__KERNEL_RCSID(0, "$NetBSD: mvsata.c,v 1.58 2020/12/25 12:33:03 skrll Exp $");
 
 #include "opt_mvsata.h"
 
@@ -113,16 +113,17 @@ int	mvsata_debug = 0;
 					   sending a cmd */
 #define ATAPI_MODE_DELAY	1000	/* 1s, timeout for SET_FEATURE cmds */
 
-#define MVSATA_EPRD_MAX_SIZE	(sizeof(struct eprd) * (MAXPHYS / PAGE_SIZE))
+#define MVSATA_MAX_SEGS		(MAXPHYS / PAGE_SIZE + 1)
+#define MVSATA_EPRD_MAX_SIZE	(sizeof(struct eprd) * MVSATA_MAX_SEGS)
 
 
 static void mvsata_probe_drive(struct ata_channel *);
 
 #ifndef MVSATA_WITHOUTDMA
 static void mvsata_reset_channel(struct ata_channel *, int);
-static int mvsata_bio(struct ata_drive_datas *, struct ata_xfer *);
+static void mvsata_bio(struct ata_drive_datas *, struct ata_xfer *);
 static void mvsata_reset_drive(struct ata_drive_datas *, int, uint32_t *);
-static int mvsata_exec_command(struct ata_drive_datas *, struct ata_xfer *);
+static void mvsata_exec_command(struct ata_drive_datas *, struct ata_xfer *);
 static int mvsata_addref(struct ata_drive_datas *);
 static void mvsata_delref(struct ata_drive_datas *);
 static void mvsata_killpending(struct ata_drive_datas *);
@@ -197,7 +198,7 @@ static uint32_t mvsata_softreset(struct mvsata_port *, int);
 #ifndef MVSATA_WITHOUTDMA
 static void mvsata_edma_reset_qptr(struct mvsata_port *);
 static inline void mvsata_edma_enable(struct mvsata_port *);
-static int mvsata_edma_disable(struct mvsata_port *, int, int);
+static void mvsata_edma_disable(struct mvsata_port *, int, int);
 static void mvsata_edma_config(struct mvsata_port *, enum mvsata_edmamode);
 
 static void mvsata_edma_setup_crqb(struct mvsata_port *, int,
@@ -220,26 +221,26 @@ static void mvsata_print_eprd(struct mvsata_port *, int);
 #endif
 
 static const struct ata_bustype mvsata_ata_bustype = {
-	SCSIPI_BUSTYPE_ATA,
-	mvsata_bio,
-	mvsata_reset_drive,
-	mvsata_reset_channel,
-	mvsata_exec_command,
-	ata_get_params,
-	mvsata_addref,
-	mvsata_delref,
-	mvsata_killpending,
-	mvsata_channel_recover,
+	.bustype_type = SCSIPI_BUSTYPE_ATA,
+	.ata_bio = mvsata_bio,
+	.ata_reset_drive = mvsata_reset_drive,
+	.ata_reset_channel = mvsata_reset_channel,
+	.ata_exec_command = mvsata_exec_command,
+	.ata_get_params = ata_get_params,
+	.ata_addref = mvsata_addref,
+	.ata_delref = mvsata_delref,
+	.ata_killpending = mvsata_killpending,
+	.ata_recovery = mvsata_channel_recover,
 };
 
 #if NATAPIBUS > 0
 static const struct scsipi_bustype mvsata_atapi_bustype = {
-	SCSIPI_BUSTYPE_ATAPI,
-	atapi_scsipi_cmd,
-	atapi_interpret_sense,
-	atapi_print_addr,
-	mvsata_atapi_kill_pending,
-	NULL,
+	.bustype_type = SCSIPI_BUSTYPE_ATAPI,
+	.bustype_cmd = atapi_scsipi_cmd,
+	.bustype_interpret_sense = atapi_interpret_sense,
+	.bustype_printaddr = atapi_print_addr,
+	.bustype_kill_pending = mvsata_atapi_kill_pending,
+	.bustype_async_event_xfer_mode = NULL,
 };
 #endif /* NATAPIBUS */
 #endif
@@ -347,12 +348,7 @@ mvsata_attach(struct mvsata_softc *sc, const struct mvsata_product *product,
 
 	sc->sc_wdc_regs =
 	    malloc(sizeof(struct wdc_regs) * product->hc * product->port,
-	    M_DEVBUF, M_NOWAIT);
-	if (sc->sc_wdc_regs == NULL) {
-		aprint_error_dev(MVSATA_DEV(sc),
-		    "can't allocate wdc regs memory\n");
-		return ENOMEM;
-	}
+	    M_DEVBUF, M_WAITOK);
 	sc->sc_wdcdev.regs = sc->sc_wdc_regs;
 
 	for (hc = 0; hc < sc->sc_hc; hc++) {
@@ -529,10 +525,10 @@ mvsata_error(struct mvsata_port *mvport)
 
 		case nodma:
 		default:
-			aprint_error(
-			    "%s:%d:%d: EDMA self disable happen 0x%x\n",
+			DPRINTF(DEBUG_INTR,
+			    ("%s:%d:%d: EDMA self disable happen 0x%x\n",
 			    device_xname(MVSATA_DEV2(mvport)),
-			    mvport->port_hc->hc, mvport->port, cause);
+			    mvport->port_hc->hc, mvport->port, cause));
 			break;
 		}
 	}
@@ -673,7 +669,8 @@ mvsata_reset_channel(struct ata_channel *chp, int flags)
 		const uint32_t val = SControl_IPM_NONE | SControl_SPD_ANY |
 		    SControl_DET_DISABLE;
 
-		MVSATA_EDMA_WRITE_4(mvport, mvport->port_sata_scontrol, val);
+		bus_space_write_4(mvport->port_iot,
+		    mvport->port_sata_scontrol, 0, val);
 
 		ctrl = MVSATA_EDMA_READ_4(mvport, SATA_SATAICFG);
 		ctrl &= ~(1 << 17);	/* Disable GenII */
@@ -794,14 +791,7 @@ mvsata_atapi_probe_device(struct atapibus_softc *sc, int target)
 		    id->atap_config & ATAPI_CFG_CMD_MASK,
 		    id->atap_config & ATAPI_CFG_DRQ_MASK);
 #endif
-		periph = scsipi_alloc_periph(M_NOWAIT);
-		if (periph == NULL) {
-			aprint_error_dev(atac->atac_dev,
-			    "unable to allocate periph"
-			    " for channel %d drive %d\n",
-			    chp->ch_channel, target);
-			return;
-		}
+		periph = scsipi_alloc_periph(M_WAITOK);
 		periph->periph_dev = NULL;
 		periph->periph_channel = chan;
 		periph->periph_switch = &atapi_probe_periphsw;
@@ -995,7 +985,7 @@ static const struct ata_xfer_ops mvsata_bio_xfer_ops = {
 	.c_kill_xfer = mvsata_bio_kill_xfer,
 };
 
-static int
+static void
 mvsata_bio(struct ata_drive_datas *drvp, struct ata_xfer *xfer)
 {
 	struct ata_channel *chp = drvp->chnl_softc;
@@ -1019,7 +1009,6 @@ mvsata_bio(struct ata_drive_datas *drvp, struct ata_xfer *xfer)
 	xfer->c_bcount = ata_bio->bcount;
 	xfer->ops = &mvsata_bio_xfer_ops;
 	ata_exec_xfer(chp, xfer);
-	return (ata_bio->flags & ATA_ITSDONE) ? ATACMD_COMPLETE : ATACMD_QUEUED;
 }
 
 static int
@@ -1119,10 +1108,6 @@ mvsata_bio_start(struct ata_channel *chp, struct ata_xfer *xfer)
 				return ATASTART_ABORT;
 			}
 			chp->ch_flags |= ATACH_DMA_WAIT;
-			/* start timeout machinery */
-			if ((xfer->c_flags & C_POLL) == 0)
-				callout_reset(&chp->c_timo_callout,
-				    mstohz(ATA_DELAY), ata_timeout, chp);
 			/* wait for irq */
 			goto intr;
 		} /* else not DMA */
@@ -1175,10 +1160,10 @@ do_pio:
 			 * If it's not a polled command, we need the kernel
 			 * thread
 			 */
-			if ((xfer->c_flags & C_POLL) == 0 &&
-			    (chp->ch_flags & ATACH_TH_RUN) == 0) {
+			if ((xfer->c_flags & C_POLL) == 0
+			    && !ata_is_thread_run(chp))
 				return ATASTART_TH;
-			}
+
 			if (mvsata_bio_ready(mvport, ata_bio, xfer->c_drive,
 			    (xfer->c_flags & C_POLL) ? AT_POLL : 0) != 0) {
 				return ATASTART_ABORT;
@@ -1203,11 +1188,6 @@ do_pio:
 			    head, sect, nblks,
 			    (drvp->lp->d_type == DKTYPE_ST506) ?
 			    drvp->lp->d_precompcyl / 4 : 0);
-
-		/* start timeout machinery */
-		if ((xfer->c_flags & C_POLL) == 0)
-			callout_reset(&chp->c_timo_callout,
-			    mstohz(ATA_DELAY), wdctimeout, chp);
 	} else if (ata_bio->nblks > 1) {
 		/* The number of blocks in the last stretch may be smaller. */
 		nblks = xfer->c_bcount / drvp->lp->d_secsize;
@@ -1249,9 +1229,12 @@ intr:
 		xfer->c_flags, mvport->port_edmamode_curr, nodma); 
 
 	/* Wait for IRQ (either real or polled) */
-	if ((ata_bio->flags & ATA_POLL) != 0)
+	if ((ata_bio->flags & ATA_POLL) != 0) {
+		/* start timeout machinery */
+		callout_reset(&chp->c_timo_callout,
+		    mstohz(ATA_DELAY), wdctimeout, chp);
 		return ATASTART_POLL;
-	else
+	} else
 		return ATASTART_STARTED;
 
 timeout:
@@ -1611,12 +1594,11 @@ static const struct ata_xfer_ops mvsata_wdc_cmd_xfer_ops = {
 	.c_kill_xfer = mvsata_wdc_cmd_kill_xfer,
 };
 
-static int
+static void
 mvsata_exec_command(struct ata_drive_datas *drvp, struct ata_xfer *xfer)
 {
 	struct ata_channel *chp = drvp->chnl_softc;
 	struct ata_command *ata_c = &xfer->c_ata_c;
-	int rv, s;
 
 	DPRINTF(DEBUG_FUNCS|DEBUG_XFERS,
 	    ("%s:%d: mvsata_exec_command: drive=%d, bcount=%d,"
@@ -1635,24 +1617,8 @@ mvsata_exec_command(struct ata_drive_datas *drvp, struct ata_xfer *xfer)
 	xfer->c_databuf = ata_c->data;
 	xfer->c_bcount = ata_c->bcount;
 	xfer->ops = &mvsata_wdc_cmd_xfer_ops;
-	s = splbio();
+
 	ata_exec_xfer(chp, xfer);
-#ifdef DIAGNOSTIC
-	if ((ata_c->flags & AT_POLL) != 0 &&
-	    (ata_c->flags & AT_DONE) == 0)
-		panic("mvsata_exec_command: polled command not done");
-#endif
-	if (ata_c->flags & AT_DONE)
-		rv = ATACMD_COMPLETE;
-	else {
-		if (ata_c->flags & AT_WAIT) {
-			ata_wait_cmd(chp, xfer);
-			rv = ATACMD_COMPLETE;
-		} else
-			rv = ATACMD_QUEUED;
-	}
-	splx(s);
-	return rv;
 }
 
 static int
@@ -1751,7 +1717,7 @@ mvsata_wdc_cmd_intr(struct ata_channel *chp, struct ata_xfer *xfer, int irq)
 		    chp->ch_drive[xfer->c_drive].drive_flags;
 	else
 		/*
-		 * Other data structure are opaque and should be transfered
+		 * Other data structure are opaque and should be transferred
 		 * as is.
 		 */
 		drive_flags = chp->ch_drive[xfer->c_drive].drive_flags;
@@ -2062,10 +2028,10 @@ mvsata_atapi_start(struct ata_channel *chp, struct ata_xfer *xfer)
 	/* Do control operations specially. */
 	if (__predict_false(drvp->state < READY)) {
 		/* If it's not a polled command, we need the kernel thread */
-		if ((sc_xfer->xs_control & XS_CTL_POLL) == 0 &&
-		    (chp->ch_flags & ATACH_TH_RUN) == 0) {
+		if ((sc_xfer->xs_control & XS_CTL_POLL) == 0
+		    && !ata_is_thread_run(chp))
 			return ATASTART_TH;
-		}
+
 		/*
 		 * disable interrupts, all commands here should be quick
 		 * enough to be able to poll, and we don't go here that often
@@ -2144,11 +2110,6 @@ ready:
 		MVSATA_WDC_WRITE_1(mvport, SRB_CAS, WDCTL_4BIT);
 		delay(10); /* some drives need a little delay here */
 	}
-	/* start timeout machinery */
-	if ((sc_xfer->xs_control & XS_CTL_POLL) == 0)
-		callout_reset(&chp->c_timo_callout, mstohz(sc_xfer->timeout),
-		    wdctimeout, chp);
-
 	MVSATA_WDC_WRITE_1(mvport, SRB_H, WDSD_IBM);
 	if (wdc_wait_for_unbusy(chp, ATAPI_DELAY, wait_flags, &tfd) != 0) {
 		aprint_error_dev(atac->atac_dev, "not ready, st = %02x\n",
@@ -2156,6 +2117,11 @@ ready:
 		sc_xfer->error = XS_TIMEOUT;
 		return ATASTART_ABORT;
 	}
+
+	/* start timeout machinery */
+	if ((sc_xfer->xs_control & XS_CTL_POLL) == 0)
+		callout_reset(&chp->c_timo_callout, mstohz(sc_xfer->timeout),
+		    wdctimeout, chp);
 
 	/*
 	 * Even with WDCS_ERR, the device should accept a command packet
@@ -3025,13 +2991,7 @@ mvsata_port_init(struct mvsata_hc *mvhc, int port)
 	const int eprd_buf_size = MVSATA_EPRD_MAX_SIZE * MVSATA_EDMAQ_LEN;
 
 	mvport = malloc(sizeof(struct mvsata_port), M_DEVBUF,
-	    M_ZERO | M_NOWAIT);
-	if (mvport == NULL) {
-		aprint_error("%s:%d: can't allocate memory for port %d\n",
-		    device_xname(MVSATA_DEV(sc)), mvhc->hc, port);
-		return ENOMEM;
-	}
-
+	    M_ZERO | M_WAITOK);
 	mvport->port = port;
 	mvport->port_hc = mvhc;
 	mvport->port_edmamode_negotiated = nodma;
@@ -3110,7 +3070,7 @@ mvsata_port_init(struct mvsata_hc *mvhc, int port)
 	}
 	for (i = 0; i < MVSATA_EDMAQ_LEN; i++) {
 		rv = bus_dmamap_create(mvport->port_dmat, MAXPHYS,
-		    MAXPHYS / PAGE_SIZE, MAXPHYS, 0, BUS_DMA_NOWAIT,
+		    MVSATA_MAX_SEGS, MAXPHYS, 0, BUS_DMA_NOWAIT,
 		    &mvport->port_reqtbl[i].data_dmamap);
 		if (rv != 0) {
 			aprint_error("%s:%d:%d:"
@@ -3282,7 +3242,7 @@ mvsata_dma_bufload(struct mvsata_port *mvport, int index, void *databuf,
 	rv = bus_dmamap_load(mvport->port_dmat, data_dmamap, databuf, datalen,
 	    NULL, BUS_DMA_NOWAIT | lop);
 	if (rv) {
-		aprint_error("%s:%d:%d: buffer load failed: error=%d",
+		aprint_error("%s:%d:%d: buffer load failed: error=%d\n",
 		    device_xname(MVSATA_DEV2(mvport)), mvport->port_hc->hc,
 		    mvport->port, rv);
 		return rv;
@@ -3442,54 +3402,32 @@ mvsata_edma_enable(struct mvsata_port *mvport)
 	MVSATA_EDMA_WRITE_4(mvport, EDMA_CMD, EDMA_CMD_EENEDMA);
 }
 
-static int
+static void
 mvsata_edma_disable(struct mvsata_port *mvport, int timeout, int wflags)
 {
 	struct ata_channel *chp = &mvport->port_ata_channel;
-	uint32_t status, command;
-	uint32_t idlestatus = EDMA_S_EDMAIDLE | EDMA_S_ECACHEEMPTY;
+	uint32_t command;
 	int t;
 
 	ata_channel_lock_owned(chp);
 
-	if (MVSATA_EDMA_READ_4(mvport, EDMA_CMD) & EDMA_CMD_EENEDMA) {
+	/* The disable bit (eDsEDMA) is self negated. */
+	MVSATA_EDMA_WRITE_4(mvport, EDMA_CMD, EDMA_CMD_EDSEDMA);
 
-		timeout = mstohz(timeout + hztoms(1) - 1);
+	timeout = mstohz(timeout + hztoms(1) - 1);
 
-		for (t = 0; ; ++t) {
-			status = MVSATA_EDMA_READ_4(mvport, EDMA_S);
-			if ((status & idlestatus) == idlestatus)
-				break;
-			if (t >= timeout)
-				break;
-			ata_delay(chp, hztoms(1), "mvsata_edma1", wflags);
-		}
-		if (t >= timeout) {
-			aprint_error("%s:%d:%d: unable to stop EDMA\n",
-			    device_xname(MVSATA_DEV2(mvport)),
-			    mvport->port_hc->hc, mvport->port);
-			return EBUSY;
-		}
-
-		/* The disable bit (eDsEDMA) is self negated. */
-		MVSATA_EDMA_WRITE_4(mvport, EDMA_CMD, EDMA_CMD_EDSEDMA);
-
-		for (t = 0; ; ++t) {
-			command = MVSATA_EDMA_READ_4(mvport, EDMA_CMD);
-			if (!(command & EDMA_CMD_EENEDMA))
-				break;
-			if (t >= timeout)
-				break;
-			ata_delay(chp, hztoms(1), "mvsata_edma2", wflags);
-		}
-		if (t >= timeout) {
-			aprint_error("%s:%d:%d: unable to re-enable EDMA\n",
-			    device_xname(MVSATA_DEV2(mvport)),
-			    mvport->port_hc->hc, mvport->port);
-			return EBUSY;
-		}
+	for (t = 0; ; ++t) {
+		command = MVSATA_EDMA_READ_4(mvport, EDMA_CMD);
+		if (!(command & EDMA_CMD_EENEDMA))
+			return;
+		if (t >= timeout)
+			break;
+		ata_delay(chp, hztoms(1), "mvsata_edma2", wflags);
 	}
-	return 0;
+
+	aprint_error("%s:%d:%d: unable to disable EDMA\n",
+	    device_xname(MVSATA_DEV2(mvport)),
+	    mvport->port_hc->hc, mvport->port);
 }
 
 /*

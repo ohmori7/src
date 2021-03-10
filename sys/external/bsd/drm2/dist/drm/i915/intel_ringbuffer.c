@@ -1,4 +1,4 @@
-/*	$NetBSD: intel_ringbuffer.c,v 1.9 2018/09/13 08:25:55 mrg Exp $	*/
+/*	$NetBSD: intel_ringbuffer.c,v 1.12 2020/02/14 14:34:58 maya Exp $	*/
 
 /*
  * Copyright © 2008-2010 Intel Corporation
@@ -30,9 +30,8 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: intel_ringbuffer.c,v 1.9 2018/09/13 08:25:55 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: intel_ringbuffer.c,v 1.12 2020/02/14 14:34:58 maya Exp $");
 
-#include <asm/param.h>
 #include <drm/drmP.h>
 #include "i915_drv.h"
 #include <drm/i915_drm.h>
@@ -2162,6 +2161,8 @@ static void intel_destroy_ringbuffer_obj(struct intel_ringbuffer *ringbuf)
 static int intel_alloc_ringbuffer_obj(struct drm_device *dev,
 				      struct intel_ringbuffer *ringbuf)
 {
+	struct drm_i915_private *dev_priv = to_i915(dev);
+	struct i915_address_space *vm = &dev_priv->gtt.base;
 	struct drm_i915_gem_object *obj;
 
 	obj = NULL;
@@ -2172,8 +2173,12 @@ static int intel_alloc_ringbuffer_obj(struct drm_device *dev,
 	if (obj == NULL)
 		return -ENOMEM;
 
-	/* mark ring buffers as read-only from GPU side by default */
-	obj->gt_ro = 1;
+	/*
+	 * Mark ring buffers as read-only from GPU side (so no stray overwrites)
+	 * if supported by the platform's GGTT.
+	 */
+	if (vm->has_read_only)
+		obj->gt_ro = 1;
 
 	ringbuf->obj = obj;
 
@@ -2322,6 +2327,8 @@ static int ring_wait_for_space(struct intel_engine_cs *ring, int n)
 	struct drm_i915_gem_request *request;
 	unsigned space;
 	int ret;
+
+	space = 0; /* XXX gcc -Wuninitialized */
 
 	if (intel_ring_space(ringbuf) >= n)
 		return 0;

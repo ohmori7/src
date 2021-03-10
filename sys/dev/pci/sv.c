@@ -1,4 +1,4 @@
-/*      $NetBSD: sv.c,v 1.56 2019/06/08 08:02:38 isaki Exp $ */
+/*      $NetBSD: sv.c,v 1.59 2021/02/06 12:55:34 isaki Exp $ */
 /*      $OpenBSD: sv.c,v 1.2 1998/07/13 01:50:15 csapuntz Exp $ */
 
 /*
@@ -67,7 +67,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: sv.c,v 1.56 2019/06/08 08:02:38 isaki Exp $");
+__KERNEL_RCSID(0, "$NetBSD: sv.c,v 1.59 2021/02/06 12:55:34 isaki Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -530,7 +530,7 @@ sv_allocmem(struct sv_softc *sc, size_t size, size_t align,
 		goto unmap;
 
 	error = bus_dmamap_load(sc->sc_dmatag, p->map, p->addr, p->size, NULL,
-	    BUS_DMA_WAITOK | (direction == AUMODE_RECORD) ? BUS_DMA_READ : BUS_DMA_WRITE);
+	    BUS_DMA_WAITOK | ((direction == AUMODE_RECORD) ? BUS_DMA_READ : BUS_DMA_WRITE));
 	if (error)
 		goto destroy;
 	DPRINTF(("sv_allocmem: pa=%lx va=%lx pba=%lx\n",
@@ -679,7 +679,10 @@ sv_round_blocksize(void *addr, int blk, int mode,
     const audio_params_t *param)
 {
 
-	return blk & -32;	/* keep good alignment */
+	blk = blk & -32;	/* keep good alignment */
+	if (blk < 32)
+		blk = 32;
+	return blk;
 }
 
 static int
@@ -1233,6 +1236,7 @@ sv_mixer_get_port(void *addr, mixer_ctrl_t *cp)
 			}
 		}
 
+		mutex_spin_exit(&sc->sc_intr_lock);
 		return error;
 	}
 

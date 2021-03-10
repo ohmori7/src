@@ -1,10 +1,11 @@
-# $NetBSD: Makefile,v 1.32 2019/04/26 18:49:35 christos Exp $
+# $NetBSD: Makefile,v 1.36 2020/01/25 19:05:08 christos Exp $
 
 # Link the mesa_dri_drivers mega driver.
 
 .include <bsd.own.mk>
 
-.if ${MACHINE_ARCH} == "i386" || ${MACHINE_ARCH} == "x86_64"
+.if ${MACHINE_ARCH} == "i386" || ${MACHINE_ARCH} == "x86_64" || \
+    ${MACHINE} == "evbarm"
 
 LIBISMODULE=	yes
 LIBISCXX=     yes
@@ -23,7 +24,8 @@ CPPFLAGS+= \
 	-I${X11SRCDIR.Mesa}/src/egl/main \
 	-I${X11SRCDIR.Mesa}/src/egl/drivers/dri \
 	-I${X11SRCDIR.Mesa}/../src/mesa/drivers/dri/common \
-	-I${DESTDIR}${X11INCDIR}/libdrm
+	-I${DESTDIR}${X11INCDIR}/libdrm \
+	-I${X11SRCDIR.Mesa}/../src/util
 
 .if ${MACHINE_ARCH} == "i386"
 CPPFLAGS.brw_disk_cache.c+=	-march=i586
@@ -31,9 +33,9 @@ CPPFLAGS.brw_disk_cache.c+=	-march=i586
 
 #CPPFLAGS+=	-D_NETBSD_SOURCE -DPTHREADS
 
-# We don't actually build this on non-x86 at all, currently.
+# We don't actually build this on non-x86/non-evbarm at all, currently.
 # The following if statements are not effective since we only
-# get here for x86
+# get here for x86 and evbarm
 .if ${MACHINE_ARCH} == "alpha"
 DRIVERS=	r200 radeon
 .elif ${MACHINE} == "macppc" || ${MACHINE} == "ofppc"
@@ -43,6 +45,8 @@ DRIVERS=	r200 radeon
 .elif ${MACHINE_ARCH} == "i386" || ${MACHINE_ARCH} == "x86_64"
 DRIVERS=	i915 i965 r200 radeon
 .elif ${MACHINE} == "prep" || ${MACHINE} == "bebox"
+DRIVERS=	r200 radeon
+.elif ${MACHINE} == "evbarm"
 DRIVERS=	r200 radeon
 .endif
 
@@ -102,7 +106,9 @@ CPPFLAGS.i915_${_f}+=	-I${X11SRCDIR.Mesa}/src/mesa/drivers/dri/i915
 .PATH: ${X11SRCDIR.Mesa}/src/intel/compiler
 .PATH: ${X11SRCDIR.Mesa}/src/intel/dev
 .PATH: ${X11SRCDIR.Mesa}/src/intel/isl
-
+.PATH: ${X11SRCDIR.Mesa}/src/intel/perf
+.PATH: ${X11SRCDIR.Mesa}/../src/intel/
+.PATH: ${X11SRCDIR.Mesa}/../src/intel/perf
 
 DRI_SOURCES.i965+= \
 	blorp.c \
@@ -113,8 +119,11 @@ DRI_SOURCES.i965+= \
 	gen_decoder.c \
 	gen_device_info.c \
 	gen_disasm.c \
-	gen_urb_config.c \
 	gen_l3_config.c \
+	gen_perf.c \
+	gen_perf_mdapi.c \
+	gen_perf_metrics.c \
+	gen_urb_config.c \
 	intel_log.c \
 	brw_binding_tables.c \
 	brw_blorp.c \
@@ -136,6 +145,7 @@ DRI_SOURCES.i965+= \
 	brw_cs.c \
 	brw_curbe.c \
 	brw_dead_control_flow.cpp \
+	brw_debug_recompile.c \
 	brw_disasm.c \
 	brw_disasm_info.c \
 	brw_disk_cache.c \
@@ -143,7 +153,6 @@ DRI_SOURCES.i965+= \
 	brw_draw_upload.c \
 	brw_eu.c \
 	brw_eu_compact.c \
-	brw_oa_metrics.c \
 	brw_eu_emit.c \
 	brw_eu_util.c \
 	brw_eu_validate.c \
@@ -159,14 +168,13 @@ DRI_SOURCES.i965+= \
 	brw_fs_dead_code_eliminate.cpp \
 	brw_fs_generator.cpp \
 	brw_fs_live_variables.cpp \
-	brw_fs_lower_conversions.cpp \
 	brw_fs_lower_pack.cpp \
+	brw_fs_lower_regioning.cpp \
 	brw_fs_nir.cpp \
 	brw_fs_reg_allocate.cpp \
 	brw_fs_register_coalesce.cpp \
 	brw_fs_saturate_propagation.cpp \
 	brw_fs_sel_peephole.cpp \
-	brw_fs_surface_builder.cpp \
 	brw_fs_validate.cpp \
 	brw_fs_visitor.cpp \
 	brw_generate_mipmap.c \
@@ -179,12 +187,14 @@ DRI_SOURCES.i965+= \
 	brw_nir.c \
 	brw_nir_analyze_boolean_resolves.c \
 	brw_nir_analyze_ubo_ranges.c \
-	brw_nir_trig_workarounds.c \
 	brw_nir_attribute_workarounds.c \
+	brw_nir_lower_conversions.c \
 	brw_nir_lower_cs_intrinsics.c \
 	brw_nir_lower_image_load_store.c \
+	brw_nir_lower_mem_access_bit_sizes.c \
 	brw_nir_opt_peephole_ffma.c \
 	brw_nir_tcs_workarounds.c \
+	brw_nir_trig_workarounds.c \
 	brw_nir_uniforms.cpp \
 	brw_object_purgeable.c \
 	brw_packed_float.c \
@@ -257,7 +267,10 @@ DRI_SOURCES.i965+= \
 	isl_gen7.c \
 	isl_gen8.c \
 	isl_gen9.c \
-	isl_storage_image.c
+	isl_storage_image.c \
+	isl_tiled_memcpy.c \
+	isl_tiled_memcpy_normal.c \
+	isl_tiled_memcpy_sse41.c
 
 I965_INTEL_FILES = \
 	intel_batchbuffer.c \
@@ -279,23 +292,20 @@ I965_INTEL_FILES = \
 	intel_tex_copy.c \
 	intel_tex_image.c \
 	intel_tex_validate.c \
-	intel_tiled_memcpy.c \
-	intel_tiled_memcpy_normal.c \
-	intel_tiled_memcpy_sse41.c \
 	intel_upload.c
 
-CPPFLAGS.i965_intel_tiled_memcpy.c+=		-msse4.1
-CPPFLAGS.i965_intel_tiled_memcpy_sse41.c+=	-msse4.1
 
 INTEL_GENS_BLORP=	40 45 50 60 70 75 80 90 100 110
 
 .for _gen in ${INTEL_GENS_BLORP}
 BUILDSYMLINKS+=		${X11SRCDIR.Mesa}/src/mesa/drivers/dri/i965/genX_state_upload.c ${_gen}_state_upload.c
 BUILDSYMLINKS+=		${X11SRCDIR.Mesa}/src/mesa/drivers/dri/i965/genX_blorp_exec.c ${_gen}_blorp_exec.c
-DRI_SOURCES.i965+=	${_gen}_state_upload.c ${_gen}_blorp_exec.c
+BUILDSYMLINKS+=		${X11SRCDIR.Mesa}/src/mesa/drivers/dri/i965/genX_pipe_control.c ${_gen}_pipe_control.c
+DRI_SOURCES.i965+=	${_gen}_state_upload.c ${_gen}_blorp_exec.c ${_gen}_pipe_control.c
 
 CPPFLAGS.${_gen}_state_upload.c+=	-DGEN_VERSIONx10=${_gen}
 CPPFLAGS.${_gen}_blorp_exec.c+=		-DGEN_VERSIONx10=${_gen}
+CPPFLAGS.${_gen}_pipe_control.c+=	-DGEN_VERSIONx10=${_gen}
 .endfor
 
 INTEL_GENS_ISL=	40 50 60 70 75 80 90 100 110
@@ -317,7 +327,10 @@ DRI_SOURCES.i965+=	i965_${_f}
 .for _f in ${DRI_SOURCES.i965}
 CPPFLAGS.${_f} +=	-I${X11SRCDIR.Mesa}/src/mesa/drivers/dri/i965 \
 			-I${X11SRCDIR.Mesa}/src/intel \
-			-I${X11SRCDIR.Mesa}/src/compiler/nir
+			-I${X11SRCDIR.Mesa}/src/intel/compiler \
+			-I${X11SRCDIR.Mesa}/../src/intel \
+			-I${X11SRCDIR.Mesa}/src/compiler/nir \
+			-I${X11SRCDIR.Mesa}/../src/compiler/nir
 .endfor
 
 # Needs mfence
@@ -408,6 +421,7 @@ SRCS+=	${DRI_SOURCES.${_d}}
 .PATH: ${X11SRCDIR.Mesa}/src/mesa/drivers/dri/${_d}
 .endfor
 
+
 LIBDPLIBS+=	expat		${NETBSDSRCDIR}/external/mit/expat/lib/libexpat
 LIBDPLIBS+=	m		${NETBSDSRCDIR}/lib/libm
 LIBDPLIBS+=	pthread		${NETBSDSRCDIR}/lib/libpthread
@@ -424,8 +438,11 @@ MESA_SRC_MODULES=  main math math_xform vbo tnl swrast ss common asm_c program a
 
 .if ${MACHINE_ARCH} == "i386" || ${MACHINE_ARCH} == "x86_64"
 SRCS+=	streaming-load-memcpy.c
-CPPFLAGS.streaming-load-memcpy.c+= -msse4.1
+CPPFLAGS.streaming-load-memcpy.c+=	-msse4.1
+CPPFLAGS.isl_tiled_memcpy_sse41.c+=	-msse4.1
 .endif
+
+CFLAGS+= ${${ACTIVE_CC} == "clang":? -Wno-error=atomic-alignment :}
 
 .include "../driver.mk"
 
@@ -440,7 +457,7 @@ SYMLINKS+= mesa_dri_drivers.so.${SHLIB_MAJOR}.debug ${DRIDEBUGDIR}/${_d}_dri.so.
 .endif
 
 PKGCONFIG=	dri
-PKGDIST.dri=	${X11SRCDIR.Mesa}/src/mesa/drivers/dri
+PKGDIST.dri=	${X11SRCDIR.Mesa}/../src/pkgconfig
 .include "${.CURDIR}/../libGL/mesa-ver.mk"
 PKGCONFIG_VERSION.dri=	${MESA_VER}
 
@@ -458,12 +475,16 @@ FILES=		drirc
 .PATH:          ${X11SRCDIR.Mesa}/src/mesa/drivers/dri/common
 
 .include <bsd.x11.mk>
-.if ${MACHINE_ARCH} == "i386" || ${MACHINE_ARCH} == "x86_64"
+.if ${MACHINE_ARCH} == "i386" || ${MACHINE_ARCH} == "x86_64" || \
+    ${MACHINE} == "evbarm"
 LIBDIR=		${X11USRLIBDIR}/modules/dri
 
 CWARNFLAGS.clang+=	-Wno-error=initializer-overrides -Wno-error=switch \
 			-Wno-error=tautological-constant-out-of-range-compare \
-			-Wno-error=enum-conversion
+			-Wno-error=enum-conversion \
+			-Wno-error=implicit-int-float-conversion \
+			-Wno-error=tautological-constant-compare \
+			-Wno-c99-designator -Wno-xor-used-as-pow
 
 COPTS+= -Wno-error=stack-protector
 

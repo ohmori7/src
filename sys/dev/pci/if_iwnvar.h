@@ -1,4 +1,4 @@
-/*	$NetBSD: if_iwnvar.h,v 1.20 2017/07/19 16:55:12 mlelstv Exp $	*/
+/*	$NetBSD: if_iwnvar.h,v 1.22 2020/03/20 16:35:41 sevan Exp $	*/
 /*	$OpenBSD: if_iwnvar.h,v 1.28 2014/09/09 18:55:08 sthen Exp $	*/
 
 /*-
@@ -30,7 +30,7 @@ struct iwn_rx_radiotap_header {
 	uint16_t	wr_chan_flags;
 	int8_t		wr_dbm_antsignal;
 	int8_t		wr_dbm_antnoise;
-} __packed;
+};
 
 #define IWN_RX_RADIOTAP_PRESENT						\
 	((1 << IEEE80211_RADIOTAP_TSFT) |				\
@@ -47,7 +47,7 @@ struct iwn_tx_radiotap_header {
 	uint16_t	wt_chan_freq;
 	uint16_t	wt_chan_flags;
 	uint8_t		wt_hwqueue;
-} __packed;
+};
 
 #define IWN_TX_RADIOTAP_PRESENT						\
 	((1 << IEEE80211_RADIOTAP_FLAGS) |				\
@@ -323,6 +323,8 @@ struct iwn_softc {
 	void			*powerhook;
 
 	struct bpf_if *		sc_drvbpf;
+
+	kmutex_t 		sc_media_mtx;	/* XXX */
 
 	union {
 		struct iwn_rx_radiotap_header th;

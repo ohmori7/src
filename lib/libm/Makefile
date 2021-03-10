@@ -1,4 +1,4 @@
-#  $NetBSD: Makefile,v 1.210 2019/04/27 23:04:32 kamil Exp $
+#  $NetBSD: Makefile,v 1.212 2019/11/11 22:45:27 joerg Exp $
 #
 #  @(#)Makefile 5.1beta 93/09/24
 #
@@ -456,6 +456,8 @@ MLINKS+=fdim.3 fdiml.3
 MLINKS+=fdim.3 fdimf.3
 MLINKS+=fma.3 fmaf.3 \
 	fma.3 fmal.3
+MLINKS+=frexp.3 frexpf.3 \
+	frexp.3 frexpl.3
 
 .if (${MKCOMPLEX} != "no")
 .include "${.CURDIR}/complex/Makefile.inc"
@@ -463,6 +465,7 @@ MLINKS+=fma.3 fmaf.3 \
 
 COPTS.compat_cabs.c+=	${${ACTIVE_CC} == "clang":? -Wno-incompatible-library-redeclaration :}
 COPTS.compat_cabsf.c+=	${${ACTIVE_CC} == "clang":? -Wno-incompatible-library-redeclaration :}
+CWARNFLAGS.clang+=		-Wno-error=implicit-int-float-conversion
 
 .include "${.CURDIR}/compiler_rt/Makefile.inc"
 .include "${.CURDIR}/gen/Makefile.inc"

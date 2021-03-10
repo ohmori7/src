@@ -1,3 +1,5 @@
+/*	$NetBSD: gpt.h,v 1.42 2020/05/24 18:42:20 jmcneill Exp $	*/
+
 /*-
  * Copyright (c) 2002 Marcel Moolenaar
  * All rights reserved.
@@ -82,6 +84,7 @@ gpt_t	gpt_open(const char *, int, int, off_t, u_int, time_t);
 #define GPT_FILE	0x10
 #define GPT_TIMESTAMP	0x20
 #define GPT_SYNC	0x40
+#define GPT_HYBRID	0x80
 #define GPT_OPTDEV      0x8000
 
 void*	gpt_read(gpt_t, off_t, size_t);
@@ -115,7 +118,9 @@ struct gpt_find {
 	const char *msg;
 };
 int	gpt_change_ent(gpt_t, const struct gpt_find *,
-    void (*)(struct gpt_ent *, void *), void *);
+    void (*)(struct gpt_ent *, void *, int), void *);
+int	gpt_change_hdr(gpt_t, const struct gpt_find *,
+    void (*)(struct gpt_hdr *, void *, int), void *);
 int	gpt_add_find(gpt_t, struct gpt_find *, int);
 
 #define GPT_AIS "a:i:s:"

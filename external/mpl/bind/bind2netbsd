@@ -1,6 +1,6 @@
 #! /bin/sh
 #
-#	$NetBSD: bind2netbsd,v 1.3 2019/02/24 20:01:26 christos Exp $
+#	$NetBSD: bind2netbsd,v 1.6 2020/05/24 19:46:10 christos Exp $
 #
 # Copyright (c) 2000 The NetBSD Foundation, Inc.
 # All rights reserved.
@@ -36,9 +36,10 @@
 #	$ tar xpfz /new/bind/release/tar/file
 #	$ sh /usr/src/external/mpl/bind/bind2netbsd bind-9.x.y `pwd`
 #	$ cd src/external/mpl/bind/dist
-#	$ cvs -d cvs.netbsd.org:/cvsroot import -m "Import bind 9.x.y" src/external/mpl/bind/dist ISC bind-9-x-y
+#	$ cvs -d cvs.netbsd.org:/cvsroot import src/external/mpl/bind/dist ISC bind-9-x-y
+#	Enter the new CHANGES portion as your commit message
 #	$ cd ../../../../../bind-9.x.y
-#	$ run ./configure --enable-dnsrps --enable-querytrace --enable-fixed-rrset
+#	$ run ./configure --enable-dnsrps --enable-querytrace --enable-fixed-rrset --without-python
 #	$ run make
 #	- use the binclude4netbsd to create and import the new headers in
 #	  /usr/src/external/mpl/bind/include
@@ -118,7 +119,21 @@ echo done
 echo "cleaning up CVS residue."
 (
 	cd $d
-	find . -type d -name "CVS" -print | xargs rm -r
+	find . -type d -name "CVS" -exec rm -r {} +
+)
+echo done
+
+echo "cleaning up GIT residue."
+(
+	cd $d
+	find . -type d -name ".gitattributes" -exec rm {} +
+)
+echo done
+
+echo "cleaning up clang-format residue."
+(
+	cd $d
+	find . -type d -name ".clang-format*" -exec rm {} +
 )
 echo done
 

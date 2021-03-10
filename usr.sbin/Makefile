@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.280 2018/12/12 07:04:06 maxv Exp $
+#	$NetBSD: Makefile,v 1.285 2020/08/20 21:30:46 riastradh Exp $
 #	from: @(#)Makefile	5.20 (Berkeley) 6/12/93
 
 .include <bsd.own.mk>
@@ -7,7 +7,7 @@ SUBDIR=	ac accton acpitools altq apm apmd arp autofs \
 	bad144 bootp bta2dpd btattach btconfig btdevctl bthcid btpand catman \
 	chroot cnwctl cpuctl crash \
 	dev_mkdb diskpart dumpfs dumplfs \
-	edquota eeprom envstat eshconfig etcupdate extattrctl \
+	edquota eeprom envstat etcupdate extattrctl \
 	flashctl fssconfig fstyp fusermount fwctl \
 	gpioctl grfconfig gspa \
 	hdaudioctl \
@@ -26,11 +26,12 @@ SUBDIR=	ac accton acpitools altq apm apmd arp autofs \
 	rpc.pcnfsd rpc.statd rpcbind rwhod \
 	sa screenblank sdpd service services_mkdb sesd schedctl \
 	sliplogin spray \
-	srtconfig sti sunlabel sup sysinst syslogd \
+	srtconfig sti sunlabel sysinst syslogd \
 	tadpolectl tcpdchk tcpdmatch tcpdrop timed tpctl tprof traceroute trpt \
 	unlink usbdevs user \
 	videomode vipw veriexecgen vnconfig \
-	wakeonlan wiconfig wlanctl wsconscfg wsfontload wsmoused wsmuxctl \
+	wakeonlan wg-keygen wg-userspace wgconfig wiconfig wlanctl \
+	wsconscfg wsfontload wsmoused wsmuxctl \
 	zdump zic
 
 .if ${MKMAKEMANDB} != "no"
@@ -53,6 +54,8 @@ SUBDIR+=mld6query route6d rtadvd traceroute6
 .endif
 
 SUBDIR+= racoon racoonctl
+
+SUBDIR+= nvmmctl
 
 # NPF
 .if (${MKNPF} != "no")

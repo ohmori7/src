@@ -1,4 +1,4 @@
-/*	$NetBSD: imxecspireg.h,v 1.1 2014/03/22 09:28:08 hkenken Exp $	*/
+/*	$NetBSD: imxecspireg.h,v 1.3 2019/12/26 04:53:11 msaitoh Exp $	*/
 
 /*
  * Copyright (c) 2012  Genetec Corporation.  All rights reserved.
@@ -32,7 +32,7 @@
 #define	ECSPI_RXDATA		0x00
 #define	ECSPI_TXDATA		0x04
 #define	ECSPI_CONREG		0x08
-#define	 ECSPI_CON_BITCOUNT	__BITS(31, 20)
+#define	 ECSPI_CON_BITCOUNT	__BITS(31,20)
 #define	 ECSPI_CON_CS		__BITS(19,18)
 #define	 ECSPI_CON_DRCTL	__BITS(17,16)
 #define	 ECSPI_CON_PREDIV	__BITS(15,12)	/* PRE DIVIDER */
@@ -43,7 +43,7 @@
 #define	 ECSPI_CON_HW		__BIT(1)	/* HW */
 #define	 ECSPI_CON_ENABLE	__BIT(0)	/* EN */
 #define	ECSPI_CONFIGREG		0x0c
-#define	 ECSPI_CONFIG_HT_LEN	__BITS(28,24)	/* HT LENGHT */
+#define	 ECSPI_CONFIG_HT_LEN	__BITS(28,24)	/* HT LENGTH */
 #define	 ECSPI_CONFIG_SCLK_CTL	__BITS(23,20)	/* SCLK CTL */
 #define	 ECSPI_CONFIG_DATA_CTL	__BITS(19,16)	/* DATA CTL */
 #define	 ECSPI_CONFIG_SSB_POL	__BITS(15,12)	/* SSB POL */

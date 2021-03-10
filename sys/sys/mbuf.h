@@ -1,4 +1,4 @@
-/*	$NetBSD: mbuf.h,v 1.219 2019/01/17 02:47:15 knakahara Exp $	*/
+/*	$NetBSD: mbuf.h,v 1.232 2021/02/19 14:51:59 christos Exp $	*/
 
 /*
  * Copyright (c) 1996, 1997, 1999, 2001, 2007 The NetBSD Foundation, Inc.
@@ -218,6 +218,7 @@ struct pkthdr {
 #define M_CSUM_TSOv6		0x00000200	/* TCPv6 segmentation offload */
 
 /* Checksum-assist quirks: keep separate from jump-table bits. */
+#define M_CSUM_BLANK		0x40000000	/* csum is missing */
 #define M_CSUM_NO_PSEUDOHDR	0x80000000	/* Rx csum_data does not include
 						 * the UDP/TCP pseudo-hdr, and
 						 * is not yet 1s-complemented.
@@ -225,7 +226,7 @@ struct pkthdr {
 
 #define M_CSUM_BITS \
     "\20\1TCPv4\2UDPv4\3TCP_UDP_BAD\4DATA\5TCPv6\6UDPv6\7IPv4\10IPv4_BAD" \
-    "\11TSOv4\12TSOv6\40NO_PSEUDOHDR"
+    "\11TSOv4\12TSOv6\39BLANK\40NO_PSEUDOHDR"
 
 /*
  * Macros for manipulating csum_data on outgoing packets. These are
@@ -319,9 +320,9 @@ struct _m_ext {
 MBUF_DEFINE(_mbuf_dummy, 1, 1);
 
 /* normal data len */
-#define MLEN		(MSIZE - offsetof(struct _mbuf_dummy, m_dat))
+#define MLEN		((int)(MSIZE - offsetof(struct _mbuf_dummy, m_dat)))
 /* data len w/pkthdr */
-#define MHLEN		(MSIZE - offsetof(struct _mbuf_dummy, m_pktdat))
+#define MHLEN		((int)(MSIZE - offsetof(struct _mbuf_dummy, m_pktdat)))
 
 #define MINCLSIZE	(MHLEN+MLEN+1)	/* smallest amount to put in cluster */
 
@@ -412,6 +413,7 @@ extern const char * const mbuftypes[];
 
 #ifdef MBUFTRACE
 /* Mbuf allocation tracing. */
+void mowner_init_owner(struct mowner *, const char *, const char *);
 void mowner_init(struct mbuf *, int);
 void mowner_ref(struct mbuf *, int);
 void m_claim(struct mbuf *, struct mowner *);
@@ -420,6 +422,7 @@ void mowner_attach(struct mowner *);
 void mowner_detach(struct mowner *);
 void m_claimm(struct mbuf *, struct mowner *);
 #else
+#define mowner_init_owner(mo, n, d)	__nothing
 #define mowner_init(m, type)		__nothing
 #define mowner_ref(m, flags)		__nothing
 #define mowner_revoke(m, all, flags)	__nothing
@@ -499,18 +502,23 @@ do {									\
 	mowner_ref((m), M_EXT);						\
 } while (/* CONSTCOND */ 0)
 
+#define M_BUFADDR(m)							\
+	(((m)->m_flags & M_EXT) ? (m)->m_ext.ext_buf :			\
+	    ((m)->m_flags & M_PKTHDR) ? (m)->m_pktdat : (m)->m_dat)
+
+#define M_BUFSIZE(m)							\
+	(((m)->m_flags & M_EXT) ? (m)->m_ext.ext_size :			\
+	    ((m)->m_flags & M_PKTHDR) ? MHLEN : MLEN)
+
+#define MRESETDATA(m)	(m)->m_data = M_BUFADDR(m)
+
 /*
- * Reset the data pointer on an mbuf.
+ * Compute the offset of the beginning of the data buffer of a non-ext
+ * mbuf.
  */
-#define MRESETDATA(m)							\
-do {									\
-	if ((m)->m_flags & M_EXT)					\
-		(m)->m_data = (m)->m_ext.ext_buf;			\
-	else if ((m)->m_flags & M_PKTHDR)				\
-		(m)->m_data = (m)->m_pktdat;				\
-	else								\
-		(m)->m_data = (m)->m_dat;				\
-} while (/* CONSTCOND */ 0)
+#define M_BUFOFFSET(m)							\
+	(((m)->m_flags & M_PKTHDR) ?					\
+	 offsetof(struct mbuf, m_pktdat) : offsetof(struct mbuf, m_dat))
 
 /*
  * Determine if an mbuf's data area is read-only.  This is true
@@ -532,16 +540,11 @@ do {									\
 	(((m)->m_flags & (M_EXT|M_EXT_ROMAP)) == (M_EXT|M_EXT_ROMAP))
 
 /*
- * Compute the amount of space available
- * before the current start of data in an mbuf.
+ * Compute the amount of space available before the current start of
+ * data in an mbuf.
  */
-#define _M_LEADINGSPACE(m)						\
-	((m)->m_flags & M_EXT ? (m)->m_data - (m)->m_ext.ext_buf :	\
-	 (m)->m_flags & M_PKTHDR ? (m)->m_data - (m)->m_pktdat :	\
-	 (m)->m_data - (m)->m_dat)
-
 #define M_LEADINGSPACE(m)						\
-	(M_READONLY((m)) ? 0 : _M_LEADINGSPACE((m)))
+	(M_READONLY((m)) ? 0 : ((m)->m_data - M_BUFADDR(m)))
 
 /*
  * Compute the amount of space available
@@ -554,20 +557,6 @@ do {									\
 
 #define M_TRAILINGSPACE(m)						\
 	(M_READONLY((m)) ? 0 : _M_TRAILINGSPACE((m)))
-
-/*
- * Compute the address of an mbuf's data area.
- */
-#define M_BUFADDR(m)							\
-	(((m)->m_flags & M_PKTHDR) ? (m)->m_pktdat : (m)->m_dat)
-
-/*
- * Compute the offset of the beginning of the data buffer of a non-ext
- * mbuf.
- */
-#define M_BUFOFFSET(m)							\
-	(((m)->m_flags & M_PKTHDR) ?					\
-	 offsetof(struct mbuf, m_pktdat) : offsetof(struct mbuf, m_dat))
 
 /*
  * Arrange to prepend space of size plen to mbuf m.
@@ -799,6 +788,7 @@ int	m_tag_copy_chain(struct mbuf *, struct mbuf *);
 /* Packet tag types */
 #define PACKET_TAG_NONE			0  /* Nothing */
 #define PACKET_TAG_SO			4  /* sending socket pointer */
+#define PACKET_TAG_NPF			10 /* packet filter */
 #define PACKET_TAG_PF			11 /* packet filter */
 #define PACKET_TAG_ALTQ_QID		12 /* ALTQ queue id */
 #define PACKET_TAG_IPSEC_OUT_DONE	18
@@ -851,6 +841,24 @@ m_copy_rcvif(struct mbuf *m, const struct mbuf *n)
 	KASSERT(m->m_flags & M_PKTHDR);
 	KASSERT(n->m_flags & M_PKTHDR);
 	m->m_pkthdr.rcvif_index = n->m_pkthdr.rcvif_index;
+}
+
+#define M_GET_ALIGNED_HDR(m, type, linkhdr) \
+    m_get_aligned_hdr((m), __alignof(type) - 1, sizeof(type), (linkhdr))
+
+static __inline int
+m_get_aligned_hdr(struct mbuf **m, int mask, size_t hlen, bool linkhdr)
+{
+#ifndef __NO_STRICT_ALIGNMENT
+	if (((uintptr_t)mtod(*m, void *) & mask) != 0)
+		*m = m_copyup(*m, hlen, 
+		      linkhdr ? (max_linkhdr + mask) & ~mask : 0);
+	else
+#endif
+	if (__predict_false((size_t)(*m)->m_len < hlen))
+		*m = m_pullup(*m, hlen);
+
+	return *m == NULL;
 }
 
 void m_print(const struct mbuf *, const char *, void (*)(const char *, ...)

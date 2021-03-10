@@ -1,4 +1,4 @@
-#	$NetBSD: files.mac68k,v 1.128 2019/02/18 01:12:23 thorpej Exp $
+#	$NetBSD: files.mac68k,v 1.131 2021/02/26 10:54:12 rin Exp $
 
 # mac68k-specific configuration info
 
@@ -9,6 +9,8 @@ defflag	opt_mac68k.h		DISABLE_EXT_CACHE ZS_CONSOLE_ABORT
 defflag	opt_grf_compat.h	GRF_COMPAT
 
 defflag	opt_wsdisplay_compat.h	WSDISPLAY_COMPAT_ITEFONT
+
+defparam opt_mac68k.h		MAC68K_MEMSIZE
 
 # maxpartitions must be first item in files.${ARCH}.newconf
 maxpartitions 8
@@ -64,11 +66,10 @@ device	macfb: wsemuldisplaydev, wsrasteremulops
 attach	macfb at grfbus
 file	arch/mac68k/dev/macfb.c		macfb needs-flag
 
-file	arch/mac68k/dev/maccons.c	akbd & macfb
+attach	genfb at grfbus with genfb_grfbus
+file	arch/mac68k/dev/genfb_grfbus.c	genfb_grfbus
 
-#device	ite: wsemuldisplaydev
-#attach	ite at wsdisplay
-#file	arch/mac68k/dev/ite_compat.c	ite needs-flag
+file	arch/mac68k/dev/maccons.c	akbd & (macfb | genfb_grfbus)
 
 device	ae: ifnet, ether, arp, dp8390nic
 attach	ae at nubus with ae_nubus
@@ -120,10 +121,6 @@ file	arch/mac68k/obio/sbc_obio.c	sbc_obio
 attach	esp at obio
 file	arch/mac68k/obio/esp.c		esp
 
-#device	qsc: scsi, ncr53c9x
-#attach	qsc at nubus
-#file	arch/mac68k/nubus/qsc.c		qsc
-
 #
 # Machine-independent ATA drivers
 #
@@ -139,7 +136,6 @@ file	arch/mac68k/nubus/cpi_nubus.c	cpi
 device	zsc { channel = -1 }
 attach	zsc at obio
 file	arch/mac68k/dev/zs.c		zsc needs-flag
-#file	arch/mac68k/dev/z8530sc.c	zsc
 file	dev/ic/z8530sc.c		zsc
 
 device	zstty: tty

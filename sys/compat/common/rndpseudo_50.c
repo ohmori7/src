@@ -1,4 +1,4 @@
-/*	$NetBSD: rndpseudo_50.c,v 1.4 2019/03/01 11:06:56 pgoyette Exp $	*/
+/*	$NetBSD: rndpseudo_50.c,v 1.7 2020/04/30 03:30:10 riastradh Exp $	*/
 
 /*-
  * Copyright (c) 1997-2011 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: rndpseudo_50.c,v 1.4 2019/03/01 11:06:56 pgoyette Exp $");
+__KERNEL_RCSID(0, "$NetBSD: rndpseudo_50.c,v 1.7 2020/04/30 03:30:10 riastradh Exp $");
 
 #if defined(_KERNEL_OPT)
 #include "opt_compat_netbsd.h"
@@ -38,8 +38,6 @@ __KERNEL_RCSID(0, "$NetBSD: rndpseudo_50.c,v 1.4 2019/03/01 11:06:56 pgoyette Ex
 
 #include <sys/param.h>
 #include <sys/file.h>
-
-#include <sys/rnd.h>
 #include <sys/module_hook.h>
 #include <sys/compat_stub.h>
 
@@ -76,7 +74,7 @@ compat_50_rnd_ioctl(struct file *fp, u_long cmd, void *addr)
 	{
 		rndstat_t rstbuf = {.start = 0};
 		rndstat50_t *rst50 = (rndstat50_t *)addr;
-		int count;
+		size_t count;
 
 		if (rst50->count > RND_MAXSTATCOUNT50)
 			return EINVAL;
@@ -125,7 +123,7 @@ void
 rndpseudo_50_init(void)
 {
 
-	MODULE_HOOK_SET(rnd_ioctl_50_hook, "rnd_50", compat_50_rnd_ioctl);
+	MODULE_HOOK_SET(rnd_ioctl_50_hook, compat_50_rnd_ioctl);
 }
 
 void

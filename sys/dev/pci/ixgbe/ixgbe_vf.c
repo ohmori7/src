@@ -1,4 +1,4 @@
-/* $NetBSD: ixgbe_vf.c,v 1.17 2018/04/04 08:59:22 msaitoh Exp $ */
+/* $NetBSD: ixgbe_vf.c,v 1.26 2021/01/20 06:53:17 msaitoh Exp $ */
 
 /******************************************************************************
   SPDX-License-Identifier: BSD-3-Clause
@@ -121,7 +121,8 @@ static void ixgbe_virt_clr_reg(struct ixgbe_hw *hw)
 
 	IXGBE_WRITE_REG(hw, IXGBE_VFPSRTYPE, 0);
 
-	for (i = 0; i < 7; i++) {
+	KASSERT(IXGBE_VF_MAX_TX_QUEUES == IXGBE_VF_MAX_RX_QUEUES);
+	for (i = 0; i < IXGBE_VF_MAX_TX_QUEUES; i++) {
 		IXGBE_WRITE_REG(hw, IXGBE_VFRDH(i), 0);
 		IXGBE_WRITE_REG(hw, IXGBE_VFRDT(i), 0);
 		IXGBE_WRITE_REG(hw, IXGBE_VFRXDCTL(i), 0);
@@ -175,7 +176,7 @@ s32 ixgbe_init_hw_vf(struct ixgbe_hw *hw)
  *  ixgbe_reset_hw_vf - Performs hardware reset
  *  @hw: pointer to hardware structure
  *
- *  Resets the hardware by reseting the transmit and receive units, masks and
+ *  Resets the hardware by resetting the transmit and receive units, masks and
  *  clears all interrupts.
  **/
 s32 ixgbe_reset_hw_vf(struct ixgbe_hw *hw)
@@ -388,7 +389,6 @@ s32 ixgbe_update_mc_addr_list_vf(struct ixgbe_hw *hw, u8 *mc_addr_list,
 				 u32 mc_addr_count, ixgbe_mc_addr_itr next,
 				 bool clear)
 {
-	struct ixgbe_mbx_info *mbx = &hw->mbx;
 	u32 msgbuf[IXGBE_VFMAILBOX_SIZE];
 	u16 *vector_list = (u16 *)&msgbuf[1];
 	u32 vector;
@@ -410,7 +410,13 @@ s32 ixgbe_update_mc_addr_list_vf(struct ixgbe_hw *hw, u8 *mc_addr_list,
 
 	DEBUGOUT1("MC Addr Count = %d\n", mc_addr_count);
 
-	cnt = (mc_addr_count > 30) ? 30 : mc_addr_count;
+	if (mc_addr_count > IXGBE_MAX_VF_MC) {
+		device_printf(ixgbe_dev_from_hw(hw),
+		    "number of Ethernet multicast addresses exceeded "
+		    "the limit (%u > %d)\n", mc_addr_count, IXGBE_MAX_VF_MC);
+		cnt = IXGBE_MAX_VF_MC;
+	} else
+		cnt = mc_addr_count;
 	msgbuf[0] = IXGBE_VF_SET_MULTICAST;
 	msgbuf[0] |= cnt << IXGBE_VT_MSGINFO_SHIFT;
 
@@ -419,8 +425,8 @@ s32 ixgbe_update_mc_addr_list_vf(struct ixgbe_hw *hw, u8 *mc_addr_list,
 		DEBUGOUT1("Hash value = 0x%03X\n", vector);
 		vector_list[i] = (u16)vector;
 	}
-
-	return mbx->ops.write_posted(hw, msgbuf, IXGBE_VFMAILBOX_SIZE, 0);
+	return ixgbevf_write_msg_read_ack(hw, msgbuf, msgbuf,
+	    IXGBE_VFMAILBOX_SIZE);
 }
 
 /**
@@ -455,8 +461,32 @@ s32 ixgbevf_update_xcast_mode(struct ixgbe_hw *hw, int xcast_mode)
 		return err;
 
 	msgbuf[0] &= ~IXGBE_VT_MSGTYPE_CTS;
-	if (msgbuf[0] == (IXGBE_VF_UPDATE_XCAST_MODE | IXGBE_VT_MSGTYPE_NACK))
-		return IXGBE_ERR_FEATURE_NOT_SUPPORTED;
+	if (msgbuf[0] ==
+	    (IXGBE_VF_UPDATE_XCAST_MODE | IXGBE_VT_MSGTYPE_NACK)) {
+		if (xcast_mode == IXGBEVF_XCAST_MODE_PROMISC) {
+			/*
+			 * If the API version matched and the reply was NACK,
+			 * assume the PF was not in PROMISC mode.
+			 */
+			return IXGBE_ERR_NOT_IN_PROMISC;
+		} else
+			return IXGBE_ERR_FEATURE_NOT_SUPPORTED;
+	}
+	/*
+	 *  On linux's PF driver implementation, the PF replies VF's
+	 * XCAST_MODE_ALLMULTI message not with NACK but with ACK even if the
+	 * virtual function is NOT marked "trust" and act as
+	 * XCAST_MODE_"MULTI". If ixv(4) simply check the return value of
+	 * update_xcast_mode(XCAST_MODE_ALLMULTI), SIOCSADDMULTI success and
+	 * the user may have trouble with some addresses. Fortunately, the
+	 * Linux's PF driver's "ACK" message has not XCAST_MODE_"ALL"MULTI but
+	 * XCAST_MODE_MULTI, so we can check this state by checking if the
+	 * send message's argument and the reply message's argument are
+	 * different.
+	 */
+	if ((xcast_mode > IXGBEVF_XCAST_MODE_MULTI)
+	    && (xcast_mode != msgbuf[1]))
+		return IXGBE_ERR_NOT_TRUSTED;
 	return IXGBE_SUCCESS;
 }
 
@@ -755,7 +785,7 @@ int ixgbevf_get_queues(struct ixgbe_hw *hw, unsigned int *num_tcs,
 		msg[0] &= ~IXGBE_VT_MSGTYPE_CTS;
 
 		/*
-		 * if we we didn't get an ACK there must have been
+		 * if we didn't get an ACK there must have been
 		 * some sort of mailbox error so we should treat it
 		 * as such
 		 */

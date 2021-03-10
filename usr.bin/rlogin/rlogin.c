@@ -1,4 +1,4 @@
-/*	$NetBSD: rlogin.c,v 1.44 2015/10/28 08:15:53 shm Exp $	*/
+/*	$NetBSD: rlogin.c,v 1.47 2020/05/03 16:32:16 christos Exp $	*/
 
 /*
  * Copyright (c) 1983, 1990, 1993
@@ -39,7 +39,7 @@ __COPYRIGHT("@(#) Copyright (c) 1983, 1990, 1993\
 #if 0
 static char sccsid[] = "@(#)rlogin.c	8.4 (Berkeley) 4/29/95";
 #else
-__RCSID("$NetBSD: rlogin.c,v 1.44 2015/10/28 08:15:53 shm Exp $");
+__RCSID("$NetBSD: rlogin.c,v 1.47 2020/05/03 16:32:16 christos Exp $");
 #endif
 #endif /* not lint */
 
@@ -132,7 +132,7 @@ main(int argc, char *argv[])
 	struct passwd *pw;
 	struct servent *sp;
 	struct termios tty;
-	sigset_t smask;
+	sigset_t imask, omask;
 	uid_t uid;
 	int argoff, ch, dflag, nflag, one;
 	int i, len, len2;
@@ -245,12 +245,12 @@ main(int argc, char *argv[])
 	sigemptyset(&sa.sa_mask);
 	sa.sa_flags = SA_RESTART;
 	sa.sa_handler = lostpeer;
-	(void)sigaction(SIGPIPE, &sa, (struct sigaction *)0);
+	(void)sigaction(SIGPIPE, &sa, NULL);
 	/* will use SIGUSR1 for window size hack, so hold it off */
-	sigemptyset(&smask);
-	sigaddset(&smask, SIGURG);
-	sigaddset(&smask, SIGUSR1);
-	(void)sigprocmask(SIG_SETMASK, &smask, &smask);
+	sigemptyset(&imask);
+	sigaddset(&imask, SIGURG);
+	sigaddset(&imask, SIGUSR1);
+	(void)sigprocmask(SIG_SETMASK, &imask, &omask);
 	/*
 	 * We set SIGURG and SIGUSR1 below so that an
 	 * incoming signal will be held pending rather than being
@@ -258,9 +258,9 @@ main(int argc, char *argv[])
 	 * a signal by the time that they are unblocked below.
 	 */
 	sa.sa_handler = copytochild;
-	(void)sigaction(SIGURG, &sa, (struct sigaction *) 0);
+	(void)sigaction(SIGURG, &sa, NULL);
 	sa.sa_handler = writeroob;
-	(void)sigaction(SIGUSR1, &sa, (struct sigaction *) 0);
+	(void)sigaction(SIGUSR1, &sa, NULL);
 
 	/* don't dump core */
 	rlim.rlim_cur = rlim.rlim_max = 0;
@@ -291,7 +291,7 @@ main(int argc, char *argv[])
 	}
 
 	(void)setuid(uid);
-	doit(&smask);
+	doit(&omask);
 	/*NOTREACHED*/
 	return (0);
 }
@@ -306,7 +306,7 @@ doit(sigset_t *smask)
 	sigemptyset(&sa.sa_mask);
 	sa.sa_flags = SA_RESTART;
 	sa.sa_handler = SIG_IGN;
-	(void)sigaction(SIGINT, &sa, (struct sigaction *) 0);
+	(void)sigaction(SIGINT, &sa, NULL);
 	setsignal(SIGHUP);
 	setsignal(SIGQUIT);
 	mode(1);
@@ -333,9 +333,9 @@ doit(sigset_t *smask)
 	 * signals to the child. We can now unblock SIGURG and SIGUSR1
 	 * that were set above.
 	 */
-	(void)sigprocmask(SIG_SETMASK, smask, (sigset_t *) 0);
+	(void)sigprocmask(SIG_SETMASK, smask, NULL);
 	sa.sa_handler = catch_child;
-	(void)sigaction(SIGCHLD, &sa, (struct sigaction *) 0);
+	(void)sigaction(SIGCHLD, &sa, NULL);
 	writer();
 	msg("closed connection.");
 	done(0);
@@ -345,21 +345,21 @@ doit(sigset_t *smask)
 static void
 setsignal(int sig)
 {
-	struct sigaction sa;
-	sigset_t sigs;
+	struct sigaction isa, osa;
+	sigset_t isigs, osigs;
 
-	sigemptyset(&sigs);
-	sigaddset(&sigs, sig);
-	sigprocmask(SIG_BLOCK, &sigs, &sigs);
+	sigemptyset(&isigs);
+	sigaddset(&isigs, sig);
+	sigprocmask(SIG_BLOCK, &isigs, &osigs);
 
-	sigemptyset(&sa.sa_mask);
-	sa.sa_handler = exit;
-	sa.sa_flags = SA_RESTART;
-	(void)sigaction(sig, &sa, &sa);
-	if (sa.sa_handler == SIG_IGN)
-		(void)sigaction(sig, &sa, (struct sigaction *) 0);
+	sigemptyset(&isa.sa_mask);
+	isa.sa_handler = exit;
+	isa.sa_flags = SA_RESTART;
+	(void)sigaction(sig, &isa, &osa);
+	if (osa.sa_handler == SIG_IGN)
+		(void)sigaction(sig, &osa, NULL);
 
-	(void)sigprocmask(SIG_SETMASK, &sigs, (sigset_t *) 0);
+	(void)sigprocmask(SIG_SETMASK, &osigs, NULL);
 }
 
 static void
@@ -375,7 +375,7 @@ done(int status)
 		sigemptyset(&sa.sa_mask);
 		sa.sa_handler = SIG_DFL;
 		sa.sa_flags = 0;
-		(void)sigaction(SIGCHLD, &sa, (struct sigaction *) 0);
+		(void)sigaction(SIGCHLD, &sa, NULL);
 		if (kill(child, SIGKILL) >= 0)
 			while ((w = wait(&wstatus)) > 0 && w != child)
 				continue;
@@ -399,7 +399,7 @@ writeroob(int signo)
 		sigemptyset(&sa.sa_mask);
 		sa.sa_handler = sigwinch;
 		sa.sa_flags = SA_RESTART;
-		(void)sigaction(SIGWINCH, &sa, (struct sigaction *) 0);
+		(void)sigaction(SIGWINCH, &sa, NULL);
 	}
 	dosigwinch = 1;
 }
@@ -430,7 +430,8 @@ catch_child(int signo)
 static void
 writer(void)
 {
-	int bol, local, n;
+	int bol, local;
+	ssize_t n;
 	char c;
 
 	bol = 1;			/* beginning of line */
@@ -523,10 +524,10 @@ stop(int all)
 	sigemptyset(&sa.sa_mask);
 	sa.sa_handler = SIG_IGN;
 	sa.sa_flags = SA_RESTART;
-	(void)sigaction(SIGCHLD, &sa, (struct sigaction *) 0);
+	(void)sigaction(SIGCHLD, &sa, NULL);
 	(void)kill(all ? 0 : getpid(), SIGTSTP);
 	sa.sa_handler = catch_child;
-	(void)sigaction(SIGCHLD, &sa, (struct sigaction *) 0);
+	(void)sigaction(SIGCHLD, &sa, NULL);
 	mode(1);
 	sigwinch(0);			/* check for size changes */
 }
@@ -573,18 +574,37 @@ sendwindow(void)
 
 static jmp_buf rcvtop;
 static pid_t ppid;
-static int rcvcnt, rcvstate;
+static ssize_t rcvcnt, rcvstate;
 static char rcvbuf[8 * 1024];
+
+static int
+recvx(int fd, void *buf, size_t len, int flags, int *msgflags)
+{
+	struct msghdr msg;
+	struct iovec iov;
+	int error;
+
+	memset(&msg, 0, sizeof(msg));
+	msg.msg_iov = &iov;
+	iov.iov_base = buf;
+	iov.iov_len = len;
+	error = recvmsg(fd, &msg, flags);
+	if (error)
+		return error;
+	*msgflags = msg.msg_flags;
+	return 0;
+}
 
 static void
 oob(int signo)
 {
 	struct termios tty;
-	int atmark, n, rcvd;
+	int atmark = 0;
+	ssize_t n, rcvd;
 	char waste[BUFSIZ], mark;
 
 	rcvd = 0;
-	while (recv(rem, &mark, 1, MSG_OOB) < 0) {
+	while (recvx(rem, &mark, 1, MSG_OOB, &atmark) == -1) {
 		switch (errno) {
 		case EWOULDBLOCK:
 			/*
@@ -592,7 +612,7 @@ oob(int signo)
 			 * to send it yet if we are blocked for output and
 			 * our input buffer is full.
 			 */
-			if (rcvcnt < (int)sizeof(rcvbuf)) {
+			if (rcvcnt < (ssize_t)sizeof(rcvbuf)) {
 				n = read(rem, rcvbuf + rcvcnt,
 				    sizeof(rcvbuf) - rcvcnt);
 				if (n <= 0)
@@ -608,6 +628,7 @@ oob(int signo)
 			return;
 		}
 	}
+	atmark &= MSG_OOB;
 	if (mark & TIOCPKT_WINDOW) {
 		/* Let server know about window size changes */
 		(void)kill(ppid, SIGUSR1);
@@ -624,17 +645,8 @@ oob(int signo)
 	}
 	if (mark & TIOCPKT_FLUSHWRITE) {
 		(void)tcflush(1, TCIOFLUSH);
-		for (;;) {
-			if (ioctl(rem, SIOCATMARK, &atmark) < 0) {
-				warn("ioctl SIOCATMARK (ignored)");
-				break;
-			}
-			if (atmark)
-				break;
+		if (!atmark)
 			n = read(rem, waste, sizeof (waste));
-			if (n <= 0)
-				break;
-		}
 		/*
 		 * Don't want any pending data to be output, so clear the recv
 		 * buffer.  If we were hanging on a write when interrupted,
@@ -661,7 +673,7 @@ static int
 reader(sigset_t *smask)
 {
 	pid_t pid;
-	int n, remaining;
+	ssize_t n, remaining;
 	char *bufp;
 	struct sigaction sa;
 
@@ -669,13 +681,13 @@ reader(sigset_t *smask)
 	sigemptyset(&sa.sa_mask);
 	sa.sa_flags = SA_RESTART;
 	sa.sa_handler = SIG_IGN;
-	(void)sigaction(SIGTTOU, &sa, (struct sigaction *) 0);
+	(void)sigaction(SIGTTOU, &sa, NULL);
 	sa.sa_handler = oob;
-	(void)sigaction(SIGURG, &sa, (struct sigaction *) 0);
+	(void)sigaction(SIGURG, &sa, NULL);
 	ppid = getppid();
 	(void)fcntl(rem, F_SETOWN, pid);
 	(void)setjmp(rcvtop);
-	(void)sigprocmask(SIG_SETMASK, smask, (sigset_t *) 0);
+	(void)sigprocmask(SIG_SETMASK, smask, NULL);
 	bufp = rcvbuf;
 	for (;;) {
 		while ((remaining = rcvcnt - (bufp - rcvbuf)) > 0) {
@@ -742,7 +754,7 @@ lostpeer(int signo)
 	sa.sa_flags = SA_RESTART;
 	sa.sa_handler = SIG_IGN;
 	sigemptyset(&sa.sa_mask);
-	(void)sigaction(SIGPIPE, &sa, (struct sigaction *)0);
+	(void)sigaction(SIGPIPE, &sa, NULL);
 	msg("\aconnection closed.");
 	done(1);
 }
@@ -796,7 +808,7 @@ static u_int
 getescape(char *p)
 {
 	long val;
-	int len;
+	size_t len;
 
 	if ((len = strlen(p)) == 1)	/* use any single char, including '\' */
 		return ((u_int)*p);

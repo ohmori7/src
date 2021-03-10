@@ -23,7 +23,6 @@
 #endif
 #include <arpa/inet.h>
 #include <dirent.h>
-#include <errno.h>
 #include <grp.h>
 #include <limits.h>
 #include <net/if.h>
@@ -44,6 +43,9 @@
 #include <termios.h>
 #include <time.h>
 #include <wchar.h>
+#if !SANITIZER_MAC && !SANITIZER_FREEBSD
+#include <utmp.h>
+#endif
 
 #if !SANITIZER_IOS
 #include <net/route.h>
@@ -52,6 +54,7 @@
 #if !SANITIZER_ANDROID
 #include <sys/mount.h>
 #include <sys/timeb.h>
+#include <utmpx.h>
 #endif
 
 #if SANITIZER_LINUX
@@ -73,18 +76,12 @@
 #include <net/if_arp.h>
 #endif
 
-#if SANITIZER_FREEBSD
-# include <sys/consio.h>
-# include <sys/kbio.h>
-# include <sys/link_elf.h>
-# include <net/ethernet.h>
-#endif
-
 #if SANITIZER_NETBSD
 # include <link_elf.h>
 # include <net/if_ether.h>
 # define statfs statvfs
 # define d_ino d_fileno
+# include "sanitizer_platform_limits_netbsd.h"
 #endif
 
 #if SANITIZER_FREEBSD || SANITIZER_NETBSD
@@ -224,6 +221,7 @@ namespace __sanitizer {
   unsigned struct_sigaction_sz = sizeof(struct sigaction);
   unsigned struct_itimerval_sz = sizeof(struct itimerval);
   unsigned pthread_t_sz = sizeof(pthread_t);
+  unsigned pthread_mutex_t_sz = sizeof(pthread_mutex_t);
   unsigned pthread_cond_t_sz = sizeof(pthread_cond_t);
   unsigned pid_t_sz = sizeof(pid_t);
   unsigned timeval_sz = sizeof(timeval);
@@ -290,9 +288,10 @@ namespace __sanitizer {
   unsigned struct_statvfs_sz = sizeof(struct statvfs);
 #endif // (SANITIZER_LINUX || SANITIZER_FREEBSD || SANITIZER_NETBSD) && !SANITIZER_ANDROID
 
-  uptr sig_ign = (uptr)SIG_IGN;
-  uptr sig_dfl = (uptr)SIG_DFL;
-  uptr sa_siginfo = (uptr)SA_SIGINFO;
+  const uptr sig_ign = (uptr)SIG_IGN;
+  const uptr sig_dfl = (uptr)SIG_DFL;
+  const uptr sig_err = (uptr)SIG_ERR;
+  const uptr sa_siginfo = (uptr)SA_SIGINFO;
 
 #if SANITIZER_LINUX
   int e_tabsz = (int)E_TABSZ;
@@ -306,6 +305,13 @@ namespace __sanitizer {
   int shmctl_ipc_info = (int)IPC_INFO;
   int shmctl_shm_info = (int)SHM_INFO;
   int shmctl_shm_stat = (int)SHM_STAT;
+#endif
+
+#if !SANITIZER_MAC && !SANITIZER_FREEBSD
+  unsigned struct_utmp_sz = sizeof(struct utmp);
+#endif
+#if !SANITIZER_ANDROID
+  unsigned struct_utmpx_sz = sizeof(struct utmpx);
 #endif
 
   int map_fixed = MAP_FIXED;
@@ -949,14 +955,6 @@ unsigned struct_ElfW_Phdr_sz = sizeof(Elf_Phdr);
   unsigned IOCTL_SNDCTL_DSP_GETOSPACE = SNDCTL_DSP_GETOSPACE;
 #endif // (SANITIZER_LINUX || SANITIZER_FREEBSD) && !SANITIZER_ANDROID
 
-  const int errno_EINVAL = EINVAL;
-// EOWNERDEAD is not present in some older platforms.
-#if defined(EOWNERDEAD)
-  const int errno_EOWNERDEAD = EOWNERDEAD;
-#else
-  const int errno_EOWNERDEAD = -1;
-#endif
-
   const int si_SEGV_MAPERR = SEGV_MAPERR;
   const int si_SEGV_ACCERR = SEGV_ACCERR;
 } // namespace __sanitizer
@@ -1051,6 +1049,16 @@ CHECK_SIZE_AND_OFFSET(cmsghdr, cmsg_len);
 CHECK_SIZE_AND_OFFSET(cmsghdr, cmsg_level);
 CHECK_SIZE_AND_OFFSET(cmsghdr, cmsg_type);
 
+#ifndef __GLIBC_PREREQ
+#define __GLIBC_PREREQ(x, y) 0
+#endif
+
+#if SANITIZER_LINUX && (__ANDROID_API__ >= 21 || __GLIBC_PREREQ (2, 14))
+CHECK_TYPE_SIZE(mmsghdr);
+CHECK_SIZE_AND_OFFSET(mmsghdr, msg_hdr);
+CHECK_SIZE_AND_OFFSET(mmsghdr, msg_len);
+#endif
+
 COMPILER_CHECK(sizeof(__sanitizer_dirent) <= sizeof(dirent));
 CHECK_SIZE_AND_OFFSET(dirent, d_ino);
 #if SANITIZER_MAC
@@ -1086,9 +1094,6 @@ COMPILER_CHECK(sizeof(__sanitizer_sigaction) == sizeof(struct sigaction));
 // Can't write checks for sa_handler and sa_sigaction due to them being
 // preprocessor macros.
 CHECK_STRUCT_SIZE_AND_OFFSET(sigaction, sa_mask);
-#ifndef __GLIBC_PREREQ
-#define __GLIBC_PREREQ(x, y) 0
-#endif
 #if !defined(__s390x__) || __GLIBC_PREREQ (2, 20)
 // On s390x glibc 2.19 and earlier sa_flags was unsigned long, and sa_resv
 // didn't exist.
@@ -1168,8 +1173,9 @@ CHECK_SIZE_AND_OFFSET(ipc_perm, uid);
 CHECK_SIZE_AND_OFFSET(ipc_perm, gid);
 CHECK_SIZE_AND_OFFSET(ipc_perm, cuid);
 CHECK_SIZE_AND_OFFSET(ipc_perm, cgid);
-#if !defined(__aarch64__) || !SANITIZER_LINUX || __GLIBC_PREREQ (2, 21)
-/* On aarch64 glibc 2.20 and earlier provided incorrect mode field.  */
+#if !SANITIZER_LINUX || __GLIBC_PREREQ (2, 31)
+/* glibc 2.30 and earlier provided 16-bit mode field instead of 32-bit
+   on many architectures.  */
 CHECK_SIZE_AND_OFFSET(ipc_perm, mode);
 #endif
 
@@ -1217,7 +1223,7 @@ CHECK_SIZE_AND_OFFSET(ifaddrs, ifa_data);
 #endif
 
 #if SANITIZER_LINUX
-COMPILER_CHECK(sizeof(__sanitizer_mallinfo) == sizeof(struct mallinfo));
+COMPILER_CHECK(sizeof(__sanitizer_struct_mallinfo) == sizeof(struct mallinfo));
 #endif
 
 #if !SANITIZER_ANDROID

@@ -1,4 +1,4 @@
-/*	$NetBSD: i915_drv.c,v 1.16 2018/09/13 08:25:55 mrg Exp $	*/
+/*	$NetBSD: i915_drv.c,v 1.19 2020/02/14 14:34:58 maya Exp $	*/
 
 /* i915_drv.c -- i830,i845,i855,i865,i915 driver -*- linux-c -*-
  */
@@ -30,12 +30,10 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: i915_drv.c,v 1.16 2018/09/13 08:25:55 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: i915_drv.c,v 1.19 2020/02/14 14:34:58 maya Exp $");
 
 #include <linux/device.h>
 #include <linux/acpi.h>
-#include <linux/moduleparam.h>
-#include <linux/time.h>
 #include <drm/drmP.h>
 #include <drm/i915_drm.h>
 #include "i915_drv.h"
@@ -741,9 +739,7 @@ int i915_drm_suspend(struct drm_device *dev)
 	intel_uncore_forcewake_reset(dev, false);
 	intel_opregion_fini(dev);
 
-#ifndef __NetBSD__		/* XXX fb */
 	intel_fbdev_set_suspend(dev, FBINFO_STATE_SUSPENDED, true);
-#endif
 
 	dev_priv->suspend_count++;
 
@@ -764,6 +760,8 @@ int i915_drm_suspend_late(struct drm_device *drm_dev, bool hibernation)
 
 		return ret;
 	}
+
+	i915_rc6_ctx_wa_suspend(dev_priv);
 
 #ifndef __NetBSD__		/* pmf handles this for us.  */
 	pci_disable_device(drm_dev->pdev);
@@ -868,9 +866,7 @@ int i915_drm_resume(struct drm_device *dev)
 
 	intel_opregion_init(dev);
 
-#ifndef __NetBSD__		/* XXX fb */
 	intel_fbdev_set_suspend(dev, FBINFO_STATE_RUNNING, false);
-#endif
 
 	mutex_lock(&dev_priv->modeset_restore_lock);
 	dev_priv->modeset_restore = MODESET_DONE;
@@ -922,6 +918,8 @@ int i915_drm_resume_early(struct drm_device *dev)
 
 	intel_uncore_sanitize(dev);
 	intel_power_domains_init_hw(dev_priv);
+
+	i915_rc6_ctx_wa_resume(dev_priv);
 
 	return ret;
 }

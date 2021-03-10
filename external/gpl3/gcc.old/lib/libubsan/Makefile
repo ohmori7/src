@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.1.1.2 2018/08/01 22:19:01 mrg Exp $
+#	$NetBSD: Makefile,v 1.4 2020/08/19 07:48:02 mrg Exp $
 
 UNSUPPORTED_COMPILER.clang=	# defined
 LIBISCXX = yes
@@ -10,25 +10,28 @@ LIBISCXX = yes
 
 .PATH: ${SANITIZER}/ubsan
 
+# XXXmknative
 UBSAN_SRCS= \
-	ubsan_diag.o \
-	ubsan_flags.o \
-	ubsan_handlers.o \
-	ubsan_handlers_cxx.o \
-	ubsan_init.o \
-	ubsan_init_standalone.o \
-	ubsan_type_hash.o \
-	ubsan_type_hash_itanium.o \
-	ubsan_type_hash_win.o \
-	ubsan_value.o
-
+	ubsan_diag.cc \
+	ubsan_flags.cc \
+	ubsan_handlers.cc \
+	ubsan_init.cc \
+	ubsan_type_hash.cc \
+	ubsan_type_hash_itanium.cc \
+	ubsan_type_hash_win.cc \
+	ubsan_value.cc
 
 .for _s in ubsan_handlers_cxx ubsan_type_hash ubsan_type_hash_itanium
 COPTS.${_s}.cc+=-frtti
 .endfor
 
+.if ${MACHINE_ARCH} == "vax"
+COPTS.sanitizer_file.cc += -O1
+.endif
+
 LIB=	ubsan
 SRCS+=	${UBSAN_SRCS}
 LIBDPLIBS+= rt ${NETBSDSRCDIR}/lib/librt
+CPPFLAGS+=-DCAN_SANITIZE_UB=1
 
 .include <bsd.lib.mk>

@@ -1,4 +1,4 @@
-/*	$NetBSD: ikphy.c,v 1.15 2019/03/25 07:34:13 msaitoh Exp $	*/
+/*	$NetBSD: ikphy.c,v 1.19 2020/03/15 23:04:50 thorpej Exp $	*/
 
 /*******************************************************************************
 Copyright (c) 2001-2005, Intel Corporation 
@@ -59,7 +59,7 @@ POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ikphy.c,v 1.15 2019/03/25 07:34:13 msaitoh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ikphy.c,v 1.19 2020/03/15 23:04:50 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -128,7 +128,8 @@ ikphyattach(device_t parent, device_t self, void *aux)
 	sc->mii_funcs = &ikphy_funcs;
 	sc->mii_pdata = mii;
 	sc->mii_flags = ma->mii_flags;
-	sc->mii_anegticks = MII_ANEGTICKS;
+
+	mii_lock(mii);
 
 	PHY_RESET(sc);
 
@@ -136,13 +137,10 @@ ikphyattach(device_t parent, device_t self, void *aux)
 	sc->mii_capabilities &= ma->mii_capmask;
 	if (sc->mii_capabilities & BMSR_EXTSTAT)
 		PHY_READ(sc, MII_EXTSR, &sc->mii_extcapabilities);
-	aprint_normal_dev(self, "");
-	if ((sc->mii_capabilities & BMSR_MEDIAMASK) == 0 &&
-	    (sc->mii_extcapabilities & EXTSR_MEDIAMASK) == 0)
-		aprint_error("no media present");
-	else
-		mii_phy_add_media(sc);
-	aprint_normal("\n");
+
+	mii_unlock(mii);
+
+	mii_phy_add_media(sc);
 }
 
 static int
@@ -150,6 +148,8 @@ ikphy_service(struct mii_softc *sc, struct mii_data *mii, int cmd)
 {
 	struct ifmedia_entry *ife = mii->mii_media.ifm_cur;
 	uint16_t reg;
+
+	KASSERT(mii_locked(mii));
 
 	switch (cmd) {
 	case MII_POLLSTAT:
@@ -205,6 +205,8 @@ ikphy_setmedia(struct mii_softc *sc)
 	struct mii_data *mii = sc->mii_pdata;
 	struct ifmedia_entry *ife = mii->mii_media.ifm_cur;
 
+	KASSERT(mii_locked(mii));
+
 	/* Enable CRS on TX for half-duplex operation. */
 	PHY_READ(sc, GG82563_PHY_MAC_SPEC_CTRL, &phy_data);
 	phy_data |= GG82563_MSCR_ASSERT_CRS_ON_TX;
@@ -212,21 +214,21 @@ ikphy_setmedia(struct mii_softc *sc)
 	phy_data |= GG82563_MSCR_TX_CLK_1000MBPS_25MHZ;
 	PHY_WRITE(sc, GG82563_PHY_MAC_SPEC_CTRL, phy_data);
 
-	/* set mdi/mid-x options */
+	/* Set mdi/mid-x options */
 	PHY_READ(sc, GG82563_PHY_SPEC_CTRL, &phy_data);
 	phy_data &= ~GG82563_PSCR_CROSSOVER_MODE_MASK;
 	if (IFM_SUBTYPE(ife->ifm_media) == IFM_AUTO)
 		phy_data |= GG82563_PSCR_CROSSOVER_MODE_AUTO;
 	else
 		phy_data |= GG82563_PSCR_CROSSOVER_MODE_MDI;
-	/* set polarity correction */
+	/* Set polarity correction */
 	phy_data &= ~GG82563_PSCR_POLARITY_REVERSAL_DISABLE;
 	PHY_WRITE(sc, GG82563_PHY_SPEC_CTRL, phy_data);
 
 	/* SW Reset the PHY so all changes take effect */
 	PHY_RESET(sc);
 
-	/* for the i80003 */
+	/* For the i80003 */
 	PHY_READ(sc, GG82563_PHY_SPEC_CTRL_2, &phy_data);
 	phy_data &= ~GG82563_PSCR2_REVERSE_AUTO_NEG;
 	PHY_WRITE(sc, GG82563_PHY_SPEC_CTRL_2, phy_data);
@@ -260,7 +262,7 @@ ikphy_setmedia(struct mii_softc *sc)
 	}
 	PHY_READ(sc, GG82563_PHY_MAC_SPEC_CTRL, &phy_data);
 	phy_data &= ~GG82563_MSCR_TX_CLK_MASK;
-	switch(IFM_SUBTYPE(ife->ifm_media)) {
+	switch (IFM_SUBTYPE(ife->ifm_media)) {
 	case IFM_10_T:
 		phy_data |= GG82563_MSCR_TX_CLK_10MBPS_2_5MHZ;
 		break;
@@ -282,6 +284,8 @@ ikphy_status(struct mii_softc *sc)
 	struct ifmedia_entry *ife = mii->mii_media.ifm_cur;
 	uint16_t pssr, bmcr, gtsr, kmrn;
 
+	KASSERT(mii_locked(mii));
+
 	mii->mii_media_status = IFM_AVALID;
 	mii->mii_media_active = IFM_ETHER;
 
@@ -302,7 +306,7 @@ ikphy_status(struct mii_softc *sc)
 
 	if (bmcr & BMCR_AUTOEN) {
 		/*
-		 * The media status bits are only valid of autonegotiation
+		 * The media status bits are only valid if autonegotiation
 		 * has completed (or it's disabled).
 		 */
 		if ((pssr & GG82563_PSSR_SPEED_DUPLEX_RESOLVED) == 0) {

@@ -1,13 +1,13 @@
-/*	$NetBSD: main.c,v 1.17 2019/01/27 02:08:33 pgoyette Exp $	*/
+/*	$NetBSD: main.c,v 1.20 2021/02/21 00:36:06 christos Exp $	*/
 
 #include "defs.h"
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: main.c,v 1.17 2019/01/27 02:08:33 pgoyette Exp $");
-/* Id: main.c,v 1.61 2017/12/04 17:50:02 erik.b.andersen Exp  */
+__RCSID("$NetBSD: main.c,v 1.20 2021/02/21 00:36:06 christos Exp $");
+/* Id: main.c,v 1.70 2020/09/10 17:32:55 tom Exp  */
 
 #include <signal.h>
-#ifndef _WIN32
+#if !defined(_WIN32) || defined(__MINGW32__)
 #include <unistd.h>		/* for _exit() */
 #else
 #include <stdlib.h>		/* for _exit() */
@@ -38,6 +38,7 @@ static MY_TMPFILES *my_tmpfiles;
 #endif /* USE_MKSTEMP */
 
 char dflag;
+char dflag2;
 char gflag;
 char iflag;
 char lflag;
@@ -156,7 +157,7 @@ done(int k)
     if (rflag)
 	DO_FREE(code_file_name);
 
-    if (dflag)
+    if (dflag && !dflag2)
 	DO_FREE(defines_file_name);
 
     if (iflag)
@@ -216,6 +217,7 @@ usage(void)
 	,"  -b file_prefix        set filename prefix (default \"y.\")"
 	,"  -B                    create a backtracking parser"
 	,"  -d                    write definitions (" DEFINES_SUFFIX ")"
+	,"  -H defines_file       write definitions to defines_file"
 	,"  -i                    write interface (y.tab.i)"
 	,"  -g                    write a graphical description"
 	,"  -l                    suppress #line directives"
@@ -236,7 +238,7 @@ usage(void)
     for (n = 0; n < sizeof(msg) / sizeof(msg[0]); ++n)
 	fprintf(stderr, "%s\n", msg[n]);
 
-    exit(1);
+    exit(EXIT_FAILURE);
 }
 
 static void
@@ -254,6 +256,7 @@ setflag(int ch)
 
     case 'd':
 	dflag = 1;
+	dflag2 = 0;
 	break;
 
     case 'g':
@@ -314,6 +317,47 @@ static void
 getargs(int argc, char *argv[])
 {
     int i;
+#ifdef HAVE_GETOPT
+    int ch;
+
+    if (argc > 0)
+	myname = argv[0];
+
+    while ((ch = getopt(argc, argv, "Bb:dgH:ilLo:Pp:rstVvy")) != -1)
+    {
+	switch (ch)
+	{
+	case 'b':
+	    file_prefix = optarg;
+	    break;
+	case 'H':
+	    dflag = dflag2 = 1;
+	    defines_file_name = optarg;
+	    break;
+	case 'o':
+	    output_file_name = optarg;
+	    explicit_file_name = 1;
+	    break;
+	case 'p':
+	    symbol_prefix = optarg;
+	    break;
+	default:
+	    setflag(ch);
+	    break;
+	}
+    }
+    if ((i = optind) < argc)
+    {
+	/* getopt handles "--" specially, while we handle "-" specially */
+	if (!strcmp(argv[i], "-"))
+	{
+	    if ((i + 1) < argc)
+		usage();
+	    input_file = stdin;
+	    return;
+	}
+    }
+#else
     char *s;
     int ch;
 
@@ -342,6 +386,16 @@ getargs(int argc, char *argv[])
 		file_prefix = s;
 	    else if (++i < argc)
 		file_prefix = argv[i];
+	    else
+		usage();
+	    continue;
+
+	case 'H':
+	    dflag = dflag2 = 1;
+	    if (*++s)
+		defines_file_name = s;
+	    else if (++i < argc)
+		defines_file_name = argv[i];
 	    else
 		usage();
 	    continue;
@@ -385,7 +439,9 @@ getargs(int argc, char *argv[])
       end_of_option:;
     }
 
-  no_more_options:;
+  no_more_options:
+
+#endif /* HAVE_GETOPT */
     if (i + 1 != argc)
 	usage();
     input_file_name_len = strlen(argv[i]);
@@ -483,7 +539,7 @@ create_file_names(void)
     else
 	code_file_name = output_file_name;
 
-    if (dflag)
+    if (dflag && !dflag2)
     {
 	if (explicit_file_name)
 	{
@@ -609,10 +665,8 @@ open_tmpfile(const char *label)
 #define MY_FMT "%s/%.*sXXXXXX"
     FILE *result;
 #if USE_MKSTEMP
-    int fd;
     const char *tmpdir;
     char *name;
-    const char *mark;
 
     if (((tmpdir = getenv("TMPDIR")) == 0 || access(tmpdir, W_OK) != 0) ||
 	((tmpdir = getenv("TEMP")) == 0 || access(tmpdir, W_OK) != 0))
@@ -635,6 +689,9 @@ open_tmpfile(const char *label)
     result = 0;
     if (name != 0)
     {
+	int fd;
+	const char *mark;
+
 	mode_t save_umask = umask(0177);
 
 	if ((mark = strrchr(label, '_')) == 0)
@@ -642,27 +699,28 @@ open_tmpfile(const char *label)
 
 	sprintf(name, MY_FMT, tmpdir, (int)(mark - label), label);
 	fd = mkstemp(name);
-	if (fd >= 0)
+	if (fd >= 0
+	    && (result = fdopen(fd, "w+")) != 0)
 	{
-	    result = fdopen(fd, "w+");
-	    if (result != 0)
+	    MY_TMPFILES *item;
+
+	    if (my_tmpfiles == 0)
 	    {
-		MY_TMPFILES *item;
-
-		if (my_tmpfiles == 0)
-		{
-		    atexit(close_tmpfiles);
-		}
-
-		item = NEW(MY_TMPFILES);
-		NO_SPACE(item);
-
-		item->name = name;
-		NO_SPACE(item->name);
-
-		item->next = my_tmpfiles;
-		my_tmpfiles = item;
+		atexit(close_tmpfiles);
 	    }
+
+	    item = NEW(MY_TMPFILES);
+	    NO_SPACE(item);
+
+	    item->name = name;
+	    NO_SPACE(item->name);
+
+	    item->next = my_tmpfiles;
+	    my_tmpfiles = item;
+	}
+	else
+	{
+	    FREE(name);
 	}
 	(void)umask(save_umask);
     }
@@ -715,7 +773,7 @@ open_files(void)
 	fprintf(graph_file, "\t*/\n");
     }
 
-    if (dflag)
+    if (dflag || dflag2)
     {
 	defines_file = fopen(defines_file_name, "w");
 	if (defines_file == 0)

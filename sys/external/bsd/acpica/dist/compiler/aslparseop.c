@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2019, Intel Corp.
+ * Copyright (C) 2000 - 2020, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -280,6 +280,8 @@ TrCreateValuedLeafOp (
     UINT64                  Value)
 {
     ACPI_PARSE_OBJECT       *Op;
+    UINT32                  i;
+    char                    *StringPtr = NULL;
 
 
     Op = TrAllocateOp (ParseOpcode);
@@ -295,22 +297,46 @@ TrCreateValuedLeafOp (
     {
     case PARSEOP_STRING_LITERAL:
 
-        DbgPrint (ASL_PARSE_OUTPUT, "STRING->%s", Value);
+        DbgPrint (ASL_PARSE_OUTPUT, "STRING->%s", Op->Asl.Value.String);
         break;
 
     case PARSEOP_NAMESEG:
 
-        DbgPrint (ASL_PARSE_OUTPUT, "NAMESEG->%s", Value);
+        /* Check for mixed case (or all lower case). Issue a remark in this case */
+
+        for (i = 0; i < ACPI_NAMESEG_SIZE; i++)
+        {
+            if (islower (Op->Asl.Value.Name[i]))
+            {
+                AcpiUtStrupr (&Op->Asl.Value.Name[i]);
+                AslError (ASL_REMARK, ASL_MSG_LOWER_CASE_NAMESEG, Op, Op->Asl.Value.Name);
+                break;
+            }
+        }
+        DbgPrint (ASL_PARSE_OUTPUT, "NAMESEG->%s", Op->Asl.Value.String);
         break;
 
     case PARSEOP_NAMESTRING:
 
-        DbgPrint (ASL_PARSE_OUTPUT, "NAMESTRING->%s", Value);
+        /* Check for mixed case (or all lower case). Issue a remark in this case */
+
+        StringPtr = Op->Asl.Value.Name;
+        for (i = 0; *StringPtr; i++)
+        {
+            if (islower (*StringPtr))
+            {
+                AcpiUtStrupr (&Op->Asl.Value.Name[i]);
+                AslError (ASL_REMARK, ASL_MSG_LOWER_CASE_NAMEPATH, Op, Op->Asl.Value.Name);
+                break;
+            }
+            StringPtr++;
+        }
+        DbgPrint (ASL_PARSE_OUTPUT, "NAMESTRING->%s", Op->Asl.Value.String);
         break;
 
     case PARSEOP_EISAID:
 
-        DbgPrint (ASL_PARSE_OUTPUT, "EISAID->%s", Value);
+        DbgPrint (ASL_PARSE_OUTPUT, "EISAID->%s", Op->Asl.Value.String);
         break;
 
     case PARSEOP_METHOD:
@@ -585,7 +611,8 @@ TrCreateConstantLeafOp (
     time_t                  CurrentTime;
     char                    *StaticTimeString;
     char                    *TimeString;
-    char                    *Filename;
+    char                    *Filename = NULL;
+    ACPI_STATUS             Status;
 
 
     switch (ParseOpcode)
@@ -619,7 +646,12 @@ TrCreateConstantLeafOp (
 
         /* Get the simple filename from the full path */
 
-        FlSplitInputPathname (Op->Asl.Filename, NULL, &Filename);
+        Status = FlSplitInputPathname (Op->Asl.Filename, NULL, &Filename);
+        if (ACPI_FAILURE (Status))
+        {
+            return (NULL);
+        }
+
         Op->Asl.Value.String = Filename;
         break;
 
@@ -629,13 +661,18 @@ TrCreateConstantLeafOp (
 
         /* Get a copy of the current time */
 
+        Op->Asl.Value.String = "";
         CurrentTime = time (NULL);
-        StaticTimeString = ctime (&CurrentTime);
-        TimeString = UtLocalCalloc (strlen (StaticTimeString) + 1);
-        strcpy (TimeString, StaticTimeString);
 
-        TimeString[strlen(TimeString) -1] = 0;  /* Remove trailing newline */
-        Op->Asl.Value.String = TimeString;
+        StaticTimeString = ctime (&CurrentTime);
+        if (StaticTimeString)
+        {
+            TimeString = UtLocalCalloc (strlen (StaticTimeString) + 1);
+            strcpy (TimeString, StaticTimeString);
+
+            TimeString[strlen(TimeString) -1] = 0;  /* Remove trailing newline */
+            Op->Asl.Value.String = TimeString;
+        }
         break;
 
     default: /* This would be an internal error */

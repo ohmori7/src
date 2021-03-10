@@ -1,4 +1,4 @@
-.\" $NetBSD: gpt.8,v 1.68 2019/04/04 13:55:40 martin Exp $
+.\" $NetBSD: gpt.8,v 1.74 2020/07/27 20:54:18 christos Exp $
 .\"
 .\" Copyright (c) 2002 Marcel Moolenaar
 .\" All rights reserved.
@@ -26,7 +26,7 @@
 .\"
 .\" $FreeBSD: src/sbin/gpt/gpt.8,v 1.17 2006/06/22 22:22:32 marcel Exp $
 .\"
-.Dd April 4, 2019
+.Dd July 27, 2020
 .Dt GPT 8
 .Os
 .Sh NAME
@@ -34,7 +34,7 @@
 .Nd GUID partition table maintenance utility
 .Sh SYNOPSIS
 .Nm
-.Op Fl nrqv
+.Op Fl Hnqrv
 .Op Fl m Ar mediasize
 .Op Fl s Ar sectorsize
 .Op Fl T Ar timestamp
@@ -79,6 +79,8 @@ change the behaviour that is applicable to all commands.
 Not all commands use all default settings, so some general options may not
 have an effect on all commands.
 .Bl -tag -width XXXX
+.It Fl H
+Ignore existing MBR (Hybrid MBR/GPT mode).
 .It Fl m Ar mediasize
 Override the default media size for the device (obtained
 from the kernel if possible) or defaulting to the file size for
@@ -90,15 +92,15 @@ changed.
 You need to use the
 .Xr dkctl 8
 command manually update the device's wedge configuration if you do that.
+.It Fl q
+Do not print error messages.
+This is not implemented completely yet.
 .It Fl r
 Open the device for reading only.
 .Nm
 Currently this option is primarily useful for the
 .Ic show
 command, but the intent is to use it to implement dry-run behaviour.
-.It Fl q
-Do not print error messages.
-This is not implemented completely yet.
 .It Fl s Ar sectorsize
 Override the default sector size for the device (obtained
 from the kernel if possible) or
@@ -201,8 +203,9 @@ UFS/UFS2
 .It Cm fbsd-vinum
 .Fx
 vinum
-.It Cm fbsd-zfs
-.Fx
+.It Cm zfs
+.Fx ,
+.Nx
 ZFS
 .It Cm linux-data
 Linux data
@@ -470,7 +473,7 @@ Partitions are removed by clearing the partition type.
 No other information is changed.
 .\" ==== resize ====
 .It Nm Ic resize Oo Fl i Ar index Oc Oo Fl b Ar startsec Oc Oo Fl a Ar alignment Oc \
-Oo Fl s Ar size Oc
+Oo Fl s Ar size Oc Oo Fl q Oc
 The
 .Ic resize
 command allows the user to resize a partition.
@@ -500,8 +503,12 @@ If the
 .Fl a
 option is specified then the size will be adjusted to be a multiple of
 alignment if possible.
+If the
+.Fl q
+option is specified then the utility will not print output when a
+resize is not required.
 .\" ==== resizedisk ====
-.It Nm Ic resizedisk Oo Fl s Ar size Oc
+.It Nm Ic resizedisk Oo Fl s Ar size Oc Oo Fl q Oc
 The
 .Ic resizedisk
 command allows the user to resize a disk.
@@ -537,6 +544,10 @@ Using the
 .Fl s
 option allows you to move the backup copy prior to resizing the medium.
 This is primarily useful when shrinking the medium.
+If the
+.Fl q
+option is specified then the utility will not print output when a
+resize is not required.
 .\" ==== restore ====
 .It Nm Ic restore Oo Fl F Oc Oo Fl i Ar infile Oc
 The
@@ -693,6 +704,25 @@ code.
 They may be used by
 .Nx
 code in the future.
+.\" ==== uuid ====
+.It Nm Ic uuid Oo Fl a Oc
+.It Nm Ic uuid Oo Fl b Ar blocknr Oc Oo Fl i Ar index Oc \
+Oo Fl L Ar label Oc Oo Fl s Ar sectors Oc Oo Fl t Ar type Oc
+The
+.Ic uuid
+command allows the user to change the UUID of any and all partitions
+that match the selection.
+It uses the same selection options as the
+.Ic label
+command.
+See above for a description of these options.
+If
+.Fl a
+is used, then the header UUID is changed as well.
+.Pp
+The primary purpose of this command is for use after cloning a disk to
+prevent collisions when both disks are used in the same system.
+.\" ==== end of commands ====
 .El
 .Sh EXIT STATUS
 The
@@ -739,11 +769,7 @@ nas# gpt show -l wd3
 nas#
 .Ed
 .Pp
-Booting from GPT on an BIOS system.
-This creates a bootable partition that can be manually installed to.
-Note that
-.Xr sysinst 8
-does not yet properly support this setup.
+Booting from GPT on a BIOS system: this creates a bootable partition.
 .Bd -literal
 xotica# gpt create wd1
 xotica# gpt add -b 1024 -l bootroot -t ffs -s 1g wd1
@@ -757,6 +783,10 @@ xotica# installboot /dev/rdk0 /usr/mdec/bootxx_ffsv1
 xotica# mount /dev/dk0 /mnt
 xotica# cp /usr/mdec/boot /mnt
 .Ed
+.Pp
+Note that
+.Ic biosboot
+is not needed for UEFI systems.
 .Sh SEE ALSO
 .Xr boot 8 ,
 .Xr dkctl 8 ,

@@ -1,4 +1,4 @@
-/* $NetBSD: pmu_fdt.c,v 1.5 2019/01/21 08:04:26 skrll Exp $ */
+/* $NetBSD: pmu_fdt.c,v 1.8 2021/01/27 03:10:19 thorpej Exp $ */
 
 /*-
  * Copyright (c) 2018 Jared McNeill <jmcneill@invisible.ca>
@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pmu_fdt.c,v 1.5 2019/01/21 08:04:26 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pmu_fdt.c,v 1.8 2021/01/27 03:10:19 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -37,6 +37,7 @@ __KERNEL_RCSID(0, "$NetBSD: pmu_fdt.c,v 1.5 2019/01/21 08:04:26 skrll Exp $");
 #include <sys/cpu.h>
 #include <sys/interrupt.h>
 #include <sys/kmem.h>
+#include <sys/xcall.h>
 
 #include <dev/fdt/fdtvar.h>
 
@@ -52,28 +53,31 @@ __KERNEL_RCSID(0, "$NetBSD: pmu_fdt.c,v 1.5 2019/01/21 08:04:26 skrll Exp $");
 
 #include <arm/armreg.h>
 
+static bool	pmu_fdt_uses_ppi;
+static int	pmu_fdt_count;
+
 static int	pmu_fdt_match(device_t, cfdata_t, void *);
 static void	pmu_fdt_attach(device_t, device_t, void *);
 
 static void	pmu_fdt_init(device_t);
 static int	pmu_fdt_intr_distribute(const int, int, void *);
 
-static const char * const compatible[] = {
-	"arm,armv8-pmuv3",
-	"arm,cortex-a73-pmu",
-	"arm,cortex-a72-pmu",
-	"arm,cortex-a57-pmu",
-	"arm,cortex-a53-pmu",
+static const struct device_compatible_entry compat_data[] = {
+	{ .compat = "arm,armv8-pmuv3" },
+	{ .compat = "arm,cortex-a73-pmu" },
+	{ .compat = "arm,cortex-a72-pmu" },
+	{ .compat = "arm,cortex-a57-pmu" },
+	{ .compat = "arm,cortex-a53-pmu" },
 
-	"arm,cortex-a35-pmu",
-	"arm,cortex-a17-pmu",
-	"arm,cortex-a12-pmu",
-	"arm,cortex-a9-pmu",
-	"arm,cortex-a8-pmu",
-	"arm,cortex-a7-pmu",
-	"arm,cortex-a5-pmu",
+	{ .compat = "arm,cortex-a35-pmu" },
+	{ .compat = "arm,cortex-a17-pmu" },
+	{ .compat = "arm,cortex-a12-pmu" },
+	{ .compat = "arm,cortex-a9-pmu" },
+	{ .compat = "arm,cortex-a8-pmu" },
+	{ .compat = "arm,cortex-a7-pmu" },
+	{ .compat = "arm,cortex-a5-pmu" },
 
-	NULL
+	DEVICE_COMPAT_EOL
 };
 
 struct pmu_fdt_softc {
@@ -89,7 +93,7 @@ pmu_fdt_match(device_t parent, cfdata_t cf, void *aux)
 {
 	struct fdt_attach_args * const faa = aux;
 
-	return of_match_compatible(faa->faa_phandle, compatible);
+	return of_compatible_match(faa->faa_phandle, compat_data);
 }
 
 static void
@@ -109,25 +113,42 @@ pmu_fdt_attach(device_t parent, device_t self, void *aux)
 }
 
 static void
+pmu_fdt_init_cpu(void *arg1, void *arg2)
+{
+	arm_pmu_init();
+}
+
+static void
 pmu_fdt_init(device_t self)
 {
 	struct pmu_fdt_softc * const sc = device_private(self);
 	const int phandle = sc->sc_phandle;
 	char intrstr[128];
 	int error, n;
+	uint64_t xc;
 	void **ih;
 
-	error = arm_pmu_init();
-	if (error != 0) {
-		aprint_error_dev(self, "failed to initialize PMU\n");
+	if (pmu_fdt_uses_ppi && pmu_fdt_count > 0) {
+		/*
+		 * Second instance of a PMU where PPIs are used. Since the PMU
+		 * is already initialized and the PPI interrupt handler has
+		 * already been installed, there is nothing left to do here.
+		 */
+		if (fdtbus_intr_str(phandle, 0, intrstr, sizeof(intrstr)))
+			aprint_normal_dev(self, "interrupting on %s\n", intrstr);
 		return;
+	}
+
+	if (pmu_fdt_count == 0) {
+		xc = xc_broadcast(0, pmu_fdt_init_cpu, NULL, NULL);
+		xc_wait(xc);
 	}
 
 	ih = kmem_zalloc(sizeof(void *) * ncpu, KM_SLEEP);
 
 	for (n = 0; n < ncpu; n++) {
-		ih[n] = fdtbus_intr_establish(phandle, n, IPL_HIGH,
-		    FDT_INTR_MPSAFE, arm_pmu_intr, NULL);
+		ih[n] = fdtbus_intr_establish_xname(phandle, n, IPL_HIGH,
+		    FDT_INTR_MPSAFE, arm_pmu_intr, NULL, device_xname(self));
 		if (ih[n] == NULL)
 			break;
 		if (!fdtbus_intr_str(phandle, n, intrstr, sizeof(intrstr))) {
@@ -157,6 +178,9 @@ pmu_fdt_init(device_t self)
 			}
 		}
 	}
+
+	pmu_fdt_count++;
+	pmu_fdt_uses_ppi = nirq == 1 && ncpu > 1;
 
 cleanup:
 	kmem_free(ih, sizeof(void *) * ncpu);

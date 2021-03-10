@@ -1,5 +1,5 @@
 /* Various diagnostic subroutines for the GNU C language.
-   Copyright (C) 2000-2016 Free Software Foundation, Inc.
+   Copyright (C) 2000-2018 Free Software Foundation, Inc.
    Contributed by Gabriel Dos Reis <gdr@codesourcery.com>
 
 This file is part of GCC.
@@ -48,7 +48,7 @@ pedwarn_c99 (location_t location, int opt, const char *gmsgid, ...)
 			   (pedantic && !flag_isoc11)
 			   ? DK_PEDWARN : DK_WARNING);
       diagnostic.option_index = OPT_Wc99_c11_compat;
-      warned = report_diagnostic (&diagnostic);
+      warned = diagnostic_report_diagnostic (global_dc, &diagnostic);
     }
   /* -Wno-c99-c11-compat suppresses even the pedwarns.  */
   else if (warn_c99_c11_compat == 0)
@@ -58,7 +58,7 @@ pedwarn_c99 (location_t location, int opt, const char *gmsgid, ...)
     {
       diagnostic_set_info (&diagnostic, gmsgid, &ap, &richloc, DK_PEDWARN);
       diagnostic.option_index = opt;
-      warned = report_diagnostic (&diagnostic);
+      warned = diagnostic_report_diagnostic (global_dc, &diagnostic);
     }
   va_end (ap);
   return warned;
@@ -71,11 +71,12 @@ pedwarn_c99 (location_t location, int opt, const char *gmsgid, ...)
    ISO C99 but not supported in ISO C90, thus we explicitly don't pedwarn
    when C99 is specified.  (There is no flag_c90.)  */
 
-void
+bool
 pedwarn_c90 (location_t location, int opt, const char *gmsgid, ...)
 {
   diagnostic_info diagnostic;
   va_list ap;
+  bool warned = false;
   rich_location richloc (line_table, location);
 
   va_start (ap, gmsgid);
@@ -91,7 +92,8 @@ pedwarn_c90 (location_t location, int opt, const char *gmsgid, ...)
 			       (pedantic && !flag_isoc99)
 			       ? DK_PEDWARN : DK_WARNING);
 	  diagnostic.option_index = opt;
-	  report_diagnostic (&diagnostic);
+	  diagnostic_report_diagnostic (global_dc, &diagnostic);
+	  warned = true;
 	  goto out;
 	}
     }
@@ -103,7 +105,7 @@ pedwarn_c90 (location_t location, int opt, const char *gmsgid, ...)
 			   (pedantic && !flag_isoc99)
 			   ? DK_PEDWARN : DK_WARNING);
       diagnostic.option_index = OPT_Wc90_c99_compat;
-      report_diagnostic (&diagnostic);
+      diagnostic_report_diagnostic (global_dc, &diagnostic);
     }
   /* -Wno-c90-c99-compat suppresses the pedwarns.  */
   else if (warn_c90_c99_compat == 0)
@@ -113,8 +115,10 @@ pedwarn_c90 (location_t location, int opt, const char *gmsgid, ...)
     {
       diagnostic_set_info (&diagnostic, gmsgid, &ap, &richloc, DK_PEDWARN);
       diagnostic.option_index = opt;
-      report_diagnostic (&diagnostic);
+      diagnostic_report_diagnostic (global_dc, &diagnostic);
+      warned = true;
     }
 out:
   va_end (ap);
+  return warned;
 }

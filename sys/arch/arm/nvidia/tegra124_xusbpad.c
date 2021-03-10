@@ -1,4 +1,4 @@
-/* $NetBSD: tegra124_xusbpad.c,v 1.2 2017/09/22 20:25:51 jakllsch Exp $ */
+/* $NetBSD: tegra124_xusbpad.c,v 1.5 2021/01/27 03:10:19 thorpej Exp $ */
 
 /*-
  * Copyright (c) 2015 Jared D. McNeill <jmcneill@invisible.ca>
@@ -29,7 +29,7 @@
 #include "opt_tegra.h"
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: tegra124_xusbpad.c,v 1.2 2017/09/22 20:25:51 jakllsch Exp $");
+__KERNEL_RCSID(0, "$NetBSD: tegra124_xusbpad.c,v 1.5 2021/01/27 03:10:19 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -70,14 +70,17 @@ static void	padregdump(void);
 CFATTACH_DECL_NEW(tegra124_xusbpad, sizeof(struct tegra124_xusbpad_softc),
 	tegra124_xusbpad_match, tegra124_xusbpad_attach, NULL, NULL);
 
+static const struct device_compatible_entry compat_data[] = {
+	{ .compat = "nvidia,tegra124-xusb-padctl" },
+	DEVICE_COMPAT_EOL
+};
+
 static int
 tegra124_xusbpad_match(device_t parent, cfdata_t cf, void *aux)
 {
-	const char * const compatible[] =
-	    { "nvidia,tegra124-xusb-padctl", NULL };
 	struct fdt_attach_args * const faa = aux;
 
-	return of_match_compatible(faa->faa_phandle, compatible);
+	return of_compatible_match(faa->faa_phandle, compat_data);
 }
 
 static void
@@ -98,7 +101,7 @@ tegra124_xusbpad_attach(device_t parent, device_t self, void *aux)
 	sc->sc_bst = faa->faa_bst;
 	error = bus_space_map(sc->sc_bst, addr, size, 0, &sc->sc_bsh);
 	if (error) {
-		aprint_error(": couldn't map %#llx: %d", (uint64_t)addr, error);
+		aprint_error(": couldn't map %#" PRIxBUSADDR ": %d", addr, error);
 		return;
 	}
 

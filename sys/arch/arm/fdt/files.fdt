@@ -1,10 +1,12 @@
-# $NetBSD: files.fdt,v 1.28 2018/12/05 21:43:33 jmcneill Exp $
+# $NetBSD: files.fdt,v 1.32 2020/10/10 15:25:31 jmcneill Exp $
 
 include	"dev/pckbport/files.pckbport"
 
 device	armfdt { }: bus_space_generic, fdt
 attach	armfdt at root with arm_fdt
 file	arch/arm/fdt/arm_fdt.c			arm_fdt
+file	arch/arm/fdt/arm_platform.c		arm_fdt & gtmr_fdt & psci_fdt
+file	arch/arm/fdt/arm_simplefb.c		arm_fdt & wsdisplay & genfb
 
 attach	cpu at fdt with cpu_fdt
 file	arch/arm/fdt/cpu_fdt.c			cpu_fdt
@@ -16,6 +18,14 @@ file	dev/fdt/cpufreq_dt.c			cpufreq_dt
 device	a9tmr: mpcorebus
 attach	a9tmr at fdt with a9tmr_fdt
 file	arch/arm/fdt/a9tmr_fdt.c		a9tmr_fdt
+
+device	a9ptmr: mpcorebus
+attach	a9ptmr at fdt with a9ptmr_fdt
+file	arch/arm/fdt/a9ptmr_fdt.c		a9ptmr_fdt
+
+device	a9wdt: mpcorebus
+attach	a9wdt at fdt with a9wdt_fdt
+file	arch/arm/fdt/a9wdt_fdt.c		a9wdt_fdt
 
 device	gtmr: mpcorebus
 attach	gtmr at fdt with gtmr_fdt

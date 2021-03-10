@@ -1,4 +1,4 @@
-/*	$NetBSD: ukphy_subr.c,v 1.15 2019/03/25 09:20:46 msaitoh Exp $	*/
+/*	$NetBSD: ukphy_subr.c,v 1.17 2020/03/15 23:04:50 thorpej Exp $	*/
 
 /*-
  * Copyright (c) 1998 The NetBSD Foundation, Inc.
@@ -35,7 +35,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ukphy_subr.c,v 1.15 2019/03/25 09:20:46 msaitoh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ukphy_subr.c,v 1.17 2020/03/15 23:04:50 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -59,6 +59,8 @@ ukphy_status(struct mii_softc *phy)
 	struct mii_data *mii = phy->mii_pdata;
 	struct ifmedia_entry *ife = mii->mii_media.ifm_cur;
 	uint16_t bmsr, bmcr, anar, anlpar, gtcr, gtsr, result;
+
+	KASSERT(mii_locked(mii));
 
 	mii->mii_media_status = IFM_AVALID;
 	mii->mii_media_active = IFM_ETHER;
@@ -119,7 +121,7 @@ ukphy_status(struct mii_softc *phy)
 		else
 			mii->mii_media_active |= IFM_NONE;
 
-		if ((mii->mii_media_active & IFM_1000_T) &&
+		if ((IFM_SUBTYPE(mii->mii_media_active) == IFM_1000_T) &&
 		    (gtsr & GTSR_MS_RES))
 			mii->mii_media_active |= IFM_ETH_MASTER;
 

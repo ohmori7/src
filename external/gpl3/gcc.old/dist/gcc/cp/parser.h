@@ -1,5 +1,5 @@
 /* Data structures and function exported by the C++ Parser.
-   Copyright (C) 2010-2016 Free Software Foundation, Inc.
+   Copyright (C) 2010-2018 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -199,7 +199,7 @@ struct GTY (()) cp_parser_context {
 };
 
 
-/* Control structure for #pragma omp declare simd parsing.  */
+/* Helper data structure for parsing #pragma omp declare simd.  */
 struct cp_omp_declare_simd_data {
   bool error_seen; /* Set if error has been reported.  */
   bool fndecl_seen; /* Set if one fn decl/definition has been seen already.  */
@@ -207,6 +207,10 @@ struct cp_omp_declare_simd_data {
   tree clauses;
 };
 
+/* Helper data structure for parsing #pragma acc routine.  */
+struct cp_oacc_routine_data : cp_omp_declare_simd_data {
+  location_t loc;
+};
 
 /* The cp_parser structure represents the C++ parser.  */
 
@@ -304,8 +308,6 @@ struct GTY(()) cp_parser {
 #define IN_OMP_BLOCK		4
 #define IN_OMP_FOR		8
 #define IN_IF_STMT             16
-#define IN_CILK_SIMD_FOR       32
-#define IN_CILK_SPAWN          64
   unsigned char in_statement;
 
   /* TRUE if we are presently parsing the body of a switch statement.
@@ -363,18 +365,12 @@ struct GTY(()) cp_parser {
   unsigned num_template_parameter_lists;
 
   /* When parsing #pragma omp declare simd, this is a pointer to a
-     data structure with everything needed for parsing the clauses.  */
+     helper data structure.  */
   cp_omp_declare_simd_data * GTY((skip)) omp_declare_simd;
 
-  /* When parsing the vector attribute in Cilk Plus SIMD-enabled function,
-     this is a pointer to data structure with everything needed for parsing
-     the clauses.  The cp_omp_declare_simd_data struct will hold all the
-     necessary information, so creating another struct for this is not
-     necessary.  */
-  cp_omp_declare_simd_data * GTY((skip)) cilk_simd_fn_info;
-
-  /* Parsing information for #pragma acc routine.  */
-  cp_omp_declare_simd_data * GTY((skip)) oacc_routine;
+  /* When parsing #pragma acc routine, this is a pointer to a helper data
+     structure.  */
+  cp_oacc_routine_data * GTY((skip)) oacc_routine;
   
   /* Nonzero if parsing a parameter list where 'auto' should trigger an implicit
      template parameter.  */
@@ -409,6 +405,10 @@ struct GTY(()) cp_parser {
      context e.g., because they could never be deduced.  */
   int prevent_constrained_type_specifiers;
 
+  /* Location of the string-literal token within the current linkage
+     specification, if any, or UNKNOWN_LOCATION otherwise.  */
+  location_t innermost_linkage_specification_location;
+
 };
 
 /* In parser.c  */
@@ -420,5 +420,6 @@ extern void debug (vec<cp_token, va_gc> *ptr);
 extern void cp_debug_parser (FILE *, cp_parser *);
 extern void debug (cp_parser &ref);
 extern void debug (cp_parser *ptr);
+extern bool cp_keyword_starts_decl_specifier_p (enum rid keyword);
 
 #endif  /* GCC_CP_PARSER_H  */

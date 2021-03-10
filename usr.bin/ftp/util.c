@@ -1,7 +1,7 @@
-/*	$NetBSD: util.c,v 1.159 2017/11/20 21:11:36 kre Exp $	*/
+/*	$NetBSD: util.c,v 1.161 2020/06/08 01:33:27 lukem Exp $	*/
 
 /*-
- * Copyright (c) 1997-2009 The NetBSD Foundation, Inc.
+ * Copyright (c) 1997-2020 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
@@ -64,7 +64,7 @@
 
 #include <sys/cdefs.h>
 #ifndef lint
-__RCSID("$NetBSD: util.c,v 1.159 2017/11/20 21:11:36 kre Exp $");
+__RCSID("$NetBSD: util.c,v 1.161 2020/06/08 01:33:27 lukem Exp $");
 #endif /* not lint */
 
 /*
@@ -324,9 +324,10 @@ intr(int signo)
 /*
  * Signal handler for lost connections; cleanup various elements of
  * the connection state, and call cleanuppeer() to finish it off.
+ * This function is not signal safe, so exit if called by a signal.
  */
 void
-lostpeer(int dummy)
+lostpeer(int signo)
 {
 	int oerrno = errno;
 
@@ -356,6 +357,9 @@ lostpeer(int dummy)
 	proxflag = 0;
 	pswitch(0);
 	cleanuppeer();
+	if (signo) {
+		errx(1, "lostpeer due to signal %d", signo);
+	}
 	errno = oerrno;
 }
 
@@ -1491,6 +1495,7 @@ ftp_poll(struct pollfd *fds, int nfds, int timeout)
 	return poll(fds, nfds, timeout);
 }
 
+#ifndef SMALL
 /*
  * malloc() with inbuilt error checking
  */
@@ -1545,3 +1550,4 @@ ftp_strdup(const char *str)
 		err(1, "Unable to allocate memory for string copy");
 	return (s);
 }
+#endif

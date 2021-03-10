@@ -1,4 +1,4 @@
-/*	$NetBSD: kern_uipc_socket_50.c,v 1.2 2019/04/15 10:53:17 pgoyette Exp $	*/
+/*	$NetBSD: kern_uipc_socket_50.c,v 1.4 2019/12/12 02:15:42 pgoyette Exp $	*/
 
 /*
  * Copyright (c) 2002, 2007, 2008, 2009 The NetBSD Foundation, Inc.
@@ -101,7 +101,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: kern_uipc_socket_50.c,v 1.2 2019/04/15 10:53:17 pgoyette Exp $");
+__KERNEL_RCSID(0, "$NetBSD: kern_uipc_socket_50.c,v 1.4 2019/12/12 02:15:42 pgoyette Exp $");
 
 #if defined(_KERNEL_OPT)
 #include "opt_compat_netbsd.h"
@@ -210,7 +210,7 @@ uipc_socket_50_setopt1(int opt, struct socket *so, const struct sockopt *sopt)
 }
 
 static int
-uipc_socket_50_sbts(int opt, struct mbuf **mp)
+uipc_socket_50_sbts(int opt, struct mbuf ***mp)
 {
 	struct timeval50 tv50;
 	struct timeval tv;
@@ -220,10 +220,10 @@ uipc_socket_50_sbts(int opt, struct mbuf **mp)
 	if (opt & SO_OTIMESTAMP) {
 
 		timeval_to_timeval50(&tv, &tv50);
-		*mp = sbcreatecontrol(&tv50, sizeof(tv50), SCM_OTIMESTAMP,
+		**mp = sbcreatecontrol(&tv50, sizeof(tv50), SCM_OTIMESTAMP,
 		    SOL_SOCKET);
-		if (*mp)
-			mp = &(*mp)->m_next;
+		if (**mp)
+			*mp = &(**mp)->m_next;
 		return 0;
 	} else
 		return EPASSTHROUGH;
@@ -233,12 +233,9 @@ void
 kern_uipc_socket_50_init(void)
 {
 
-	MODULE_HOOK_SET(uipc_socket_50_setopt1_hook, "sockop_50",
-	    uipc_socket_50_setopt1);
-	MODULE_HOOK_SET(uipc_socket_50_getopt1_hook, "sockop_50",
-	    uipc_socket_50_getopt1);
-	MODULE_HOOK_SET(uipc_socket_50_sbts_hook, "sbts_50",
-	    uipc_socket_50_sbts);
+	MODULE_HOOK_SET(uipc_socket_50_setopt1_hook, uipc_socket_50_setopt1);
+	MODULE_HOOK_SET(uipc_socket_50_getopt1_hook, uipc_socket_50_getopt1);
+	MODULE_HOOK_SET(uipc_socket_50_sbts_hook, uipc_socket_50_sbts);
 }
 
 void

@@ -114,10 +114,6 @@ case "${host_cpu}" in
   hppa*)
     try_cpu=hppa
     ;;
-  mep*)
-    EXTRA_CXX_FLAGS=-mm
-    try_cpu=generic
-    ;;
   mips*)
     try_cpu=mips
     ;;
@@ -237,22 +233,25 @@ case "${host_os}" in
     os_include_dir="os/newlib"
     OPT_LDFLAGS="${OPT_LDFLAGS} \$(lt_host_flags)"
     ;;
-  darwin | darwin[1-7] | darwin[1-7].*)
-    # On Darwin, performance is improved if libstdc++ is single-module.
-    # Up to at least 10.3.7, -flat_namespace is required for proper
-    # treatment of coalesced symbols.
+  darwin[4-7] | darwin[4-7].*)
+    # For earlier Darwin, performance is improved if libstdc++ is
+    # single-module. Up to at least 10.3.7, -flat_namespace is required
+    # for proper treatment of coalesced symbols.
     OPT_LDFLAGS="${OPT_LDFLAGS} -Wl,-single_module -Wl,-flat_namespace"
     os_include_dir="os/bsd/darwin"
     ;;
-  darwin[89] | darwin[89].* | darwin[1-9][0-9]* )
-    # On Darwin, performance is improved if libstdc++ is single-module,
-    # and on 8+ compatibility is better if not -flat_namespace.
+  darwin8 | darwin8.* )
+    # For 8+ compatibility is better if not -flat_namespace.
     OPT_LDFLAGS="${OPT_LDFLAGS} -Wl,-single_module"
     case "${host_cpu}" in
       i[34567]86 | x86_64)
         OPTIMIZE_CXXFLAGS="${OPTIMIZE_CXXFLAGS} -fvisibility-inlines-hidden"
         ;;
     esac
+    os_include_dir="os/bsd/darwin"
+    ;;
+  darwin*)
+    # Post Darwin8, defaults should be sufficient.
     os_include_dir="os/bsd/darwin"
     ;;
   *djgpp*)      # leading * picks up "msdosdjgpp"
@@ -268,7 +267,7 @@ case "${host_os}" in
   linux-musl*)
     os_include_dir="os/generic"
     ;;
-  gnu* | linux* | kfreebsd*-gnu | knetbsd*-gnu)
+  gnu* | linux* | kfreebsd*-gnu)
     if [ "$uclibc" = "yes" ]; then
       os_include_dir="os/uclibc"
     elif [ "$bionic" = "yes" ]; then
@@ -385,6 +384,14 @@ case "${host}" in
       *)
         abi_baseline_pair=solaris2.11
 	;;
+    esac
+    case "${host_cpu}" in
+	i?86 | x86_64)
+	    abi_baseline_pair=i386-${abi_baseline_pair}
+	    ;;
+	sparc*)
+	    abi_baseline_pair=sparc-${abi_baseline_pair}
+	    ;;
     esac
     abi_baseline_subdir_switch=--print-multi-os-directory
     ;;

@@ -1,4 +1,4 @@
-/*	$NetBSD: tcp_usrreq.c,v 1.224 2019/02/05 04:48:47 mrg Exp $	*/
+/*	$NetBSD: tcp_usrreq.c,v 1.229 2021/03/08 18:17:27 christos Exp $	*/
 
 /*
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
@@ -99,7 +99,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: tcp_usrreq.c,v 1.224 2019/02/05 04:48:47 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: tcp_usrreq.c,v 1.229 2021/03/08 18:17:27 christos Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_inet.h"
@@ -209,7 +209,8 @@ tcp_getpcb(struct socket *so, struct inpcb **inp,
 static void
 change_keepalive(struct socket *so, struct tcpcb *tp)
 {
-	tp->t_maxidle = tp->t_keepcnt * tp->t_keepintvl;
+	tp->t_maxidle = tp->t_keepcnt * MIN(tp->t_keepintvl,
+	    TCP_TIMER_MAXTICKS / tp->t_keepcnt);
 	TCP_TIMER_DISARM(tp, TCPT_KEEP);
 	TCP_TIMER_DISARM(tp, TCPT_2MSL);
 
@@ -255,10 +256,12 @@ tcp_fill_info(struct tcpcb *tp, struct tcp_info *ti)
 	}
 
 	ti->tcpi_rto = tp->t_rxtcur * tick;
-	ti->tcpi_last_data_recv = (long)(hardclock_ticks -
+	ti->tcpi_last_data_recv = (long)(getticks() -
 					 (int)tp->t_rcvtime) * tick;
-	ti->tcpi_rtt = ((u_int64_t)tp->t_srtt * tick) >> TCP_RTT_SHIFT;
-	ti->tcpi_rttvar = ((u_int64_t)tp->t_rttvar * tick) >> TCP_RTTVAR_SHIFT;
+	ti->tcpi_rtt = ((u_int64_t)tp->t_srtt * tick / PR_SLOWHZ)
+	                   >> (TCP_RTT_SHIFT + 2);
+	ti->tcpi_rttvar = ((u_int64_t)tp->t_rttvar * tick / PR_SLOWHZ)
+	                   >> (TCP_RTTVAR_SHIFT + 2);
 
 	ti->tcpi_snd_ssthresh = tp->snd_ssthresh;
 	/* Linux API wants these in # of segments, apparently */
@@ -400,7 +403,7 @@ tcp_ctloutput(int op, struct socket *so, struct sockopt *sopt)
 			error = sockopt_get(sopt, &ui, sizeof(ui));
 			if (error)
 				break;
-			if (ui > 0) {
+			if (ui > 0 && ui <= TCP_TIMER_MAXTICKS) {
 				tp->t_keepidle = ui;
 				change_keepalive(so, tp);
 			} else
@@ -411,7 +414,7 @@ tcp_ctloutput(int op, struct socket *so, struct sockopt *sopt)
 			error = sockopt_get(sopt, &ui, sizeof(ui));
 			if (error)
 				break;
-			if (ui > 0) {
+			if (ui > 0 && ui <= TCP_TIMER_MAXTICKS) {
 				tp->t_keepintvl = ui;
 				change_keepalive(so, tp);
 			} else
@@ -422,7 +425,7 @@ tcp_ctloutput(int op, struct socket *so, struct sockopt *sopt)
 			error = sockopt_get(sopt, &ui, sizeof(ui));
 			if (error)
 				break;
-			if (ui > 0) {
+			if (ui > 0 && ui <= TCP_TIMER_MAXTICKS) {
 				tp->t_keepcnt = ui;
 				change_keepalive(so, tp);
 			} else
@@ -433,7 +436,7 @@ tcp_ctloutput(int op, struct socket *so, struct sockopt *sopt)
 			error = sockopt_get(sopt, &ui, sizeof(ui));
 			if (error)
 				break;
-			if (ui > 0) {
+			if (ui > 0 && ui <= TCP_TIMER_MAXTICKS) {
 				tp->t_keepinit = ui;
 				change_keepalive(so, tp);
 			} else
@@ -823,7 +826,7 @@ tcp_connect(struct socket *so, struct sockaddr *nam, struct lwp *l)
 	TCP_STATINC(TCP_STAT_CONNATTEMPT);
 	tp->t_state = TCPS_SYN_SENT;
 	TCP_TIMER_ARM(tp, TCPT_KEEP, tp->t_keepinit);
-	tp->iss = tcp_new_iss(tp, 0);
+	tp->iss = tcp_new_iss(tp);
 	tcp_sendseqinit(tp);
 	error = tcp_output(tp);
 
@@ -1092,8 +1095,10 @@ tcp_recvoob(struct socket *so, struct mbuf *m, int flags)
 
 	m->m_len = 1;
 	*mtod(m, char *) = tp->t_iobc;
-	if ((flags & MSG_PEEK) == 0)
+	if ((flags & MSG_PEEK) == 0) {
 		tp->t_oobflags ^= (TCPOOB_HAVEDATA | TCPOOB_HADDATA);
+		so->so_state &= ~SS_POLLRDBAND;
+	}
 
 	tcp_debug_trace(so, tp, ostate, PRU_RCVOOB);
 	splx(s);
@@ -1960,6 +1965,9 @@ sysctl_tcp_keep(SYSCTLFN_ARGS)
 	error = sysctl_lookup(SYSCTLFN_CALL(&node));
 	if (error || newp == NULL)
 		return error;
+
+	if (!(tmp > 0 && tmp <= TCP_TIMER_MAXTICKS))
+		return EINVAL;
 
 	mutex_enter(softnet_lock);
 

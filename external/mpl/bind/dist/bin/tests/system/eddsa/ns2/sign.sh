@@ -4,7 +4,7 @@
 #
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# file, you can obtain one at https://mozilla.org/MPL/2.0/.
 #
 # See the COPYRIGHT file distributed with this work for additional
 # information regarding copyright ownership.
@@ -18,7 +18,9 @@ starttime=20150729220000
 endtime=20150819220000
 
 for i in Xexample.com.+015+03613.key Xexample.com.+015+03613.private \
-	 Xexample.com.+015+35217.key Xexample.com.+015+35217.private
+	 Xexample.com.+015+35217.key Xexample.com.+015+35217.private \
+	 Xexample.com.+016+09713.key Xexample.com.+016+09713.private \
+	 Xexample.com.+016+38353.key Xexample.com.+016+38353.private
 do
 	cp $i `echo $i | sed s/X/K/`
 done

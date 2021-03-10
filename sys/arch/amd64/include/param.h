@@ -1,4 +1,4 @@
-/*	$NetBSD: param.h,v 1.30 2019/03/16 11:50:48 rin Exp $	*/
+/*	$NetBSD: param.h,v 1.38 2020/06/29 09:56:51 jdolecek Exp $	*/
 
 #ifdef __x86_64__
 
@@ -11,7 +11,8 @@
 #include <machine/cpu.h>
 #if defined(_KERNEL_OPT)
 #include "opt_kasan.h"
-#include "opt_kleak.h"
+#include "opt_kmsan.h"
+#include "opt_svs.h"
 #endif
 #endif
 
@@ -21,7 +22,8 @@
 #define	MACHINE_ARCH	"x86_64"
 #define MID_MACHINE	MID_X86_64
 
-#define ALIGNED_POINTER(p,t)	1
+#define ALIGNED_POINTER(p,t)		1
+#define ALIGNED_POINTER_LOAD(q,p,t)	memcpy((q), (p), sizeof(t))
 
 /*
  * Align stack as required by AMD64 System V ABI. This is because
@@ -43,7 +45,11 @@
 /*
  * Maximum physical memory supported by the implementation.
  */
+#if defined(KMSAN)
+#define MAXPHYSMEM	0x008000000000ULL /* 512GB */
+#else
 #define MAXPHYSMEM	0x100000000000ULL /* 16TB */
+#endif
 
 /*
  * XXXfvdl change this (after bootstrap) to take # of bits from
@@ -62,12 +68,12 @@
 #define	SSIZE		1		/* initial stack size/NBPG */
 #define	SINCR		1		/* increment of stack/NBPG */
 
-#if defined(KASAN) || defined(KLEAK)
+#if defined(KASAN) || defined(KMSAN)
 #define	UPAGES		8
-#elif defined(DIAGNOSTIC)
-#define	UPAGES		5		/* pages of u-area (1 for redzone) */
+#elif defined(SVS)
+#define	UPAGES		6		/* 1 page used internally by SVS */
 #else
-#define	UPAGES		4		/* pages of u-area */
+#define	UPAGES		5		/* pages of u-area (1 for redzone) */
 #endif
 #define	USPACE		(UPAGES * NBPG)	/* total size of u-area */
 
@@ -124,8 +130,6 @@
 
 #define btop(x)				x86_btop(x)
 #define ptob(x)				x86_ptob(x)
-
-#define mstohz(ms) ((ms + 0UL) * hz / 1000)
 
 #else	/*	__x86_64__	*/
 

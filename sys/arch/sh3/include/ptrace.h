@@ -1,4 +1,4 @@
-/*	$NetBSD: ptrace.h,v 1.14 2017/04/12 18:18:00 kamil Exp $	*/
+/*	$NetBSD: ptrace.h,v 1.19 2020/10/15 17:37:36 mgorny Exp $	*/
 
 /*
  * Copyright (c) 1993 Christopher G. Demetriou
@@ -66,10 +66,13 @@
 	"PT_CLEARSTEP"
 
 #include <machine/reg.h>
-#define PTRACE_REG_PC(r)	r->r_spc
-#define PTRACE_REG_SET_PC(r, v)	r->r_spc = (v)
-#define PTRACE_REG_SP(r)	r->r_r15
-#define PTRACE_REG_INTV(r)	r->r_r0
+#define PTRACE_REG_PC(r)	(r)->r_spc
+#define PTRACE_REG_FP(r)	(r)->r_r14
+#define PTRACE_REG_SET_PC(r, v)	(r)->r_spc = (v)
+#define PTRACE_REG_SP(r)	(r)->r_r15
+#define PTRACE_REG_INTV(r)	(r)->r_r0
+
+#define PTRACE_ILLEGAL_ASM	__asm __volatile ("0: bra 0b; bra 0b" : : : "memory")
 
 #define PTRACE_BREAKPOINT_TRAP	0xc3
 #define PTRACE_BREAKPOINT	((const uint8_t[]) { 0xc3, 0xc3 })
@@ -92,8 +95,9 @@
 #endif /* COMPAT_40 */
 
 #ifdef __HAVE_PTRACE_MACHDEP
-int ptrace_machdep_dorequest(struct lwp *, struct lwp *, int, void *, int);
+int ptrace_machdep_dorequest(struct lwp *, struct lwp **, int, void *, int);
 #endif
 
+#define PTRACE_LWP_GETPRIVATE(l) (l)->l_md.md_regs->tf_gbr
 #endif /* _KERNEL */
 #endif /* !_SH3_PTRACE_H_ */

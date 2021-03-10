@@ -1,4 +1,4 @@
-/*	$NetBSD: ite.c,v 1.78 2018/09/03 16:29:24 riastradh Exp $	*/
+/*	$NetBSD: ite.c,v 1.80 2021/01/03 17:42:10 thorpej Exp $	*/
 
 /*
  * Copyright (c) 1988 University of Utah.
@@ -44,7 +44,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ite.c,v 1.78 2018/09/03 16:29:24 riastradh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ite.c,v 1.80 2021/01/03 17:42:10 thorpej Exp $");
 
 #include "opt_ddb.h"
 
@@ -52,7 +52,7 @@ __KERNEL_RCSID(0, "$NetBSD: ite.c,v 1.78 2018/09/03 16:29:24 riastradh Exp $");
 #include <sys/kernel.h>
 #include <sys/conf.h>
 #include <sys/device.h>
-#include <sys/malloc.h>
+#include <sys/kmem.h>
 #include <sys/fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/tty.h>
@@ -135,10 +135,11 @@ static void	itestart(struct tty *);
 static void	ite_switch(int);
 static void	repeat_handler(void *);
 
-void iteputchar(int c, struct ite_softc *sc);
-void ite_putstr(const u_char * s, int len, dev_t dev);
-void iteattach(device_t, device_t, void *);
-int  itematch(device_t, cfdata_t, void *);
+static void iteputchar(int c, struct ite_softc *sc);
+static void ite_putstr(const u_char * s, int len, dev_t dev);
+
+static void iteattach(device_t, device_t, void *);
+static int  itematch(device_t, cfdata_t, void *);
 
 /*
  * Console specific types.
@@ -180,7 +181,7 @@ const struct cdevsw ite_cdevsw = {
  */
 static int		cons_ite = -1;
 
-int
+static int
 itematch(device_t parent, cfdata_t cf, void *aux)
 {
 	
@@ -197,7 +198,7 @@ itematch(device_t parent, cfdata_t cf, void *aux)
 	return 1;
 }
 
-void
+static void
 iteattach(device_t parent, device_t self, void *aux)
 {
 	struct grf_softc	*gsc;
@@ -360,8 +361,8 @@ iteinit(dev_t dev)
 		return;
 	if (atari_realconfig) {
 		if (sc->kbdmap && sc->kbdmap != &ascii_kbdmap)
-			free(sc->kbdmap, M_DEVBUF);
-		sc->kbdmap = malloc(sizeof(struct kbdmap), M_DEVBUF, M_WAITOK);
+			kmem_free(sc->kbdmap, sizeof(*sc->kbdmap));
+		sc->kbdmap = kmem_alloc(sizeof(*sc->kbdmap), KM_SLEEP);
 		memcpy(sc->kbdmap, &ascii_kbdmap, sizeof(struct kbdmap));
 	}
 	else
@@ -372,7 +373,7 @@ iteinit(dev_t dev)
 	SUBR_INIT(sc);
 	SUBR_CURSOR(sc, DRAW_CURSOR);
 	if (sc->tabs == NULL)
-		sc->tabs = malloc(MAX_TABS * sizeof(u_char),M_DEVBUF,M_WAITOK);
+		sc->tabs = kmem_alloc(MAX_TABS * sizeof(u_char), KM_SLEEP);
 	ite_reset(sc);
 	sc->flags |= ITE_INITED;
 }
@@ -1324,7 +1325,7 @@ ite_zargnum (struct ite_softc *sc)
   return n;	/* don't "n ? n : 1" here, <CSI>0m != <CSI>1m ! */
 }
 
-void
+static void
 ite_putstr(const u_char *s, int len, dev_t dev)
 {
 	struct ite_softc *sc;
@@ -1344,7 +1345,7 @@ ite_putstr(const u_char *s, int len, dev_t dev)
 }
 
 
-void
+static void
 iteputchar(register int c, struct ite_softc *sc)
 {
 	struct tty *kbd_tty;

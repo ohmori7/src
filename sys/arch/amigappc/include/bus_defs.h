@@ -1,4 +1,4 @@
-/*	$NetBSD: bus_defs.h,v 1.6 2014/01/22 00:24:53 christos Exp $	*/
+/*	$NetBSD: bus_defs.h,v 1.8 2020/03/06 02:31:13 christos Exp $	*/
 
 /*
  * Copyright (c) 1996 Leo Weppelman.  All rights reserved.
@@ -34,11 +34,16 @@
 typedef uint32_t bus_addr_t;
 typedef uint32_t bus_size_t;
 
+#define PRIxBUSADDR	"x"
+#define PRIxBUSSIZE	"x"
+#define PRIuBUSSIZE	"u"
 /*
  * Access methods for bus resources and address space.
  */
 typedef struct bus_space_tag *bus_space_tag_t;
 typedef u_long	bus_space_handle_t;
+
+#define PRIxBSH		"lx"
 
 struct amigappc_bus_dma_segment;
 struct amigappc_bus_dma_tag;
@@ -171,10 +176,13 @@ struct amiga_bus_space_methods {
 #define __BUS_SPACE_HAS_STREAM_METHODS
 
 extern const struct amiga_bus_space_methods amiga_bus_stride_1;
+extern const struct amiga_bus_space_methods amiga_bus_stride_1swap;
+extern const struct amiga_bus_space_methods amiga_bus_stride_1swap_abs;
 extern const struct amiga_bus_space_methods amiga_bus_stride_2;
 extern const struct amiga_bus_space_methods amiga_bus_stride_4;
 extern const struct amiga_bus_space_methods amiga_bus_stride_4swap;
 extern const struct amiga_bus_space_methods amiga_bus_stride_16;
 extern const struct amiga_bus_space_methods amiga_bus_stride_0x1000;
+extern const struct amiga_bus_space_methods amiga_bus_stride_0x4000;
 
 #endif /* _AMIGAPPC_BUS_DEFS_H_ */

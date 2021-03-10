@@ -1,4 +1,4 @@
-/*	$NetBSD: vfs_vnops.c,v 1.200 2019/03/07 11:09:48 hannken Exp $	*/
+/*	$NetBSD: vfs_vnops.c,v 1.214 2020/11/09 18:09:02 chs Exp $	*/
 
 /*-
  * Copyright (c) 2009 The NetBSD Foundation, Inc.
@@ -66,7 +66,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: vfs_vnops.c,v 1.200 2019/03/07 11:09:48 hannken Exp $");
+__KERNEL_RCSID(0, "$NetBSD: vfs_vnops.c,v 1.214 2020/11/09 18:09:02 chs Exp $");
 
 #include "veriexec.h"
 
@@ -309,6 +309,9 @@ vn_openchk(struct vnode *vp, kauth_cred_t cred, int fflags)
 	if ((fflags & FREAD) != 0) {
 		permbits = VREAD;
 	}
+	if ((fflags & FEXEC) != 0) {
+		permbits |= VEXEC;
+	}
 	if ((fflags & (FWRITE | O_TRUNC)) != 0) {
 		permbits |= VWRITE;
 		if (vp->v_type == VDIR) {
@@ -336,13 +339,14 @@ vn_markexec(struct vnode *vp)
 		return;
 	}
 
+	rw_enter(vp->v_uobj.vmobjlock, RW_WRITER);
 	mutex_enter(vp->v_interlock);
 	if ((vp->v_iflag & VI_EXECMAP) == 0) {
-		atomic_add_int(&uvmexp.filepages, -vp->v_uobj.uo_npages);
-		atomic_add_int(&uvmexp.execpages, vp->v_uobj.uo_npages);
+		cpu_count(CPU_COUNT_EXECPAGES, vp->v_uobj.uo_npages);
 		vp->v_iflag |= VI_EXECMAP;
 	}
 	mutex_exit(vp->v_interlock);
+	rw_exit(vp->v_uobj.vmobjlock);
 }
 
 /*
@@ -358,18 +362,20 @@ vn_marktext(struct vnode *vp)
 		return (0);
 	}
 
+	rw_enter(vp->v_uobj.vmobjlock, RW_WRITER);
 	mutex_enter(vp->v_interlock);
 	if (vp->v_writecount != 0) {
 		KASSERT((vp->v_iflag & VI_TEXT) == 0);
 		mutex_exit(vp->v_interlock);
+		rw_exit(vp->v_uobj.vmobjlock);
 		return (ETXTBSY);
 	}
 	if ((vp->v_iflag & VI_EXECMAP) == 0) {
-		atomic_add_int(&uvmexp.filepages, -vp->v_uobj.uo_npages);
-		atomic_add_int(&uvmexp.execpages, vp->v_uobj.uo_npages);
+		cpu_count(CPU_COUNT_EXECPAGES, vp->v_uobj.uo_npages);
 	}
 	vp->v_iflag |= (VI_TEXT | VI_EXECMAP);
 	mutex_exit(vp->v_interlock);
+	rw_exit(vp->v_uobj.vmobjlock);
 	return (0);
 }
 
@@ -412,9 +418,9 @@ enforce_rlimit_fsize(struct vnode *vp, struct uio *uio, int ioflag)
 
 	if (testoff + uio->uio_resid >
 	    l->l_proc->p_rlimit[RLIMIT_FSIZE].rlim_cur) {
-		mutex_enter(proc_lock);
+		mutex_enter(&proc_lock);
 		psignal(l->l_proc, SIGXFSZ);
-		mutex_exit(proc_lock);
+		mutex_exit(&proc_lock);
 		return EFBIG;
 	}
 
@@ -751,7 +757,10 @@ vn_ioctl(file_t *fp, u_long com, void *data)
 			if (*(daddr_t *)data < 0)
 				return (EINVAL);
 			block = (daddr_t *)data;
-			return (VOP_BMAP(vp, *block, NULL, block, NULL));
+			vn_lock(vp, LK_SHARED | LK_RETRY);
+			error = VOP_BMAP(vp, *block, NULL, block, NULL);
+			VOP_UNLOCK(vp);
+			return error;
 		}
 		if (com == OFIOGETBMAP) {
 			daddr_t ibn, obn;
@@ -759,7 +768,9 @@ vn_ioctl(file_t *fp, u_long com, void *data)
 			if (*(int32_t *)data < 0)
 				return (EINVAL);
 			ibn = (daddr_t)*(int32_t *)data;
+			vn_lock(vp, LK_SHARED | LK_RETRY);
 			error = VOP_BMAP(vp, ibn, NULL, &obn, NULL);
+			VOP_UNLOCK(vp);
 			*(int32_t *)data = (int32_t)obn;
 			return error;
 		}
@@ -773,10 +784,10 @@ vn_ioctl(file_t *fp, u_long com, void *data)
 		    kauth_cred_get());
 		if (error == 0 && com == TIOCSCTTY) {
 			vref(vp);
-			mutex_enter(proc_lock);
+			mutex_enter(&proc_lock);
 			ovp = curproc->p_session->s_ttyvp;
 			curproc->p_session->s_ttyvp = vp;
-			mutex_exit(proc_lock);
+			mutex_exit(&proc_lock);
 			if (ovp != NULL)
 				vrele(ovp);
 		}
@@ -976,9 +987,11 @@ vn_mmap(struct file *fp, off_t *offp, size_t size, int prot, int *flagsp,
 		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 		vp->v_vflag |= VV_MAPPED;
 		if (needwritemap) {
+			rw_enter(vp->v_uobj.vmobjlock, RW_WRITER);
 			mutex_enter(vp->v_interlock);
 			vp->v_iflag |= VI_WRMAP;
 			mutex_exit(vp->v_interlock);
+			rw_exit(vp->v_uobj.vmobjlock);
 		}
 		VOP_UNLOCK(vp);
 	}
@@ -1027,22 +1040,31 @@ vn_mmap(struct file *fp, off_t *offp, size_t size, int prot, int *flagsp,
 int
 vn_lock(struct vnode *vp, int flags)
 {
+	struct lwp *l;
 	int error;
 
 #if 0
-	KASSERT(vp->v_usecount > 0 || (vp->v_iflag & VI_ONWORKLST) != 0);
+	KASSERT(vrefcnt(vp) > 0 || (vp->v_iflag & VI_ONWORKLST) != 0);
 #endif
-	KASSERT((flags & ~(LK_SHARED|LK_EXCLUSIVE|LK_NOWAIT|LK_RETRY)) == 0);
-	KASSERT(!mutex_owned(vp->v_interlock));
+	KASSERT((flags & ~(LK_SHARED|LK_EXCLUSIVE|LK_NOWAIT|LK_RETRY|
+	    LK_UPGRADE|LK_DOWNGRADE)) == 0);
+	KASSERT((flags & LK_NOWAIT) != 0 || !mutex_owned(vp->v_interlock));
 
 #ifdef DIAGNOSTIC
 	if (wapbl_vphaswapbl(vp))
 		WAPBL_JUNLOCK_ASSERT(wapbl_vptomp(vp));
 #endif
 
+	/* Get a more useful report for lockstat. */
+	l = curlwp;
+	KASSERT(l->l_rwcallsite == 0);
+	l->l_rwcallsite = (uintptr_t)__builtin_return_address(0);	
+
 	error = VOP_LOCK(vp, flags);
 	if ((flags & LK_RETRY) != 0 && error == ENOENT)
 		error = VOP_LOCK(vp, flags);
+
+	l->l_rwcallsite = 0;
 
 	KASSERT((flags & LK_RETRY) == 0 || (flags & LK_NOWAIT) != 0 ||
 	    error == 0);
@@ -1086,7 +1108,8 @@ vn_extattr_get(struct vnode *vp, int ioflg, int attrnamespace,
 	if ((ioflg & IO_NODELOCKED) == 0)
 		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 
-	error = VOP_GETEXTATTR(vp, attrnamespace, attrname, &auio, NULL, NULL);
+	error = VOP_GETEXTATTR(vp, attrnamespace, attrname, &auio, NULL,
+	    NOCRED);
 
 	if ((ioflg & IO_NODELOCKED) == 0)
 		VOP_UNLOCK(vp);
@@ -1122,7 +1145,7 @@ vn_extattr_set(struct vnode *vp, int ioflg, int attrnamespace,
 		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 	}
 
-	error = VOP_SETEXTATTR(vp, attrnamespace, attrname, &auio, NULL);
+	error = VOP_SETEXTATTR(vp, attrnamespace, attrname, &auio, NOCRED);
 
 	if ((ioflg & IO_NODELOCKED) == 0) {
 		VOP_UNLOCK(vp);
@@ -1141,9 +1164,10 @@ vn_extattr_rm(struct vnode *vp, int ioflg, int attrnamespace,
 		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 	}
 
-	error = VOP_DELETEEXTATTR(vp, attrnamespace, attrname, NULL);
+	error = VOP_DELETEEXTATTR(vp, attrnamespace, attrname, NOCRED);
 	if (error == EOPNOTSUPP)
-		error = VOP_SETEXTATTR(vp, attrnamespace, attrname, NULL, NULL);
+		error = VOP_SETEXTATTR(vp, attrnamespace, attrname, NULL,
+		    NOCRED);
 
 	if ((ioflg & IO_NODELOCKED) == 0) {
 		VOP_UNLOCK(vp);
@@ -1152,37 +1176,63 @@ vn_extattr_rm(struct vnode *vp, int ioflg, int attrnamespace,
 	return (error);
 }
 
-void
-vn_ra_allocctx(struct vnode *vp)
-{
-	struct uvm_ractx *ra = NULL;
-
-	KASSERT(mutex_owned(vp->v_interlock));
-
-	if (vp->v_type != VREG) {
-		return;
-	}
-	if (vp->v_ractx != NULL) {
-		return;
-	}
-	if (vp->v_ractx == NULL) {
-		mutex_exit(vp->v_interlock);
-		ra = uvm_ra_allocctx();
-		mutex_enter(vp->v_interlock);
-		if (ra != NULL && vp->v_ractx == NULL) {
-			vp->v_ractx = ra;
-			ra = NULL;
-		}
-	}
-	if (ra != NULL) {
-		uvm_ra_freectx(ra);
-	}
-}
-
 int
 vn_fifo_bypass(void *v)
 {
 	struct vop_generic_args *ap = v;
 
 	return VOCALL(fifo_vnodeop_p, ap->a_desc->vdesc_offset, v);
+}
+
+/*
+ * Open block device by device number
+ */
+int
+vn_bdev_open(dev_t dev, struct vnode **vpp, struct lwp *l)
+{
+	int     error;
+
+	if ((error = bdevvp(dev, vpp)) != 0)
+		return error;
+
+	if ((error = VOP_OPEN(*vpp, FREAD | FWRITE, l->l_cred)) != 0) {
+		vrele(*vpp);
+		return error;
+	}
+	mutex_enter((*vpp)->v_interlock);
+	(*vpp)->v_writecount++;
+	mutex_exit((*vpp)->v_interlock);
+
+	return 0;
+}
+
+/*
+ * Lookup the provided name in the filesystem.  If the file exists,
+ * is a valid block device, and isn't being used by anyone else,
+ * set *vpp to the file's vnode.
+ */
+int
+vn_bdev_openpath(struct pathbuf *pb, struct vnode **vpp, struct lwp *l)
+{
+	struct nameidata nd;
+	struct vnode *vp;
+	dev_t dev;
+	enum vtype vt;
+	int     error;
+
+	NDINIT(&nd, LOOKUP, FOLLOW, pb);
+	if ((error = vn_open(&nd, FREAD | FWRITE, 0)) != 0)
+		return error;
+
+	vp = nd.ni_vp;
+	dev = vp->v_rdev;
+	vt = vp->v_type;
+
+	VOP_UNLOCK(vp);
+	(void) vn_close(vp, FREAD | FWRITE, l->l_cred);
+
+	if (vt != VBLK)
+		return ENOTBLK;
+
+	return vn_bdev_open(dev, vpp, l);
 }

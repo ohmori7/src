@@ -1,4 +1,4 @@
-/*	$NetBSD: bcm2835_gpioreg.h,v 1.4 2017/12/10 21:38:26 skrll Exp $	*/
+/*	$NetBSD: bcm2835_gpioreg.h,v 1.6 2021/03/08 13:59:29 mlelstv Exp $	*/
 
 /*
  * Copyright (c) 2013 Jonathan A. Kollasch
@@ -48,12 +48,20 @@
 #define BCM2835_GPIO_GPAFEN(x)	(0x088 + (x) * sizeof(uint32_t))
 
 #define BCM2835_GPIO_GPPUD	(0x094)
+
 /* brcm,pull property */
 #define  BCM2835_GPIO_GPPUD_PULLOFF	0x0
 #define  BCM2835_GPIO_GPPUD_PULLDOWN	0x1
 #define  BCM2835_GPIO_GPPUD_PULLUP	0x2
 #define BCM2835_GPIO_GPPUDCLK(x)	(0x098 + (x) * sizeof(uint32_t))
 #define BCM2835_GPIO_GPPUD_PINS_PER_REGISTER 32
+
+#define  BCM2838_GPIO_GPPUD_PULLOFF	0x0
+#define  BCM2838_GPIO_GPPUD_PULLDOWN	0x2
+#define  BCM2838_GPIO_GPPUD_PULLUP	0x1
+#define BCM2838_GPIO_GPPUPPDN(x)	(0x0e4 + (x) * sizeof(uint32_t))
+#define BCM2838_GPIO_GPPUD_REGID(n)	((n) / 16)
+#define BCM2838_GPIO_GPPUD_MASK(n)	(0x3 << ((n) % 16)*2)
 
 /* brcm,function property */
 #define BCM2835_GPIO_IN		0
@@ -64,5 +72,9 @@
 #define BCM2835_GPIO_ALT1	5
 #define BCM2835_GPIO_ALT2	6
 #define BCM2835_GPIO_ALT3	7
+
+/* Undocumented register to multiplex emmc2 pins to legacy sdhc */
+#define BCM2838_GPIO_MUX		0x0d0
+#define  BCM2838_GPIO_MUX_LEGACY	0x2
 
 #endif /* _BROADCOM_BCM2835_GPIOREG_H_ */

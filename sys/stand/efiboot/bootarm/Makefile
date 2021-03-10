@@ -1,20 +1,23 @@
-# $NetBSD: Makefile,v 1.1 2019/03/30 12:48:50 jmcneill Exp $
+# $NetBSD: Makefile,v 1.6 2020/09/08 15:36:37 jmcneill Exp $
 
 PROG=		bootarm.efi
 OBJFMT=		binary
-NEWVERSWHAT=	"EFI Boot (arm)"
+NEWVERSWHAT=	"efiboot (arm)"
 GNUEFIARCH=	arm
 LIBGNUEFI_ARCH=	arm
 
 EXTRA_SOURCES=	efibootarm.c
 EXTRA_SOURCES+=	cache.S
 
-COPTS+=		-mno-unaligned-access -ffreestanding -fno-unwind-tables
+COPTS+=		-mfloat-abi=soft -mno-unaligned-access -mlittle-endian
+COPTS+=		-ffreestanding -fno-unwind-tables
+AFLAGS+=	-mlittle-endian
 CFLAGS+=	-DEFIBOOT_ALIGN=0x1000000
-LDFLAGS+=	-N
+CFLAGS+=	-DEFIBOOT_MODULE_MACHINE=\"evbarm\"
+LDFLAGS+=	-N -EL
 
 .include "${.CURDIR}/../Makefile.efiboot"
 
 release: check_RELEASEDIR
 	${HOST_INSTALL_FILE} -m ${BINMODE} ${PROG} \
-		${RELEASEDIR}/${MACHINE}/installation/misc
+		${RELEASEDIR}/${RELEASEMACHINEDIR}/installation/misc

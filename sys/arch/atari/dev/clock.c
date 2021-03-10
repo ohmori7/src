@@ -1,4 +1,4 @@
-/*	$NetBSD: clock.c,v 1.59 2014/07/25 08:10:32 dholland Exp $	*/
+/*	$NetBSD: clock.c,v 1.62 2020/07/03 16:23:03 maxv Exp $	*/
 
 /*
  * Copyright (c) 1988 University of Utah.
@@ -39,7 +39,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: clock.c,v 1.59 2014/07/25 08:10:32 dholland Exp $");
+__KERNEL_RCSID(0, "$NetBSD: clock.c,v 1.62 2020/07/03 16:23:03 maxv Exp $");
 
 #include <sys/param.h>
 #include <sys/kernel.h>
@@ -80,14 +80,11 @@ static int	atari_rtc_set(todr_chip_handle_t, struct clock_ymdhms *);
 static u_int clk_getcounter(struct timecounter *);
 
 static struct timecounter clk_timecounter = {
-	clk_getcounter,	/* get_timecount */
-	0,		/* no poll_pps */
-	~0u,		/* counter_mask */
-	CLOCK_HZ,	/* frequency */
-	"clock",	/* name, overriden later */
-	100,		/* quality */
-	NULL,		/* prev */
-	NULL,		/* next */
+	.tc_get_timecount = clk_getcounter,
+	.tc_counter_mask = ~0u,
+	.tc_frequency = CLOCK_HZ,
+	.tc_name = "clock",
+	.tc_quality = 100,
 };
 
 /*
@@ -157,7 +154,7 @@ static int	profmin;	/* profclock divisor - variance/2	*/
 static int	clk2min;	/* current, from above choices		*/
 #endif
 
-int
+static int
 clockmatch(device_t parent, cfdata_t cf, void *aux)
 {
 
@@ -169,7 +166,8 @@ clockmatch(device_t parent, cfdata_t cf, void *aux)
 /*
  * Start the real-time clock.
  */
-void clockattach(device_t parent, device_t self, void *aux)
+static void
+clockattach(device_t parent, device_t self, void *aux)
 {
 	struct clock_softc *sc = device_private(self);
 	struct todr_chip_handle	*tch;
@@ -221,7 +219,8 @@ void clockattach(device_t parent, device_t self, void *aux)
 #endif /* STATCLOCK */
 }
 
-void cpu_initclocks(void)
+void
+cpu_initclocks(void)
 {
 
 	MFP->mf_tacr  = T_Q200;		/* Start timer			*/
@@ -281,7 +280,7 @@ clk_getcounter(struct timecounter *tc)
 	static uint32_t lastcount;
 
 	s = splhigh();
-	cur_hardclock = hardclock_ticks;
+	cur_hardclock = getticks();
 	ipra = MFP->mf_ipra;
 	tadr = MFP->mf_tadr;
 	delta = divisor - tadr;
@@ -316,7 +315,7 @@ init_delay(void)
 	 */
 	MFP->mf_tbcr  = 0;		/* Stop timer			*/
 	MFP->mf_iera &= ~IA_TIMB;	/* Disable timer interrupts	*/
-	MFP->mf_tbdr  = 0;	
+	MFP->mf_tbdr  = 0;
 	MFP->mf_tbcr  = T_Q004;	/* Start timer			*/
 }
 
@@ -559,9 +558,9 @@ rtcwrite(dev_t dev, struct uio *uio, int flags)
 	 */
 	length = uio->uio_resid;
 	if (uio->uio_offset || (length != sizeof(buffer)
-	  && length != sizeof(buffer) - 1))
+	    && length != sizeof(buffer) - 1))
 		return EINVAL;
-	
+
 	if ((error = uiomove((void *)buffer, sizeof(buffer), uio)))
 		return error;
 
@@ -580,7 +579,7 @@ rtcwrite(dev_t dev, struct uio *uio, int flags)
 	clkregs[MC_DOM]   = twodigits(buffer, 6);
 	clkregs[MC_MONTH] = twodigits(buffer, 4);
 	s = twodigits(buffer, 0) * 100 + twodigits(buffer, 2);
-	clkregs[MC_YEAR]  = s - GEMSTARTOFTIME; 
+	clkregs[MC_YEAR]  = s - GEMSTARTOFTIME;
 
 	s = splclock();
 	MC146818_PUTTOD(RTC, &clkregs);

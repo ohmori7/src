@@ -1,28 +1,25 @@
-/*	$NetBSD: time_test.c,v 1.3 2019/01/09 16:55:13 christos Exp $	*/
+/*	$NetBSD: time_test.c,v 1.6 2021/02/19 16:42:18 christos Exp $	*/
 
 /*
  * Copyright (C) Internet Systems Consortium, Inc. ("ISC")
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ * file, you can obtain one at https://mozilla.org/MPL/2.0/.
  *
  * See the COPYRIGHT file distributed with this work for additional
  * information regarding copyright ownership.
  */
 
-
-#include <config.h>
-
 #if HAVE_CMOCKA
 
+#include <inttypes.h>
+#include <sched.h> /* IWYU pragma: keep */
+#include <setjmp.h>
 #include <stdarg.h>
 #include <stddef.h>
-#include <setjmp.h>
-
-#include <stdlib.h>
 #include <stdio.h>
-#include <inttypes.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 #define UNIT_TESTING
@@ -34,7 +31,7 @@
 
 #include "dnstest.h"
 
-#define TEST_ORIGIN	"test"
+#define TEST_ORIGIN "test"
 
 static int
 _setup(void **state) {
@@ -192,18 +189,17 @@ some_ago_test(void **state) {
 int
 main(void) {
 	const struct CMUnitTest tests[] = {
-		cmocka_unit_test_setup_teardown(epoch_minus_one_test,
-						_setup, _teardown),
-		cmocka_unit_test_setup_teardown(epoch_test,
-						_setup, _teardown),
-		cmocka_unit_test_setup_teardown(half_maxint_test,
-						_setup, _teardown),
-		cmocka_unit_test_setup_teardown(half_plus_one_test,
-						_setup, _teardown),
-		cmocka_unit_test_setup_teardown(fifty_before_test,
-						_setup, _teardown),
-		cmocka_unit_test_setup_teardown(some_ago_test,
-						_setup, _teardown),
+		cmocka_unit_test_setup_teardown(epoch_minus_one_test, _setup,
+						_teardown),
+		cmocka_unit_test_setup_teardown(epoch_test, _setup, _teardown),
+		cmocka_unit_test_setup_teardown(half_maxint_test, _setup,
+						_teardown),
+		cmocka_unit_test_setup_teardown(half_plus_one_test, _setup,
+						_teardown),
+		cmocka_unit_test_setup_teardown(fifty_before_test, _setup,
+						_teardown),
+		cmocka_unit_test_setup_teardown(some_ago_test, _setup,
+						_teardown),
 	};
 
 	return (cmocka_run_group_tests(tests, NULL, NULL));
@@ -219,4 +215,4 @@ main(void) {
 	return (0);
 }
 
-#endif
+#endif /* if HAVE_CMOCKA */

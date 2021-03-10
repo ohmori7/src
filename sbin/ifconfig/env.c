@@ -1,4 +1,4 @@
-/*	$NetBSD: env.c,v 1.11 2016/03/07 15:56:17 christos Exp $	*/
+/*	$NetBSD: env.c,v 1.13 2020/06/07 06:02:58 thorpej Exp $	*/
 
 /*-
  * Copyright (c) 2008 David Young.  All rights reserved.
@@ -27,7 +27,7 @@
 
 #include <sys/cdefs.h>
 #ifndef lint
-__RCSID("$NetBSD: env.c,v 1.11 2016/03/07 15:56:17 christos Exp $");
+__RCSID("$NetBSD: env.c,v 1.13 2020/06/07 06:02:58 thorpej Exp $");
 #endif /* not lint */
 
 #include <errno.h>
@@ -60,7 +60,7 @@ prop_dictionary_augment(prop_dictionary_t bottom, prop_dictionary_t top)
 
 	while (i != NULL && (ko = prop_object_iterator_next(i)) != NULL) {
 		k = (prop_dictionary_keysym_t)ko;
-		key = prop_dictionary_keysym_cstring_nocopy(k);
+		key = prop_dictionary_keysym_value(k);
 		o = prop_dictionary_get_keysym(top, k);
 		if (o == NULL || !prop_dictionary_set(d, key, o)) {
 			prop_object_release((prop_object_t)d);
@@ -138,10 +138,10 @@ getargdata(prop_dictionary_t env, const char *key, uint8_t *buf, size_t buflen)
 	}
 	datalen = prop_data_size(data);
 	if (datalen > buflen) {
-		errno = ENAMETOOLONG; 
+		errno = ENAMETOOLONG;
 		return -1;
 	}
-	memcpy(buf, prop_data_data_nocopy(data), datalen);
+	memcpy(buf, prop_data_value(data), datalen);
 	memset(buf + datalen, 0, buflen - datalen);
 	return datalen;
 }
@@ -159,10 +159,10 @@ getargstr(prop_dictionary_t env, const char *key, char *buf, size_t buflen)
 	}
 	datalen = prop_data_size(data);
 	if (datalen >= buflen) {
-		errno = ENAMETOOLONG; 
+		errno = ENAMETOOLONG;
 		return -1;
 	}
-	memcpy(buf, prop_data_data_nocopy(data), datalen);
+	memcpy(buf, prop_data_value(data), datalen);
 	memset(buf + datalen, 0, buflen - datalen);
 	return datalen;
 }

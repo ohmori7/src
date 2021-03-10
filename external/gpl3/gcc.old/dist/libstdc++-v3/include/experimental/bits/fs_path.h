@@ -1,6 +1,6 @@
 // Class filesystem::path -*- C++ -*-
 
-// Copyright (C) 2014-2016 Free Software Foundation, Inc.
+// Copyright (C) 2014-2018 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -44,7 +44,7 @@
 #include <bits/stl_algobase.h>
 #include <bits/quoted_string.h>
 #include <bits/locale_conv.h>
-#if __cplusplus >= 201402L
+#if __cplusplus == 201402L
 # include <experimental/string_view>
 #endif
 
@@ -55,23 +55,24 @@
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
+_GLIBCXX_BEGIN_NAMESPACE_VERSION
+
 namespace experimental
 {
 namespace filesystem
 {
 inline namespace v1
 {
-_GLIBCXX_BEGIN_NAMESPACE_VERSION
 _GLIBCXX_BEGIN_NAMESPACE_CXX11
 
-#if __cplusplus >= 201402L
-  template<typename _CharT, typename _Traits = std::char_traits<_CharT>>
-    using __basic_string_view
-      = std::experimental::basic_string_view<_CharT, _Traits>;
+#if __cplusplus == 201402L
+  using std::experimental::basic_string_view;
+#elif __cplusplus > 201402L
+  using std::basic_string_view;
 #endif
 
   /**
-   * @ingroup filesystem
+   * @ingroup filesystem-ts
    * @{
    */
 
@@ -99,7 +100,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 #if __cplusplus >= 201402L
     template<typename _CharT, typename _Traits>
       static __is_encoded_char<_CharT>
-      __is_path_src(const __basic_string_view<_CharT, _Traits>&, int);
+      __is_path_src(const basic_string_view<_CharT, _Traits>&, int);
 #endif
 
     template<typename _Unknown>
@@ -119,9 +120,12 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
       : decltype(__is_path_src(std::declval<_Source>(), 0))
       { };
 
-    template<typename _Tp1, typename _Tp2 = void>
+    template<typename _Tp1, typename _Tp2 = void,
+	     typename _Tp1_nocv = typename remove_cv<_Tp1>::type,
+	     typename _Tp1_noptr = typename remove_pointer<_Tp1>::type>
       using _Path = typename
-	std::enable_if<__and_<__not_<is_same<_Tp1, path>>,
+	std::enable_if<__and_<__not_<is_same<_Tp1_nocv, path>>,
+			      __not_<is_void<_Tp1_noptr>>,
 			      __constructible_from<_Tp1, _Tp2>>::value,
 		       path>::type;
 
@@ -148,12 +152,12 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 #if __cplusplus >= 201402L
     template<typename _CharT, typename _Traits>
       static const _CharT*
-      _S_range_begin(const __basic_string_view<_CharT, _Traits>& __str)
+      _S_range_begin(const basic_string_view<_CharT, _Traits>& __str)
       { return __str.data(); }
 
     template<typename _CharT, typename _Traits>
       static const _CharT*
-      _S_range_end(const __basic_string_view<_CharT, _Traits>& __str)
+      _S_range_end(const basic_string_view<_CharT, _Traits>& __str)
       { return __str.data() + __str.size(); }
 #endif
 
@@ -182,7 +186,8 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
     path(path&& __p) noexcept
     : _M_pathname(std::move(__p._M_pathname)), _M_type(__p._M_type)
     {
-      _M_split_cmpts();
+      if (_M_type == _Type::_Multi)
+	_M_split_cmpts();
       __p.clear();
     }
 
@@ -271,7 +276,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
     path& operator+=(const value_type* __x);
     path& operator+=(value_type __x);
 #if __cplusplus >= 201402L
-    path& operator+=(__basic_string_view<value_type> __x);
+    path& operator+=(basic_string_view<value_type> __x);
 #endif
 
     template<typename _Source>
@@ -342,7 +347,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
     int compare(const string_type& __s) const;
     int compare(const value_type* __s) const;
 #if __cplusplus >= 201402L
-    int compare(const __basic_string_view<value_type> __s) const;
+    int compare(const basic_string_view<value_type> __s) const;
 #endif
 
     // decomposition
@@ -367,7 +372,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
     bool has_filename() const;
     bool has_stem() const;
     bool has_extension() const;
-    bool is_absolute() const;
+    bool is_absolute() const { return has_root_directory(); }
     bool is_relative() const { return !is_absolute(); }
 
     // iterators
@@ -456,7 +461,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 	return _S_convert_loc(__tmp.data(), __tmp.data()+__tmp.size(), __loc);
       }
 
-    bool _S_is_dir_sep(value_type __ch)
+    static bool _S_is_dir_sep(value_type __ch)
     {
 #ifdef _GLIBCXX_FILESYSTEM_IS_WINDOWS
       return __ch == L'/' || __ch == preferred_separator;
@@ -509,7 +514,11 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 
   /// Append one path to another
   inline path operator/(const path& __lhs, const path& __rhs)
-  { return path(__lhs) /= __rhs; }
+  {
+    path __result(__lhs);
+    __result /= __rhs;
+    return __result;
+  }
 
   /// Write a path to a stream
   template<typename _CharT, typename _Traits>
@@ -804,7 +813,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 
 #if __cplusplus >= 201402L
   inline path&
-  path::operator+=(__basic_string_view<value_type> __x)
+  path::operator+=(basic_string_view<value_type> __x)
   {
     _M_pathname.append(__x.data(), __x.size());
     _M_split_cmpts();
@@ -955,7 +964,7 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
 
 #if __cplusplus >= 201402L
   inline int
-  path::compare(__basic_string_view<value_type> __s) const
+  path::compare(basic_string_view<value_type> __s) const
   { return compare(path(__s)); }
 #endif
 
@@ -992,16 +1001,6 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
   {
     auto ext = _M_find_extension();
     return ext.first && ext.second != string_type::npos;
-  }
-
-  inline bool
-  path::is_absolute() const
-  {
-#ifdef _GLIBCXX_FILESYSTEM_IS_WINDOWS
-    return has_root_name();
-#else
-    return has_root_directory();
-#endif
   }
 
   inline path::iterator
@@ -1078,12 +1077,13 @@ _GLIBCXX_BEGIN_NAMESPACE_CXX11
     return _M_at_end == __rhs._M_at_end;
   }
 
-  // @} group filesystem
+  // @} group filesystem-ts
 _GLIBCXX_END_NAMESPACE_CXX11
-_GLIBCXX_END_NAMESPACE_VERSION
 } // namespace v1
 } // namespace filesystem
 } // namespace experimental
+
+_GLIBCXX_END_NAMESPACE_VERSION
 } // namespace std
 
 #endif // C++11

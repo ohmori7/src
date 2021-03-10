@@ -1,4 +1,4 @@
-/*	$NetBSD: aic79xx.c,v 1.51 2019/02/04 10:09:31 mrg Exp $	*/
+/*	$NetBSD: aic79xx.c,v 1.56 2020/06/27 17:07:49 jdolecek Exp $	*/
 
 /*
  * Core routines and tables shareable across OS platforms.
@@ -49,7 +49,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: aic79xx.c,v 1.51 2019/02/04 10:09:31 mrg Exp $");
+__KERNEL_RCSID(0, "$NetBSD: aic79xx.c,v 1.56 2020/06/27 17:07:49 jdolecek Exp $");
 
 #include <dev/ic/aic79xx_osm.h>
 #include <dev/ic/aic79xx_inline.h>
@@ -63,7 +63,7 @@ __KERNEL_RCSID(0, "$NetBSD: aic79xx.c,v 1.51 2019/02/04 10:09:31 mrg Exp $");
 struct ahd_softc_tailq ahd_tailq = TAILQ_HEAD_INITIALIZER(ahd_tailq);
 
 /***************************** Lookup Tables **********************************/
-const char *ahd_chip_names[] =
+const char * const ahd_chip_names[] =
 {
 	"NONE",
 	"aic7901",
@@ -222,7 +222,7 @@ static void		ahd_dumpseq(struct ahd_softc *ahd);
 #endif
 static void		ahd_loadseq(struct ahd_softc *ahd);
 static int		ahd_check_patch(struct ahd_softc *ahd,
-					struct patch **start_patch,
+					const struct patch **start_patch,
 					u_int start_instr, u_int *skip_addr);
 static u_int		ahd_resolve_seqaddr(struct ahd_softc *ahd,
 					    u_int address);
@@ -1579,7 +1579,7 @@ ahd_handle_scsiint(struct ahd_softc *ahd, u_int intstat)
 		/*
 		 * Although the driver does not care about the
 		 * 'Selection in Progress' status bit, the busy
-		 * LED does.  SELINGO is only cleared by a sucessfull
+		 * LED does.  SELINGO is only cleared by a successful
 		 * selection, so we must manually clear it to insure
 		 * the LED turns off just incase no future successful
 		 * selections occur (e.g. no devices on the bus).
@@ -2706,9 +2706,7 @@ ahd_alloc_tstate(struct ahd_softc *ahd, u_int scsi_id, char channel)
 	 && ahd->enabled_targets[scsi_id] != master_tstate)
 		panic("%s: ahd_alloc_tstate - Target already allocated",
 		      ahd_name(ahd));
-	tstate = malloc(sizeof(*tstate), M_DEVBUF, M_NOWAIT | M_ZERO);
-	if (tstate == NULL)
-		return (NULL);
+	tstate = malloc(sizeof(*tstate), M_DEVBUF, M_WAITOK | M_ZERO);
 
 	/*
 	 * If we have allocated a master tstate, copy user settings from
@@ -5985,14 +5983,14 @@ ahd_controller_info(struct ahd_softc *ahd, char *tbuf, size_t l)
 		ahd->scb_data.maxhscbs);
 }
 
-static const char *channel_strings[] = {
+static const char * const channel_strings[] = {
 	"Primary Low",
 	"Primary High",
 	"Secondary Low",
 	"Secondary High"
 };
 
-static const char *termstat_strings[] = {
+static const char * const termstat_strings[] = {
 	"Terminated Correctly",
 	"Over Terminated",
 	"Under Terminated",
@@ -6018,11 +6016,7 @@ ahd_init(struct ahd_softc *ahd)
 
 	ahd->stack_size = ahd_probe_stack_size(ahd);
 	ahd->saved_stack = malloc(ahd->stack_size * sizeof(uint16_t),
-				  M_DEVBUF, M_NOWAIT);
-	if (ahd->saved_stack == NULL)
-		return (ENOMEM);
-	/* Zero the memory */
-	memset(ahd->saved_stack, 0, ahd->stack_size * sizeof(uint16_t));
+				  M_DEVBUF, M_WAITOK | M_ZERO);
 
 	/*
 	 * Verify that the compiler hasn't over-agressively
@@ -8258,13 +8252,13 @@ ahd_dumpseq(struct ahd_softc* ahd)
 }
 #endif
 
-static void
+static void __noinline
 ahd_loadseq(struct ahd_softc *ahd)
 {
 	struct	cs cs_table[num_critical_sections];
 	u_int	begin_set[num_critical_sections];
 	u_int	end_set[num_critical_sections];
-	struct	patch *cur_patch;
+	const struct patch *cur_patch;
 	u_int	cs_count;
 	u_int	cur_cs;
 	u_int	i;
@@ -8415,12 +8409,12 @@ ahd_loadseq(struct ahd_softc *ahd)
 }
 
 static int
-ahd_check_patch(struct ahd_softc *ahd, struct patch **start_patch,
+ahd_check_patch(struct ahd_softc *ahd, const struct patch **start_patch,
 		u_int start_instr, u_int *skip_addr)
 {
-	struct	patch *cur_patch;
-	struct	patch *last_patch;
-	u_int	num_patches;
+	const struct	patch *cur_patch;
+	const struct	patch *last_patch;
+	u_int		num_patches;
 
 	num_patches = sizeof(patches)/sizeof(struct patch);
 	last_patch = &patches[num_patches];
@@ -8453,7 +8447,7 @@ ahd_check_patch(struct ahd_softc *ahd, struct patch **start_patch,
 static u_int
 ahd_resolve_seqaddr(struct ahd_softc *ahd, u_int address)
 {
-	struct patch *cur_patch;
+	const struct patch *cur_patch;
 	int address_offset;
 	u_int skip_addr;
 	u_int i;
@@ -8490,7 +8484,7 @@ ahd_download_instr(struct ahd_softc *ahd, u_int instrptr, uint8_t *dconsts)
 	/*
 	 * The firmware is always compiled into a little endian format.
 	 */
-	instr.integer = ahd_le32toh(*(uint32_t*)&seqprog[instrptr * 4]);
+	instr.integer = ahd_le32toh(*(const uint32_t*)&seqprog[instrptr * 4]);
 
 	fmt1_ins = &instr.format1;
 	fmt3_ins = NULL;

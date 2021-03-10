@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.94 2019/05/07 18:45:37 maya Exp $
+#	$NetBSD: Makefile,v 1.96 2019/11/11 22:45:27 joerg Exp $
 #
 
 NOSANITIZER=	# defined
@@ -6,6 +6,8 @@ WARNS?=	5
 LIB=	pthread
 
 .include <bsd.own.mk>
+
+USE_SHLIBDIR=	yes
 
 .if defined(PTHREAD_MACHINE_ARCH) && !empty(PTHREAD_MACHINE_ARCH) && \
     exists(${.CURDIR}/arch/${PTHREAD_MACHINE_ARCH})
@@ -33,6 +35,10 @@ ARCHDIR=	${.CURDIR}/arch/${ARCHSUBDIR}
 CPPFLAGS+=	-I${ARCHDIR} -I${.CURDIR} -I${.OBJDIR} -D_LIBC -D_REENTRANT
 CPPFLAGS+=	-I${.CURDIR}/../libc/include
 CPPFLAGS+=	-D__LIBPTHREAD_SOURCE__ -D__LIBC_THREAD_STUBS
+
+# Since <pthread.h> is not used, allow declaring pthread_create and
+# friends locally.
+CWARNFLAGS.clang+=	-Wno-builtin-requires-header
 
 # XXX: This crappy poke at libc's internals needs to be fixed.
 CPPFLAGS+=-I${NETBSDSRCDIR}/sys -I${.CURDIR}/../libc

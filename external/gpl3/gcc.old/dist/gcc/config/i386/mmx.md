@@ -1,5 +1,5 @@
 ;; GCC machine description for MMX and 3dNOW! instructions
-;; Copyright (C) 2005-2016 Free Software Foundation, Inc.
+;; Copyright (C) 2005-2018 Free Software Foundation, Inc.
 ;;
 ;; This file is part of GCC.
 ;;
@@ -112,7 +112,7 @@
 	return "movdq2q\t{%1, %0|%0, %1}";
 
     case TYPE_SSELOG1:
-      return standard_sse_constant_opcode (insn, operands[1]);
+      return standard_sse_constant_opcode (insn, operands);
 
     case TYPE_SSEMOV:
       switch (get_attr_mode (insn))
@@ -205,11 +205,9 @@
 	   (const_string "DI")))])
 
 (define_split
-  [(set (match_operand:MMXMODE 0 "nonimmediate_operand")
-        (match_operand:MMXMODE 1 "general_operand"))]
-  "!TARGET_64BIT && reload_completed
-   && !(MMX_REG_P (operands[0]) || SSE_REG_P (operands[0]))
-   && !(MMX_REG_P (operands[1]) || SSE_REG_P (operands[1]))"
+  [(set (match_operand:MMXMODE 0 "nonimmediate_gr_operand")
+        (match_operand:MMXMODE 1 "general_gr_operand"))]
+  "!TARGET_64BIT && reload_completed"
   [(const_int 0)]
   "ix86_split_long_move (operands); DONE;")
 
@@ -603,33 +601,34 @@
   "#"
   "&& reload_completed"
   [(set (match_dup 0) (match_dup 1))]
-{
-  if (REG_P (operands[1]))
-    operands[1] = gen_rtx_REG (SFmode, REGNO (operands[1]));
-  else
-    operands[1] = adjust_address (operands[1], SFmode, 0);
-})
+  "operands[1] = gen_lowpart (SFmode, operands[1]);")
 
 ;; Avoid combining registers from different units in a single alternative,
 ;; see comment above inline_secondary_memory_needed function in i386.c
 (define_insn "*vec_extractv2sf_1"
   [(set (match_operand:SF 0 "nonimmediate_operand"     "=y,x,x,y,x,f,r")
 	(vec_select:SF
-	  (match_operand:V2SF 1 "nonimmediate_operand" " 0,x,x,o,o,o,o")
+	  (match_operand:V2SF 1 "nonimmediate_operand" " 0,x,0,o,o,o,o")
 	  (parallel [(const_int 1)])))]
   "TARGET_MMX && !(MEM_P (operands[0]) && MEM_P (operands[1]))"
   "@
    punpckhdq\t%0, %0
    %vmovshdup\t{%1, %0|%0, %1}
-   shufps\t{$0xe5, %1, %0|%0, %1, 0xe5}
+   shufps\t{$0xe5, %0, %0|%0, %0, 0xe5}
    #
    #
    #
    #"
   [(set_attr "isa" "*,sse3,noavx,*,*,*,*")
    (set_attr "type" "mmxcvt,sse,sseshuf1,mmxmov,ssemov,fmov,imov")
-   (set_attr "length_immediate" "*,*,1,*,*,*,*")
-   (set_attr "prefix_rep" "*,1,*,*,*,*,*")
+   (set (attr "length_immediate")
+     (if_then_else (eq_attr "alternative" "2")
+		   (const_string "1")
+		   (const_string "*")))
+   (set (attr "prefix_rep")
+     (if_then_else (eq_attr "alternative" "1")
+		   (const_string "1")
+		   (const_string "*")))
    (set_attr "prefix" "orig,maybe_vex,orig,orig,orig,orig,orig")
    (set_attr "mode" "DI,V4SF,V4SF,SF,SF,SF,SF")])
 
@@ -642,7 +641,7 @@
   [(set (match_dup 0) (match_dup 1))]
   "operands[1] = adjust_address (operands[1], SFmode, 4);")
 
-(define_expand "vec_extractv2sf"
+(define_expand "vec_extractv2sfsf"
   [(match_operand:SF 0 "register_operand")
    (match_operand:V2SF 1 "register_operand")
    (match_operand 2 "const_int_operand")]
@@ -653,7 +652,7 @@
   DONE;
 })
 
-(define_expand "vec_initv2sf"
+(define_expand "vec_initv2sfsf"
   [(match_operand:V2SF 0 "register_operand")
    (match_operand 1)]
   "TARGET_SSE"
@@ -1296,31 +1295,29 @@
   "#"
   "&& reload_completed"
   [(set (match_dup 0) (match_dup 1))]
-{
-  if (REG_P (operands[1]))
-    operands[1] = gen_rtx_REG (SImode, REGNO (operands[1]));
-  else
-    operands[1] = adjust_address (operands[1], SImode, 0);
-})
+  "operands[1] = gen_lowpart (SImode, operands[1]);")
 
 ;; Avoid combining registers from different units in a single alternative,
 ;; see comment above inline_secondary_memory_needed function in i386.c
 (define_insn "*vec_extractv2si_1"
   [(set (match_operand:SI 0 "nonimmediate_operand"     "=y,x,x,y,x,r")
 	(vec_select:SI
-	  (match_operand:V2SI 1 "nonimmediate_operand" " 0,x,x,o,o,o")
+	  (match_operand:V2SI 1 "nonimmediate_operand" " 0,x,0,o,o,o")
 	  (parallel [(const_int 1)])))]
   "TARGET_MMX && !(MEM_P (operands[0]) && MEM_P (operands[1]))"
   "@
    punpckhdq\t%0, %0
    %vpshufd\t{$0xe5, %1, %0|%0, %1, 0xe5}
-   shufps\t{$0xe5, %1, %0|%0, %1, 0xe5}
+   shufps\t{$0xe5, %0, %0|%0, %0, 0xe5}
    #
    #
    #"
   [(set_attr "isa" "*,sse2,noavx,*,*,*")
    (set_attr "type" "mmxcvt,sseshuf1,sseshuf1,mmxmov,ssemov,imov")
-   (set_attr "length_immediate" "*,1,1,*,*,*")
+   (set (attr "length_immediate")
+     (if_then_else (eq_attr "alternative" "1,2")
+		   (const_string "1")
+		   (const_string "*")))
    (set_attr "prefix" "orig,maybe_vex,orig,orig,orig,orig")
    (set_attr "mode" "DI,TI,V4SF,SI,SI,SI")])
 
@@ -1347,7 +1344,7 @@
   operands[1] = adjust_address (operands[1], SImode, INTVAL (operands[2]) * 4);
 })
 
-(define_expand "vec_extractv2si"
+(define_expand "vec_extractv2sisi"
   [(match_operand:SI 0 "register_operand")
    (match_operand:V2SI 1 "register_operand")
    (match_operand 2 "const_int_operand")]
@@ -1358,7 +1355,7 @@
   DONE;
 })
 
-(define_expand "vec_initv2si"
+(define_expand "vec_initv2sisi"
   [(match_operand:V2SI 0 "register_operand")
    (match_operand 1)]
   "TARGET_SSE"
@@ -1378,7 +1375,7 @@
   DONE;
 })
 
-(define_expand "vec_extractv4hi"
+(define_expand "vec_extractv4hihi"
   [(match_operand:HI 0 "register_operand")
    (match_operand:V4HI 1 "register_operand")
    (match_operand 2 "const_int_operand")]
@@ -1389,7 +1386,7 @@
   DONE;
 })
 
-(define_expand "vec_initv4hi"
+(define_expand "vec_initv4hihi"
   [(match_operand:V4HI 0 "register_operand")
    (match_operand 1)]
   "TARGET_SSE"
@@ -1409,7 +1406,7 @@
   DONE;
 })
 
-(define_expand "vec_extractv8qi"
+(define_expand "vec_extractv8qiqi"
   [(match_operand:QI 0 "register_operand")
    (match_operand:V8QI 1 "register_operand")
    (match_operand 2 "const_int_operand")]
@@ -1420,7 +1417,7 @@
   DONE;
 })
 
-(define_expand "vec_initv8qi"
+(define_expand "vec_initv8qiqi"
   [(match_operand:V8QI 0 "register_operand")
    (match_operand 1)]
   "TARGET_SSE"

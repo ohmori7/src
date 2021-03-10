@@ -1,5 +1,5 @@
 #
-#	$NetBSD: ZEDBOARD,v 1.5 2019/02/06 11:58:31 rin Exp $
+#	$NetBSD: ZEDBOARD,v 1.8 2020/09/29 19:58:50 jmcneill Exp $
 #
 #	ZedBoard -- Xilinx Zynq Eval Board Kernel
 #
@@ -16,7 +16,6 @@ options 	EVBARM_BOARDTYPE=zedboard
 options 	ZYNQ7000
 options 	MULTIPROCESSOR
 options 	CPU_CORTEX
-options 	CPU_CORTEXA9
 options		MEMSIZE=512
 
 # Architecture options
@@ -35,7 +34,6 @@ makeoptions	COPY_SYMTAB=1
 #  single		Boot to single user only
 #  kdb			Give control to kernel debugger
 #  ask			Ask for file name to reboot from
-#  pmapdebug=<n>	If PMAP_DEBUG, set pmap_debug_level to <n>
 #  memorydisk=<n>	Set memorydisk size to <n> KB
 #  quiet		Show aprint_naive output
 #  verbose		Show aprint_normal and aprint_verbose output
@@ -58,7 +56,7 @@ armperiph0	at mainbus?		# A9 On-Chip Peripherals
 armgic0 	at armperiph?		# ARM Generic Interrupt Controller
 arml2cc0	at armperiph? flags 0	# ARM PL310 L2CC
 arma9tmr0	at armperiph?		# A9 Global Timer
-#a9wdt0		at armperiph? flags 0	# A9 Watchdog Timer
+#arma9wdt0	at armperiph? flags 0	# A9 Watchdog Timer
 
 axi0		at mainbus?
 

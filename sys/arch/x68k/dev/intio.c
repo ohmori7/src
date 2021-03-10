@@ -1,4 +1,4 @@
-/*	$NetBSD: intio.c,v 1.45 2016/05/31 03:12:49 dholland Exp $	*/
+/*	$NetBSD: intio.c,v 1.47 2020/06/14 01:40:06 chs Exp $	*/
 
 /*-
  * Copyright (c) 1998 The NetBSD Foundation, Inc.
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: intio.c,v 1.45 2016/05/31 03:12:49 dholland Exp $");
+__KERNEL_RCSID(0, "$NetBSD: intio.c,v 1.47 2020/06/14 01:40:06 chs Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -162,7 +162,7 @@ intio_attach(device_t parent, device_t self, void *aux)
 	sc->sc_map = extent_create("intiomap",
 				  INTIOBASE,
 				  INTIOBASE + 0x400000,
-				  NULL, 0, EX_NOWAIT);
+				  NULL, 0, EX_WAITOK);
 	intio_alloc_system_ports(sc);
 
 	sc->sc_bst = &intio_bus;
@@ -327,9 +327,7 @@ intio_intr_establish_ext(int vector, const char *name1, const char *name2,
 	if (iiv[vector].iiv_handler)
 		return EBUSY;
 
-	evcnt = malloc(sizeof(*evcnt), M_DEVBUF, M_NOWAIT);
-	if (evcnt == NULL)
-		return ENOMEM;
+	evcnt = malloc(sizeof(*evcnt), M_DEVBUF, M_WAITOK);
 	evcnt_attach_dynamic(evcnt, EVCNT_TYPE_INTR, NULL, name1, name2);
 
 	iiv[vector].iiv_handler = handler;

@@ -5,10 +5,10 @@
 /* #undef ARCHIVE_ACL_DARWIN */
 
 /* FreeBSD ACL support */
-/* #undef ARCHIVE_ACL_FREEBSD */
+#define ARCHIVE_ACL_FREEBSD 1
 
 /* FreeBSD NFSv4 ACL support */
-/* #undef ARCHIVE_ACL_FREEBSD_NFS4 */
+#define ARCHIVE_ACL_FREEBSD_NFS4 1
 
 /* Linux POSIX.1e ACL support via libacl */
 /* #undef ARCHIVE_ACL_LIBACL */
@@ -152,13 +152,13 @@
 /* #undef ARCHIVE_XATTR_LINUX */
 
 /* Version number of bsdcat */
-#define BSDCAT_VERSION_STRING "3.3.2dev"
+#define BSDCAT_VERSION_STRING "3.4.0"
 
 /* Version number of bsdcpio */
-#define BSDCPIO_VERSION_STRING "3.3.2dev"
+#define BSDCPIO_VERSION_STRING "3.4.0"
 
 /* Version number of bsdtar */
-#define BSDTAR_VERSION_STRING "3.3.2dev"
+#define BSDTAR_VERSION_STRING "3.4.0"
 
 /* Define to 1 if the system has the type `ace_t'. */
 /* #undef HAVE_ACE_T */
@@ -170,109 +170,109 @@
 /* #undef HAVE_ACLENT_T */
 
 /* Define to 1 if you have the `acl_add_flag_np' function. */
-/* #undef HAVE_ACL_ADD_FLAG_NP */
+#define HAVE_ACL_ADD_FLAG_NP 1
 
 /* Define to 1 if you have the `acl_add_perm' function. */
-/* #undef HAVE_ACL_ADD_PERM */
+#define HAVE_ACL_ADD_PERM 1
 
 /* Define to 1 if you have the `acl_clear_flags_np' function. */
-/* #undef HAVE_ACL_CLEAR_FLAGS_NP */
+#define HAVE_ACL_CLEAR_FLAGS_NP 1
 
 /* Define to 1 if you have the `acl_clear_perms' function. */
-/* #undef HAVE_ACL_CLEAR_PERMS */
+#define HAVE_ACL_CLEAR_PERMS 1
 
 /* Define to 1 if you have the `acl_create_entry' function. */
-/* #undef HAVE_ACL_CREATE_ENTRY */
+#define HAVE_ACL_CREATE_ENTRY 1
 
 /* Define to 1 if you have the `acl_delete_def_file' function. */
-/* #undef HAVE_ACL_DELETE_DEF_FILE */
+#define HAVE_ACL_DELETE_DEF_FILE 1
 
 /* Define to 1 if the system has the type `acl_entry_t'. */
-/* #undef HAVE_ACL_ENTRY_T */
+#define HAVE_ACL_ENTRY_T 1
 
 /* Define to 1 if you have the `acl_free' function. */
-/* #undef HAVE_ACL_FREE */
+#define HAVE_ACL_FREE 1
 
 /* Define to 1 if you have the `acl_get_brand_np' function. */
-/* #undef HAVE_ACL_GET_BRAND_NP */
+#define HAVE_ACL_GET_BRAND_NP 1
 
 /* Define to 1 if you have the `acl_get_entry' function. */
-/* #undef HAVE_ACL_GET_ENTRY */
+#define HAVE_ACL_GET_ENTRY 1
 
 /* Define to 1 if you have the `acl_get_entry_type_np' function. */
-/* #undef HAVE_ACL_GET_ENTRY_TYPE_NP */
+#define HAVE_ACL_GET_ENTRY_TYPE_NP 1
 
 /* Define to 1 if you have the `acl_get_fd' function. */
-/* #undef HAVE_ACL_GET_FD */
+#define HAVE_ACL_GET_FD 1
 
 /* Define to 1 if you have the `acl_get_fd_np' function. */
-/* #undef HAVE_ACL_GET_FD_NP */
+#define HAVE_ACL_GET_FD_NP 1
 
 /* Define to 1 if you have the `acl_get_file' function. */
-/* #undef HAVE_ACL_GET_FILE */
+#define HAVE_ACL_GET_FILE 1
 
 /* Define to 1 if you have the `acl_get_flagset_np' function. */
-/* #undef HAVE_ACL_GET_FLAGSET_NP */
+#define HAVE_ACL_GET_FLAGSET_NP 1
 
 /* Define to 1 if you have the `acl_get_flag_np' function. */
-/* #undef HAVE_ACL_GET_FLAG_NP */
+#define HAVE_ACL_GET_FLAG_NP 1
 
 /* Define to 1 if you have the `acl_get_link_np' function. */
-/* #undef HAVE_ACL_GET_LINK_NP */
+#define HAVE_ACL_GET_LINK_NP 1
 
 /* Define to 1 if you have the `acl_get_perm' function. */
 /* #undef HAVE_ACL_GET_PERM */
 
 /* Define to 1 if you have the `acl_get_permset' function. */
-/* #undef HAVE_ACL_GET_PERMSET */
+#define HAVE_ACL_GET_PERMSET 1
 
 /* Define to 1 if you have the `acl_get_perm_np' function. */
-/* #undef HAVE_ACL_GET_PERM_NP */
+#define HAVE_ACL_GET_PERM_NP 1
 
 /* Define to 1 if you have the `acl_get_qualifier' function. */
-/* #undef HAVE_ACL_GET_QUALIFIER */
+#define HAVE_ACL_GET_QUALIFIER 1
 
 /* Define to 1 if you have the `acl_get_tag_type' function. */
-/* #undef HAVE_ACL_GET_TAG_TYPE */
+#define HAVE_ACL_GET_TAG_TYPE 1
 
 /* Define to 1 if you have the `acl_init' function. */
-/* #undef HAVE_ACL_INIT */
+#define HAVE_ACL_INIT 1
 
 /* Define to 1 if you have the `acl_is_trivial_np' function. */
-/* #undef HAVE_ACL_IS_TRIVIAL_NP */
+#define HAVE_ACL_IS_TRIVIAL_NP 1
 
 /* Define to 1 if you have the <acl/libacl.h> header file. */
 /* #undef HAVE_ACL_LIBACL_H */
 
 /* Define to 1 if the system has the type `acl_permset_t'. */
-/* #undef HAVE_ACL_PERMSET_T */
+#define HAVE_ACL_PERMSET_T 1
 
 /* Define to 1 if you have the `acl_set_entry_type_np' function. */
-/* #undef HAVE_ACL_SET_ENTRY_TYPE_NP */
+#define HAVE_ACL_SET_ENTRY_TYPE_NP 1
 
 /* Define to 1 if you have the `acl_set_fd' function. */
-/* #undef HAVE_ACL_SET_FD */
+#define HAVE_ACL_SET_FD 1
 
 /* Define to 1 if you have the `acl_set_fd_np' function. */
-/* #undef HAVE_ACL_SET_FD_NP */
+#define HAVE_ACL_SET_FD_NP 1
 
 /* Define to 1 if you have the `acl_set_file' function. */
-/* #undef HAVE_ACL_SET_FILE */
+#define HAVE_ACL_SET_FILE 1
 
 /* Define to 1 if you have the `acl_set_link_np' function. */
-/* #undef HAVE_ACL_SET_LINK_NP */
+#define HAVE_ACL_SET_LINK_NP 1
 
 /* Define to 1 if you have the `acl_set_qualifier' function. */
-/* #undef HAVE_ACL_SET_QUALIFIER */
+#define HAVE_ACL_SET_QUALIFIER 1
 
 /* Define to 1 if you have the `acl_set_tag_type' function. */
-/* #undef HAVE_ACL_SET_TAG_TYPE */
+#define HAVE_ACL_SET_TAG_TYPE 1
 
 /* Define to 1 if the system has the type `acl_t'. */
-/* #undef HAVE_ACL_T */
+#define HAVE_ACL_T 1
 
 /* Define to 1 if the system has the type `acl_tag_t'. */
-/* #undef HAVE_ACL_TAG_T */
+#define HAVE_ACL_TAG_T 1
 
 /* Define to 1 if you have the `arc4random_buf' function. */
 #define HAVE_ARC4RANDOM_BUF 1
@@ -282,6 +282,9 @@
 
 /* Define to 1 if you have the <bcrypt.h> header file. */
 /* #undef HAVE_BCRYPT_H */
+
+/* Define to 1 if you have the <blake2.h> header file. */
+/* #undef HAVE_BLAKE2_H */
 
 /* Define to 1 if you have the <bzlib.h> header file. */
 #define HAVE_BZLIB_H 1
@@ -321,19 +324,19 @@
 
 /* Define to 1 if you have the declaration of `ACL_SYNCHRONIZE', and to 0 if
    you don't. */
-/* #undef HAVE_DECL_ACL_SYNCHRONIZE */
+#define HAVE_DECL_ACL_SYNCHRONIZE 1
 
 /* Define to 1 if you have the declaration of `ACL_TYPE_EXTENDED', and to 0 if
    you don't. */
-/* #undef HAVE_DECL_ACL_TYPE_EXTENDED */
+#define HAVE_DECL_ACL_TYPE_EXTENDED 0
 
 /* Define to 1 if you have the declaration of `ACL_TYPE_NFS4', and to 0 if you
    don't. */
-/* #undef HAVE_DECL_ACL_TYPE_NFS4 */
+#define HAVE_DECL_ACL_TYPE_NFS4 1
 
 /* Define to 1 if you have the declaration of `ACL_USER', and to 0 if you
    don't. */
-/* #undef HAVE_DECL_ACL_USER */
+#define HAVE_DECL_ACL_USER 1
 
 /* Define to 1 if you have the declaration of `EXTATTR_NAMESPACE_USER', and to
    0 if you don't. */
@@ -599,6 +602,9 @@
 /* Define to 1 if you have the `acl' library (-lacl). */
 /* #undef HAVE_LIBACL */
 
+/* Define to 1 if you have the `b2' library (-lb2). */
+/* #undef HAVE_LIBB2 */
+
 /* Define to 1 if you have the `bz2' library (-lbz2). */
 #define HAVE_LIBBZ2 1
 
@@ -655,6 +661,9 @@
 
 /* Define to 1 if you have the `z' library (-lz). */
 #define HAVE_LIBZ 1
+
+/* Define to 1 if you have the `zstd' library (-lzstd). */
+/* #undef HAVE_LIBZSTD */
 
 /* Define to 1 if you have the <limits.h> header file. */
 #define HAVE_LIMITS_H 1
@@ -814,7 +823,7 @@
 #define HAVE_PIPE 1
 
 /* Define to 1 if you have the `PKCS5_PBKDF2_HMAC_SHA1' function. */
-/* #undef HAVE_PKCS5_PBKDF2_HMAC_SHA1 */
+#define HAVE_PKCS5_PBKDF2_HMAC_SHA1 1
 
 /* Define to 1 if you have the `poll' function. */
 #define HAVE_POLL 1
@@ -1004,7 +1013,7 @@
 #define HAVE_SYMLINK 1
 
 /* Define to 1 if you have the <sys/acl.h> header file. */
-/* #undef HAVE_SYS_ACL_H */
+#define HAVE_SYS_ACL_H 1
 
 /* Define to 1 if you have the <sys/cdefs.h> header file. */
 #define HAVE_SYS_CDEFS_H 1
@@ -1053,6 +1062,9 @@
 /* Define to 1 if you have the <sys/stat.h> header file. */
 #define HAVE_SYS_STAT_H 1
 
+/* Define to 1 if you have the <sys/sysmacros.h> header file. */
+/* #undef HAVE_SYS_SYSMACROS_H */
+
 /* Define to 1 if you have the <sys/time.h> header file. */
 #define HAVE_SYS_TIME_H 1
 
@@ -1088,6 +1100,9 @@
 
 /* Define to 1 if you have the <unistd.h> header file. */
 #define HAVE_UNISTD_H 1
+
+/* Define to 1 if you have the `unlinkat' function. */
+#define HAVE_UNLINKAT 1
 
 /* Define to 1 if you have the `unsetenv' function. */
 #define HAVE_UNSETENV 1
@@ -1167,6 +1182,9 @@
 /* Define to 1 if you have the <zlib.h> header file. */
 #define HAVE_ZLIB_H 1
 
+/* Define to 1 if you have the <zstd.h> header file. */
+/* #undef HAVE_ZSTD_H */
+
 /* Define to 1 if you have the `_ctime64_s' function. */
 /* #undef HAVE__CTIME64_S */
 
@@ -1183,20 +1201,19 @@
 /* #undef HAVE__MKGMTIME64 */
 
 /* Define as const if the declaration of iconv() needs const. */
-#define ICONV_CONST const
+#define ICONV_CONST
 
 /* Version number of libarchive as a single integer */
-#define LIBARCHIVE_VERSION_NUMBER "3003002"
+#define LIBARCHIVE_VERSION_NUMBER "3004000"
 
 /* Version number of libarchive */
-#define LIBARCHIVE_VERSION_STRING "3.3.2dev"
+#define LIBARCHIVE_VERSION_STRING "3.4.0"
 
 /* Define to 1 if `lstat' dereferences a symlink specified with a trailing
    slash. */
 #define LSTAT_FOLLOWS_SLASHED_SYMLINK 1
 
-/* Define to the sub-directory in which libtool stores uninstalled libraries.
-   */
+/* Define to the sub-directory where libtool stores uninstalled libraries. */
 #define LT_OBJDIR ".libs/"
 
 /* Define to 1 if `major', `minor', and `makedev' are declared in <mkdev.h>.
@@ -1220,7 +1237,7 @@
 #define PACKAGE_NAME "libarchive"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "libarchive 3.3.2dev"
+#define PACKAGE_STRING "libarchive 3.4.0"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "libarchive"
@@ -1229,7 +1246,7 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "3.3.2dev"
+#define PACKAGE_VERSION "3.4.0"
 
 /* Define to 1 if PCRE_STATIC needs to be defined. */
 /* #undef PCRE_STATIC */
@@ -1269,7 +1286,7 @@
 
 
 /* Version number of package */
-#define VERSION "3.3.2dev"
+#define VERSION "3.4.0"
 
 /* Define to '0x0502' for Windows Server 2003 APIs. */
 /* #undef WINVER */

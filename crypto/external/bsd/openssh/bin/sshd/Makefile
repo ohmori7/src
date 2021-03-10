@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.17 2019/04/20 17:16:40 christos Exp $
+#	$NetBSD: Makefile,v 1.23 2021/03/05 17:47:15 christos Exp $
 
 .include <bsd.own.mk>
 
@@ -13,9 +13,9 @@ SRCS=	sshd.c auth-rhosts.c auth-passwd.c \
 	auth-krb5.c auth2-chall.c groupaccess.c \
 	auth-bsdauth.c auth2-hostbased.c auth2-kbdint.c \
 	auth2-none.c auth2-passwd.c auth2-pubkey.c \
-	monitor.c monitor_wrap.c \
+	monitor.c monitor_wrap.c srclimit.c \
 	kexgexs.c sftp-server.c sftp-common.c \
-	sandbox-rlimit.c pfilter.c
+	sftp-realpath.c sandbox-rlimit.c pfilter.c
 
 COPTS.auth-options.c+=	-Wno-pointer-sign
 COPTS.ldapauth.c+=	-Wno-format-nonliteral	# XXX: should fix
@@ -58,8 +58,6 @@ LDADD+=	-lldap -lssl -llber
 DPADD+=	${LIBLDAP} ${LIBSSL} ${LIBLBER}
 .endif
 
-.include <bsd.prog.mk>
-
 LDADD+=	-lcrypt -lutil
 DPADD+=	${LIBCRYPT} ${LIBUTIL}
 
@@ -69,6 +67,11 @@ DPADD+=	${LIBWRAP}
 .ifdef CRUNCHEDPROG
 CPPFLAGS+=-DSMALL
 .else
-LDADD+=	-lblacklist
-DPADD+=	${LIBBLACKLIST}
+LDADD+=	-lblocklist
+DPADD+=	${LIBBLOCKLIST}
 .endif
+
+COPTS.sshlogin.c+=	${GCC_NO_STRINGOP_TRUNCATION}
+COPTS.ldapauth.c+=	${GCC_NO_STRINGOP_TRUNCATION} ${GCC_NO_STRINGOP_OVERFLOW}
+
+.include <bsd.prog.mk>

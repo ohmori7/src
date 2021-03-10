@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2019, Intel Corp.
+ * Copyright (C) 2000 - 2020, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -133,7 +133,7 @@ LsDumpAsciiInComment (
             {
                 /* Insert a space to break the sequence */
 
-                FlPrintFile (FileId, ".", BufChar);
+                FlPrintFile (FileId, " ");
             }
 
             FlPrintFile (FileId, "%c", BufChar);

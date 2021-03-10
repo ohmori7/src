@@ -1,4 +1,4 @@
-/*	$NetBSD: vmwgfx_kms.c,v 1.4 2018/08/27 04:58:37 riastradh Exp $	*/
+/*	$NetBSD: vmwgfx_kms.c,v 1.6 2020/02/14 04:37:28 riastradh Exp $	*/
 
 /**************************************************************************
  *
@@ -28,7 +28,7 @@
  **************************************************************************/
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: vmwgfx_kms.c,v 1.4 2018/08/27 04:58:37 riastradh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: vmwgfx_kms.c,v 1.6 2020/02/14 04:37:28 riastradh Exp $");
 
 #include "vmwgfx_kms.h"
 
@@ -309,7 +309,7 @@ void vmw_kms_cursor_snoop(struct vmw_surface *srf,
 	    box->d != 1    || box_count != 1) {
 		/* TODO handle none page aligned offsets */
 		/* TODO handle more dst & src != 0 */
-		/* TODO handle more than one copy */
+		/* TODO handle more then one copy */
 		DRM_ERROR("Cant snoop dma request for cursor!\n");
 		DRM_ERROR("(%u, %u, %u) (%u, %u, %u) (%ux%ux%u) %u %u\n",
 			  box->srcx, box->srcy, box->srcz,

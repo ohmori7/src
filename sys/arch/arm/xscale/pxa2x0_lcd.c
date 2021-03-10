@@ -1,4 +1,4 @@
-/* $NetBSD: pxa2x0_lcd.c,v 1.36 2015/10/17 16:34:43 jmcneill Exp $ */
+/* $NetBSD: pxa2x0_lcd.c,v 1.38 2020/11/20 18:49:45 thorpej Exp $ */
 
 /*
  * Copyright (c) 2002  Genetec Corporation.  All rights reserved.
@@ -38,7 +38,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: pxa2x0_lcd.c,v 1.36 2015/10/17 16:34:43 jmcneill Exp $");
+__KERNEL_RCSID(0, "$NetBSD: pxa2x0_lcd.c,v 1.38 2020/11/20 18:49:45 thorpej Exp $");
 
 #include "opt_pxa2x0_lcd.h"
 
@@ -46,7 +46,7 @@ __KERNEL_RCSID(0, "$NetBSD: pxa2x0_lcd.c,v 1.36 2015/10/17 16:34:43 jmcneill Exp
 #include <sys/systm.h>
 #include <sys/conf.h>
 #include <sys/uio.h>
-#include <sys/malloc.h>
+#include <sys/kmem.h>
 #include <sys/kernel.h>			/* for cold */
 
 #include <uvm/uvm_extern.h>
@@ -515,12 +515,7 @@ pxa2x0_lcd_new_screen(struct pxa2x0_lcd_softc *sc, int depth,
 		return EINVAL;
 	}
 
-	scr = malloc(sizeof(*scr), M_DEVBUF, M_NOWAIT);
-	if (scr == NULL)
-		return ENOMEM;
-
-	memset(scr, 0, sizeof(*scr));
-
+	scr = kmem_zalloc(sizeof(*scr), KM_SLEEP);
 	scr->nsegs = 0;
 	scr->depth = depth;
 	scr->buf_size = size;
@@ -632,7 +627,7 @@ pxa2x0_lcd_new_screen(struct pxa2x0_lcd_softc *sc, int depth,
 			bus_dmamem_unmap(dma_tag, scr->buf_va, size);
 		if (scr->nsegs)
 			bus_dmamem_free(dma_tag, scr->segs, scr->nsegs);
-		free(scr, M_DEVBUF);
+		kmem_free(scr, sizeof(*scr));
 	}
 	*scrpp = NULL;
 	return error;
@@ -855,7 +850,7 @@ pxa2x0_lcd_free_screen(void *v, void *cookie)
 		bus_dmamem_unmap(sc->dma_tag, scr->buf_va, scr->map_size);
 	if (scr->nsegs > 0)
 		bus_dmamem_free(sc->dma_tag, scr->segs, scr->nsegs);
-	free(scr, M_DEVBUF);
+	kmem_free(scr, sizeof(*scr));
 }
 
 int

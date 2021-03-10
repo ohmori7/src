@@ -1,4 +1,4 @@
-/*	$NetBSD: procfs.h,v 1.76 2019/04/25 22:48:42 mlelstv Exp $	*/
+/*	$NetBSD: procfs.h,v 1.80 2020/04/29 07:18:24 riastradh Exp $	*/
 
 /*
  * Copyright (c) 1993
@@ -164,12 +164,27 @@ struct procfs_args {
 
 #define UIO_MX 32
 
-#define PROCFS_FILENO(pid, type, fd) \
-	(  (type) == PFSroot ? 2 \
-	 : (type) == PFScurproc ? 3 \
-	 : (type) == PFSself ? 4 \
-         : (fd) == -1 ? ((pid)+1) * PFSlast + (type) \
-         : ((uint64_t)((pid)+1) << 32 | (fd)) * PFSlast + (type))
+static __inline ino_t
+procfs_fileno(pid_t _pid, pfstype _type, int _fd)
+{
+	ino_t _ino;
+	switch (_type) {
+	case PFSroot:
+		return 2;
+	case PFScurproc:
+		return 3;
+	case PFSself:
+		return 4;
+	default:
+		_ino = _pid + 1;
+		if (_fd != -1)
+			_ino = _ino << 32 | _fd;
+		return _ino * PFSlast + _type;
+	}
+}
+
+#define PROCFS_FILENO(pid, type, fd) procfs_fileno(pid, type, fd)
+
 #define PROCFS_TYPE(type)	((type) % PFSlast)
 
 struct procfsmount {
@@ -194,9 +209,12 @@ struct vfs_namemap {
 int vfs_getuserstr(struct uio *, char *, int *);
 const vfs_namemap_t *vfs_findname(const vfs_namemap_t *, const char *, int);
 
-int procfs_proc_lock(int, struct proc **, int);
-void procfs_proc_unlock(struct proc *);
 struct mount;
+
+struct proc *procfs_proc_find(struct mount *, pid_t);
+bool procfs_use_linux_compat(struct mount *);
+int procfs_proc_lock(struct mount *, int, struct proc **, int);
+void procfs_proc_unlock(struct proc *);
 int procfs_allocvp(struct mount *, struct vnode **, pid_t, pfstype, int);
 int procfs_donote(struct lwp *, struct proc *, struct pfsnode *,
     struct uio *);
@@ -261,7 +279,7 @@ int procfs_getcpuinfstr(char *, size_t *);
 extern int (**procfs_vnodeop_p)(void *);
 extern struct vfsops procfs_vfsops;
 
-int	procfs_root(struct mount *, struct vnode **);
+int	procfs_root(struct mount *, int, struct vnode **);
 
 #ifdef __HAVE_PROCFS_MACHDEP
 struct vattr;

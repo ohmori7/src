@@ -1,4 +1,4 @@
-/* $NetBSD: gicv3_its.c,v 1.14 2019/06/16 19:19:30 jmcneill Exp $ */
+/* $NetBSD: gicv3_its.c,v 1.32 2021/01/16 21:05:15 jmcneill Exp $ */
 
 /*-
  * Copyright (c) 2018 The NetBSD Foundation, Inc.
@@ -32,7 +32,7 @@
 #define _INTR_PRIVATE
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: gicv3_its.c,v 1.14 2019/06/16 19:19:30 jmcneill Exp $");
+__KERNEL_RCSID(0, "$NetBSD: gicv3_its.c,v 1.32 2021/01/16 21:05:15 jmcneill Exp $");
 
 #include <sys/param.h>
 #include <sys/kmem.h>
@@ -61,7 +61,29 @@ __KERNEL_RCSID(0, "$NetBSD: gicv3_its.c,v 1.14 2019/06/16 19:19:30 jmcneill Exp 
  */
 #define GITS_IIDR_PID_CAVIUM_THUNDERX	0xa1
 #define GITS_IIDR_IMP_CAVIUM		0x34c
+#define	GITS_IIDR_CAVIUM_ERRATA_MASK	(GITS_IIDR_Implementor|GITS_IIDR_ProductID|GITS_IIDR_Variant)
+#define	GITS_IIDR_CAVIUM_ERRATA_VALUE							\
+		(__SHIFTIN(GITS_IIDR_IMP_CAVIUM, GITS_IIDR_Implementor) |		\
+		 __SHIFTIN(GITS_IIDR_PID_CAVIUM_THUNDERX, GITS_IIDR_ProductID) |	\
+		 __SHIFTIN(0, GITS_IIDR_Variant))
 
+static const char * gits_cache_type[] = {
+	[GITS_Cache_DEVICE_nGnRnE]	= "Device-nGnRnE",
+	[GITS_Cache_NORMAL_NC]		= "Non-cacheable",
+	[GITS_Cache_NORMAL_RA_WT]	= "Cacheable RA WT",
+	[GITS_Cache_NORMAL_RA_WB]	= "Cacheable RA WB",
+	[GITS_Cache_NORMAL_WA_WT]	= "Cacheable WA WT",
+	[GITS_Cache_NORMAL_WA_WB]	= "Cacheable WA WB",
+	[GITS_Cache_NORMAL_RA_WA_WT]	= "Cacheable RA WA WT",
+	[GITS_Cache_NORMAL_RA_WA_WB]	= "Cacheable RA WA WB",
+};
+
+static const char * gits_share_type[] = {
+	[GITS_Shareability_NS]		= "Non-shareable",
+	[GITS_Shareability_IS]		= "Inner shareable",
+	[GITS_Shareability_OS]		= "Outer shareable",
+	[3]				= "(Reserved)",
+};
 
 static inline uint32_t
 gits_read_4(struct gicv3_its *its, bus_size_t reg)
@@ -96,7 +118,9 @@ gits_command(struct gicv3_its *its, const struct gicv3_its_command *cmd)
 	cwriter = gits_read_8(its, GITS_CWRITER);
 	woff = cwriter & GITS_CWRITER_Offset;
 
-	memcpy(its->its_cmd.base + woff, cmd->dw, sizeof(cmd->dw));
+	uint64_t *dw = (uint64_t *)(its->its_cmd.base + woff);
+	for (int i = 0; i < __arraycount(cmd->dw); i++)
+		dw[i] = htole64(cmd->dw[i]);
 	bus_dmamap_sync(its->its_dmat, its->its_cmd.map, woff, sizeof(cmd->dw), BUS_DMASYNC_PREWRITE);
 
 	woff += sizeof(cmd->dw);
@@ -148,16 +172,17 @@ gits_command_mapd(struct gicv3_its *its, uint32_t deviceid, uint64_t itt_addr, u
 }
 
 static inline void
-gits_command_mapi(struct gicv3_its *its, uint32_t deviceid, uint32_t eventid, uint16_t icid)
+gits_command_mapti(struct gicv3_its *its, uint32_t deviceid, uint32_t eventid, uint32_t pintid, uint16_t icid)
 {
 	struct gicv3_its_command cmd;
 
 	/*
-	 * Map the event defined by EventID and DeviceID into an ITT entry with ICID and pINTID = EventID
+	 * Map the event defined by EventID and DeviceID to its associated ITE, defined by ICID and pINTID
+	 * in the ITT associated with DeviceID.
 	 */
 	memset(&cmd, 0, sizeof(cmd));
-	cmd.dw[0] = GITS_CMD_MAPI | ((uint64_t)deviceid << 32);
-	cmd.dw[1] = eventid;
+	cmd.dw[0] = GITS_CMD_MAPTI | ((uint64_t)deviceid << 32);
+	cmd.dw[1] = eventid | ((uint64_t)pintid << 32);
 	cmd.dw[2] = icid;
 
 	gits_command(its, &cmd);
@@ -261,30 +286,34 @@ gicv3_its_msi_alloc_lpi(struct gicv3_its *its,
     const struct pci_attach_args *pa)
 {
 	struct pci_attach_args *new_pa;
-	int n;
+	vmem_addr_t n;
 
-	for (n = 0; n < its->its_pic->pic_maxsources; n++) {
-		if (its->its_pa[n] == NULL) {
-			new_pa = kmem_alloc(sizeof(*new_pa), KM_SLEEP);
-			memcpy(new_pa, pa, sizeof(*new_pa));
-			its->its_pa[n] = new_pa;
-			return n + its->its_pic->pic_irqbase;
-		}
-	}
+	KASSERT(its->its_gic->sc_lpi_pool != NULL);
 
-        return -1;
+	if (vmem_alloc(its->its_gic->sc_lpi_pool, 1, VM_INSTANTFIT|VM_SLEEP, &n) != 0)
+		return -1;
+
+	KASSERT(its->its_pa[n] == NULL);
+
+	new_pa = kmem_alloc(sizeof(*new_pa), KM_SLEEP);
+	memcpy(new_pa, pa, sizeof(*new_pa));
+	its->its_pa[n] = new_pa;
+	return n + its->its_pic->pic_irqbase;
 }
-         
+
 static void
 gicv3_its_msi_free_lpi(struct gicv3_its *its, int lpi)
 {
 	struct pci_attach_args *pa;
 
+	KASSERT(its->its_gic->sc_lpi_pool != NULL);
 	KASSERT(lpi >= its->its_pic->pic_irqbase);
 
 	pa = its->its_pa[lpi - its->its_pic->pic_irqbase];
 	its->its_pa[lpi - its->its_pic->pic_irqbase] = NULL;
 	kmem_free(pa, sizeof(*pa));
+
+	vmem_free(its->its_gic->sc_lpi_pool, lpi - its->its_pic->pic_irqbase, 1);
 }
 
 static uint32_t
@@ -311,7 +340,6 @@ gicv3_its_device_map(struct gicv3_its *its, uint32_t devid, u_int count)
 		vectors++;
 
 	const uint64_t typer = gits_read_8(its, GITS_TYPER);
-	const u_int id_bits = __SHIFTOUT(typer, GITS_TYPER_ID_bits) + 1;
 	const u_int itt_entry_size = __SHIFTOUT(typer, GITS_TYPER_ITT_entry_size) + 1;
 	const u_int itt_size = roundup(vectors * itt_entry_size, GITS_ITT_ALIGN);
 
@@ -329,6 +357,7 @@ gicv3_its_device_map(struct gicv3_its *its, uint32_t devid, u_int count)
 	/*
 	 * Map the device to the ITT
 	 */
+	const u_int id_bits = __SHIFTOUT(typer, GITS_TYPER_ID_bits) + 1;
 	gits_command_mapd(its, devid, dev->dev_itt.segs[0].ds_addr, id_bits - 1, true);
 	gits_wait(its);
 
@@ -348,10 +377,6 @@ gicv3_its_msi_enable(struct gicv3_its *its, int lpi, int count)
 		panic("gicv3_its_msi_enable: device is not MSI-capable");
 
 	ctl = pci_conf_read(pc, tag, off + PCI_MSI_CTL);
-	ctl &= ~PCI_MSI_CTL_MSI_ENABLE;
-	pci_conf_write(pc, tag, off + PCI_MSI_CTL, ctl);
-
-	ctl = pci_conf_read(pc, tag, off + PCI_MSI_CTL);
 	ctl &= ~PCI_MSI_CTL_MME_MASK;
 	ctl |= __SHIFTIN(ilog2(count), PCI_MSI_CTL_MME_MASK);
 	pci_conf_write(pc, tag, off + PCI_MSI_CTL, ctl);
@@ -363,11 +388,13 @@ gicv3_its_msi_enable(struct gicv3_its *its, int lpi, int count)
 		    addr & 0xffffffff);
 		pci_conf_write(pc, tag, off + PCI_MSI_MADDR64_HI,
 		    (addr >> 32) & 0xffffffff);
-		pci_conf_write(pc, tag, off + PCI_MSI_MDATA64, lpi);
+		pci_conf_write(pc, tag, off + PCI_MSI_MDATA64,
+		    lpi - its->its_pic->pic_irqbase);
 	} else {
 		pci_conf_write(pc, tag, off + PCI_MSI_MADDR,
 		    addr & 0xffffffff);
-		pci_conf_write(pc, tag, off + PCI_MSI_MDATA, lpi);
+		pci_conf_write(pc, tag, off + PCI_MSI_MDATA,
+		    lpi - its->its_pic->pic_irqbase);
 	}
 	ctl |= PCI_MSI_CTL_MSI_ENABLE;
 	pci_conf_write(pc, tag, off + PCI_MSI_CTL, ctl);
@@ -398,21 +425,20 @@ gicv3_its_msix_enable(struct gicv3_its *its, int lpi, int msix_vec,
 	pci_chipset_tag_t pc = pa->pa_pc;
 	pcitag_t tag = pa->pa_tag;
 	pcireg_t ctl;
+	uint32_t val;
 	int off;
 
 	if (!pci_get_capability(pc, tag, PCI_CAP_MSIX, &off, NULL))
 		panic("gicv3_its_msix_enable: device is not MSI-X-capable");
 
-	ctl = pci_conf_read(pc, tag, off + PCI_MSIX_CTL);
-	ctl &= ~PCI_MSIX_CTL_ENABLE;
-	pci_conf_write(pc, tag, off + PCI_MSIX_CTL, ctl);
-
 	const uint64_t addr = its->its_base + GITS_TRANSLATER;
 	const uint64_t entry_base = PCI_MSIX_TABLE_ENTRY_SIZE * msix_vec;
 	bus_space_write_4(bst, bsh, entry_base + PCI_MSIX_TABLE_ENTRY_ADDR_LO, (uint32_t)addr);
 	bus_space_write_4(bst, bsh, entry_base + PCI_MSIX_TABLE_ENTRY_ADDR_HI, (uint32_t)(addr >> 32));
-	bus_space_write_4(bst, bsh, entry_base + PCI_MSIX_TABLE_ENTRY_DATA, lpi);
-	bus_space_write_4(bst, bsh, entry_base + PCI_MSIX_TABLE_ENTRY_VECTCTL, 0);
+	bus_space_write_4(bst, bsh, entry_base + PCI_MSIX_TABLE_ENTRY_DATA, lpi - its->its_pic->pic_irqbase);
+	val = bus_space_read_4(bst, bsh, entry_base + PCI_MSIX_TABLE_ENTRY_VECTCTL);
+	val &= ~PCI_MSIX_VECTCTL_MASK;
+	bus_space_write_4(bst, bsh, entry_base + PCI_MSIX_TABLE_ENTRY_VECTCTL, val);
 
 	ctl = pci_conf_read(pc, tag, off + PCI_MSIX_CTL);
 	ctl |= PCI_MSIX_CTL_ENABLE;
@@ -477,7 +503,7 @@ gicv3_its_msi_alloc(struct arm_pci_msi *msi, int *count,
 		/*
 		 * Map event
 		 */
-		gits_command_mapi(its, devid, lpi, cpu_index(ci));
+		gits_command_mapti(its, devid, lpi - its->its_pic->pic_irqbase, lpi, cpu_index(ci));
 		gits_command_sync(its, its->its_rdbase[cpu_index(ci)]);
 	}
 	gits_wait(its);
@@ -508,7 +534,7 @@ gicv3_its_msix_alloc(struct arm_pci_msi *msi, u_int *table_indexes, int *count,
 		return NULL;
 
 	tbl = pci_conf_read(pa->pa_pc, pa->pa_tag, off + PCI_MSIX_TBLOFFSET);
-	bar = PCI_BAR0 + (4 * (tbl & PCI_MSIX_PBABIR_MASK));
+	bar = PCI_BAR0 + (4 * (tbl & PCI_MSIX_TBLBIR_MASK));
 	table_offset = tbl & PCI_MSIX_TBLOFFSET_MASK;
 	table_size = pci_msix_count(pa->pa_pc, pa->pa_tag) * PCI_MSIX_TABLE_ENTRY_SIZE;
 	if (table_size == 0)
@@ -546,7 +572,7 @@ gicv3_its_msix_alloc(struct arm_pci_msi *msi, u_int *table_indexes, int *count,
 		/*
 		 * Map event
 		 */
-		gits_command_mapi(its, devid, lpi, cpu_index(ci));
+		gits_command_mapti(its, devid, lpi - its->its_pic->pic_irqbase, lpi, cpu_index(ci));
 		gits_command_sync(its, its->its_rdbase[cpu_index(ci)]);
 	}
 	gits_wait(its);
@@ -576,7 +602,7 @@ gicv3_its_msi_intr_establish(struct arm_pci_msi *msi,
 	pa = its->its_pa[lpi - its->its_pic->pic_irqbase];
 	KASSERT(pa != NULL);
 	const uint32_t devid = gicv3_its_devid(pa->pa_pc, pa->pa_tag);
-	gits_command_inv(its, devid, lpi);
+	gits_command_inv(its, devid, lpi - its->its_pic->pic_irqbase);
 
 	return intrh;
 }
@@ -622,33 +648,36 @@ gicv3_its_command_init(struct gicv3_softc *sc, struct gicv3_its *its)
 }
 
 static void
+gicv3_its_table_params(struct gicv3_softc *sc, struct gicv3_its *its,
+    u_int *devbits, u_int *innercache, u_int *share)
+{
+
+	const uint64_t typer = gits_read_8(its, GITS_TYPER);
+	const uint32_t iidr = gits_read_4(its, GITS_IIDR);
+
+	/* Default values */
+	*devbits = __SHIFTOUT(typer, GITS_TYPER_Devbits) + 1;
+	*innercache = GITS_Cache_NORMAL_WA_WB;
+	*share = GITS_Shareability_IS;
+
+	/* Cavium ThunderX errata */
+	if ((iidr & GITS_IIDR_CAVIUM_ERRATA_MASK) == GITS_IIDR_CAVIUM_ERRATA_VALUE) {
+		*devbits = 20;		/* 8Mb */
+		*innercache = GITS_Cache_DEVICE_nGnRnE;
+		aprint_normal_dev(sc->sc_dev, "Cavium ThunderX errata detected\n");
+	}
+}
+
+static void
 gicv3_its_table_init(struct gicv3_softc *sc, struct gicv3_its *its)
 {
 	u_int table_size, page_size, table_align;
+	u_int devbits, innercache, share;
+	const char *table_type;
 	uint64_t baser;
 	int tab;
 
-	const uint64_t typer = gits_read_8(its, GITS_TYPER);
-
-	/* devbits and innercache defaults */
-	u_int devbits = __SHIFTOUT(typer, GITS_TYPER_Devbits) + 1;
-	u_int innercache = GITS_Cache_NORMAL_NC;
-
-	uint32_t iidr = gits_read_4(its, GITS_IIDR);
-	const uint32_t ctx =
-	   __SHIFTIN(GITS_IIDR_IMP_CAVIUM, GITS_IIDR_Implementor) |
-	   __SHIFTIN(GITS_IIDR_PID_CAVIUM_THUNDERX, GITS_IIDR_ProductID) |
-	   __SHIFTIN(0, GITS_IIDR_Variant);
-	const uint32_t mask =
-	    GITS_IIDR_Implementor |
-	    GITS_IIDR_ProductID |
-	    GITS_IIDR_Variant;
-
-	if ((iidr & mask) == ctx) {
-		devbits = 20;		/* 8Mb */
-		innercache = GITS_Cache_DEVICE_nGnRnE;
-		aprint_normal_dev(sc->sc_dev, "Cavium ThunderX errata detected\n");
-	}
+	gicv3_its_table_params(sc, its, &devbits, &innercache, &share);
 
 	for (tab = 0; tab < 8; tab++) {
 		baser = gits_read_8(its, GITS_BASERn(tab));
@@ -677,12 +706,14 @@ gicv3_its_table_init(struct gicv3_softc *sc, struct gicv3_its *its)
 			 * Table size scales with the width of the DeviceID.
 			 */
 			table_size = roundup(entry_size * (1 << devbits), page_size);
+			table_type = "Devices";
 			break;
 		case GITS_Type_InterruptCollections:
 			/*
 			 * Allocate space for one interrupt collection per CPU.
 			 */
-			table_size = roundup(entry_size * MAXCPUS, page_size);
+			table_size = roundup(entry_size * ncpu, page_size);
+			table_type = "Collections";
 			break;
 		default:
 			table_size = 0;
@@ -692,7 +723,6 @@ gicv3_its_table_init(struct gicv3_softc *sc, struct gicv3_its *its)
 		if (table_size == 0)
 			continue;
 
-		aprint_normal_dev(sc->sc_dev, "ITS TT%u type %#x size %#x\n", tab, (u_int)__SHIFTOUT(baser, GITS_BASER_Type), table_size);
 		gicv3_dma_alloc(sc, &its->its_tab[tab], table_size, table_align);
 
 		baser &= ~GITS_BASER_Size;
@@ -702,10 +732,24 @@ gicv3_its_table_init(struct gicv3_softc *sc, struct gicv3_its *its)
 		baser &= ~GITS_BASER_InnerCache;
 		baser |= __SHIFTIN(innercache, GITS_BASER_InnerCache);
 		baser &= ~GITS_BASER_Shareability;
-		baser |= __SHIFTIN(GITS_Shareability_NS, GITS_BASER_Shareability);
+		baser |= __SHIFTIN(share, GITS_BASER_Shareability);
 		baser |= GITS_BASER_Valid;
 
 		gits_write_8(its, GITS_BASERn(tab), baser);
+
+		baser = gits_read_8(its, GITS_BASERn(tab));
+		if (__SHIFTOUT(baser, GITS_BASER_Shareability) == GITS_Shareability_NS) {
+			baser &= ~GITS_BASER_InnerCache;
+			baser |= __SHIFTIN(GITS_Cache_NORMAL_NC, GITS_BASER_InnerCache);
+
+			gits_write_8(its, GITS_BASERn(tab), baser);
+		}
+
+		baser = gits_read_8(its, GITS_BASERn(tab));
+		aprint_normal_dev(sc->sc_dev, "ITS [#%d] %s table @ %#lx/%#x, %s, %s\n",
+		    tab, table_type, its->its_tab[tab].segs[0].ds_addr, table_size,
+		    gits_cache_type[__SHIFTOUT(baser, GITS_BASER_InnerCache)],
+		    gits_share_type[__SHIFTOUT(baser, GITS_BASER_Shareability)]);
 	}
 }
 
@@ -754,7 +798,7 @@ gicv3_its_cpu_init(void *priv, struct cpu_info *ci)
 		KASSERT(pa != NULL);
 
 		const uint32_t devid = gicv3_its_devid(pa->pa_pc, pa->pa_tag);
-		gits_command_movi(its, devid, irq + its->its_pic->pic_irqbase, cpu_index(ci));
+		gits_command_movi(its, devid, irq, cpu_index(ci));
 		gits_command_sync(its, its->its_rdbase[cpu_index(ci)]);
 	}
 
@@ -767,7 +811,6 @@ gicv3_its_get_affinity(void *priv, size_t irq, kcpuset_t *affinity)
 	struct gicv3_its * const its = priv;
 	struct cpu_info *ci;
 
-	kcpuset_zero(affinity);
 	ci = its->its_targets[irq];
 	if (ci)
 		kcpuset_set(affinity, cpu_index(ci));
@@ -786,14 +829,14 @@ gicv3_its_set_affinity(void *priv, size_t irq, const kcpuset_t *affinity)
 
 	pa = its->its_pa[irq];
 	if (pa == NULL)
-		return EINVAL;
+		return EPASSTHROUGH;
 
 	ci = cpu_lookup(kcpuset_ffs(affinity) - 1);
 	its->its_targets[irq] = ci;
 
 	if (its->its_cpuonline[cpu_index(ci)] == true) {
 		const uint32_t devid = gicv3_its_devid(pa->pa_pc, pa->pa_tag);
-		gits_command_movi(its, devid, irq + its->its_pic->pic_irqbase, cpu_index(ci));
+		gits_command_movi(its, devid, irq, cpu_index(ci));
 		gits_command_sync(its, its->its_rdbase[cpu_index(ci)]);
 	}
 
@@ -811,17 +854,20 @@ gicv3_its_init(struct gicv3_softc *sc, bus_space_handle_t bsh,
 	if ((typer & GITS_TYPER_Physical) == 0)
 		return ENXIO;
 
-	its = kmem_alloc(sizeof(*its), KM_SLEEP);
+	its = kmem_zalloc(sizeof(*its), KM_SLEEP);
 	its->its_id = its_id;
 	its->its_bst = sc->sc_bst;
 	its->its_bsh = bsh;
 	its->its_dmat = sc->sc_dmat;
 	its->its_base = its_base;
 	its->its_pic = &sc->sc_lpi;
+	snprintf(its->its_pic->pic_name, sizeof(its->its_pic->pic_name), "gicv3-its");
 	KASSERT(its->its_pic->pic_maxsources > 0);
 	its->its_pa = kmem_zalloc(sizeof(struct pci_attach_args *) * its->its_pic->pic_maxsources, KM_SLEEP);
 	its->its_targets = kmem_zalloc(sizeof(struct cpu_info *) * its->its_pic->pic_maxsources, KM_SLEEP);
 	its->its_gic = sc;
+	its->its_rdbase = kmem_zalloc(sizeof(*its->its_rdbase) * ncpu, KM_SLEEP);
+	its->its_cpuonline = kmem_zalloc(sizeof(*its->its_cpuonline) * ncpu, KM_SLEEP);
 	its->its_cb.cpu_init = gicv3_its_cpu_init;
 	its->its_cb.get_affinity = gicv3_its_get_affinity;
 	its->its_cb.set_affinity = gicv3_its_set_affinity;
@@ -837,6 +883,7 @@ gicv3_its_init(struct gicv3_softc *sc, bus_space_handle_t bsh,
 	gicv3_its_cpu_init(its, curcpu());
 
 	msi = &its->its_msi;
+	msi->msi_id = its_id;
 	msi->msi_dev = sc->sc_dev;
 	msi->msi_priv = its;
 	msi->msi_alloc = gicv3_its_msi_alloc;

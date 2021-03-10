@@ -1,10 +1,10 @@
-#	$NetBSD: Makefile,v 1.17 2018/04/08 15:48:39 mlelstv Exp $
+#	$NetBSD: Makefile,v 1.25 2020/03/26 07:44:43 skrll Exp $
 
 .include <bsd.own.mk>
 .include "${NETBSDSRCDIR}/distrib/common/Makefile.distrib"
 
 IMAGE=		sshramdisk.fs
-IMAGESIZE=	28000k
+IMAGESIZE=	45000k
 MAKEFS_FLAGS+=	-f 15
 
 .if ${MKREPRO_TIMESTAMP:Uno} != "no"
@@ -25,7 +25,7 @@ IMAGEENDIAN=	be
 .endif
 MAKEDEVTARGETS=	ramdisk
 IMAGEDEPENDS=	${CRUNCHBIN} \
-		dot.profile master.passwd sshd_config ssh_host_dsa_key \
+		dot.profile master.passwd sshd_config ssh_host_rsa_key \
 		${NETBSDSRCDIR}/etc/group \
 		${NETBSDSRCDIR}/etc/netconfig ${DISTRIBDIR}/common/protocols \
 		${DISTRIBDIR}/common/services

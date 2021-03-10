@@ -1,5 +1,5 @@
-/*	$NetBSD: auth.h,v 1.19 2019/04/20 17:16:40 christos Exp $	*/
-/* $OpenBSD: auth.h,v 1.99 2019/01/19 21:43:56 djm Exp $ */
+/*	$NetBSD: auth.h,v 1.21 2021/03/05 17:47:15 christos Exp $	*/
+/* $OpenBSD: auth.h,v 1.101 2020/12/22 00:12:22 djm Exp $ */
 
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
@@ -222,17 +222,5 @@ void	 auth_debug_reset(void);
 void	 disable_forwarding(void);
 
 struct passwd *fakepw(void);
-
-#define SKEY_PROMPT "\nS/Key Password: "
-
-#if defined(KRB5) && !defined(HEIMDAL)
-#include <krb5.h>
-krb5_error_code ssh_krb5_cc_gen(krb5_context, krb5_ccache *);
-#endif
-#define	SSH_SUBPROCESS_STDOUT_DISCARD  (1)     /* Discard stdout */
-#define	SSH_SUBPROCESS_STDOUT_CAPTURE  (1<<1)  /* Redirect stdout */
-#define	SSH_SUBPROCESS_STDERR_DISCARD  (1<<2)  /* Discard stderr */
-pid_t	subprocess(const char *, struct passwd *,
-    const char *, int, char **, FILE **, u_int flags);
 
 #endif

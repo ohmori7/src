@@ -1,4 +1,4 @@
-/*	$NetBSD: integrator_machdep.c,v 1.76 2018/09/21 12:04:09 skrll Exp $	*/
+/*	$NetBSD: integrator_machdep.c,v 1.79 2020/04/18 11:00:39 skrll Exp $	*/
 
 /*
  * Copyright (c) 2001,2002 ARM Ltd
@@ -68,12 +68,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: integrator_machdep.c,v 1.76 2018/09/21 12:04:09 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: integrator_machdep.c,v 1.79 2020/04/18 11:00:39 skrll Exp $");
 
 #include "opt_arm_debug.h"
 #include "opt_console.h"
 #include "opt_ddb.h"
-#include "opt_pmap_debug.h"
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -242,7 +241,7 @@ cpu_reboot(int howto, char *bootstr)
 	/* Do a dump if requested. */
 	if ((howto & (RB_DUMP | RB_HALT)) == RB_DUMP)
 		dumpsys();
-	
+
 	/* Run any shutdown hooks */
 	doshutdownhooks();
 
@@ -309,7 +308,7 @@ static const struct pmap_devmap integrator_devmap[] = {
 };
 
 /*
- * u_int initarm(...)
+ * vaddr_t initarm(...)
  *
  * Initial entry point on startup. This gets called before main() is
  * entered.
@@ -322,7 +321,7 @@ static const struct pmap_devmap integrator_devmap[] = {
  *   Relocating the kernel to the bottom of physical memory
  */
 
-u_int
+vaddr_t
 initarm(void *arg)
 {
 	extern int KERNEL_BASE_phys[];
@@ -449,7 +448,7 @@ consinit(void)
 static void
 integrator_sdram_bounds(paddr_t *memstart, psize_t *memsize)
 {
-	volatile unsigned long *cm_sdram 
+	volatile unsigned long *cm_sdram
 	    = (volatile unsigned long *)0x10000020;
 	volatile unsigned long *cm_stat
 	    = (volatile unsigned long *)0x10000010;

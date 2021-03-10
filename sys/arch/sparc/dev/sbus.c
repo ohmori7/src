@@ -1,4 +1,4 @@
-/*	$NetBSD: sbus.c,v 1.78 2012/09/23 09:54:04 jdc Exp $ */
+/*	$NetBSD: sbus.c,v 1.80 2020/11/22 03:55:33 thorpej Exp $ */
 
 /*-
  * Copyright (c) 1998 The NetBSD Foundation, Inc.
@@ -74,10 +74,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: sbus.c,v 1.78 2012/09/23 09:54:04 jdc Exp $");
+__KERNEL_RCSID(0, "$NetBSD: sbus.c,v 1.80 2020/11/22 03:55:33 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/malloc.h>
+#include <sys/kmem.h>
 #include <sys/kernel.h>
 #include <sys/systm.h>
 #include <sys/device.h>
@@ -531,11 +532,7 @@ sbus_get_intr(struct sbus_softc *sc, int node,
 		/* Change format to an `struct openprom_intr' array */
 		struct openprom_intr *ip;
 		ip = malloc(*np * sizeof(struct openprom_intr), M_DEVBUF,
-		    M_NOWAIT);
-		if (ip == NULL) {
-			free(ipl, M_DEVBUF);
-			return (ENOMEM);
-		}
+		    M_WAITOK);
 		for (n = 0; n < *np; n++) {
 			ip[n].oi_pri = ipl[n];
 			ip[n].oi_vec = 0;
@@ -579,10 +576,7 @@ sbus_intr_establish(bus_space_tag_t t, int pri, int level,
 	struct intrhand *ih;
 	int pil;
 
-	ih = (struct intrhand *)
-		malloc(sizeof(struct intrhand), M_DEVBUF, M_NOWAIT);
-	if (ih == NULL)
-		return (NULL);
+	ih = kmem_alloc(sizeof(struct intrhand), KM_SLEEP);
 
 	/*
 	 * Translate Sbus interrupt priority to CPU interrupt level

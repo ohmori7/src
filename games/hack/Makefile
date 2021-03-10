@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.45 2011/08/24 17:39:32 plunky Exp $
+#	$NetBSD: Makefile,v 1.47 2020/02/08 00:59:55 fox Exp $
 #	@(#)Makefile	8.2 (Berkeley) 4/27/95
 
 .include <bsd.own.mk>
@@ -39,6 +39,7 @@ hack.h:	hack.onames.h
 
 COPTS.hack.mon.c+=	-Wno-format-nonliteral
 COPTS.hack.rip.c+=	-Wno-format-nonliteral
+COPTS.hack.end.c+=	${GCC_NO_STRINGOP_TRUNCATION}
 
 .if !exists(${DESTDIR}${FILESDIR}/perm)
 afterinstall: clobber
@@ -53,5 +54,8 @@ clobber:
 	    ${DESTDIR}/var/games/hackdir/record
 	${_MKMSG_REMOVE} "${DESTDIR}/var/games/hackdir/bones*"
 	rm -f ${DESTDIR}/var/games/hackdir/bones*
+
+COPTS.hack.objnam.c+=	${GCC_NO_STRINGOP_TRUNCATION} ${GCC_NO_STRINGOP_OVERFLOW}
+COPTS.hack.pager.c+=	${GCC_NO_STRINGOP_TRUNCATION}
 
 .include <bsd.prog.mk>

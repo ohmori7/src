@@ -1,4 +1,4 @@
-/*	$NetBSD: intrdefs.h,v 1.22 2019/02/15 08:54:01 nonaka Exp $	*/
+/*	$NetBSD: intrdefs.h,v 1.24 2020/04/25 15:26:18 bouyer Exp $	*/
 
 #ifndef _X86_INTRDEFS_H_
 #define _X86_INTRDEFS_H_
@@ -40,6 +40,11 @@
 #define	SIR_BIO		26
 #define	SIR_CLOCK	25
 #define	SIR_PREEMPT	24
+#define	SIR_XENIPL_HIGH 23
+#define	SIR_XENIPL_SCHED 22
+#define	SIR_XENIPL_VM	21
+
+#define XEN_IPL2SIR(ipl) ((ipl) + (SIR_XENIPL_VM - IPL_VM))
 
 /*
  * Maximum # of interrupt sources per CPU. 32 to fit in one word.
@@ -60,7 +65,7 @@
 #ifndef XENPV
 
 #define X86_IPI_HALT			0x00000001
-#define X86_IPI_MICROSET		0x00000002
+#define X86_IPI_AST			0x00000002
 #define X86_IPI_GENERIC			0x00000004
 #define X86_IPI_SYNCH_FPU		0x00000008
 #define X86_IPI_MTRR			0x00000010
@@ -71,7 +76,7 @@
 
 #define X86_NIPI		9
 
-#define X86_IPI_NAMES { "halt IPI", "timeset IPI", "generic IPI", \
+#define X86_IPI_NAMES { "halt IPI", "AST IPI", "generic IPI", \
 			 "FPU synch IPI", "MTRR update IPI", \
 			 "GDT update IPI", "xcall IPI", \
 			 "ACPI CPU sleep IPI", "kpreempt IPI" }

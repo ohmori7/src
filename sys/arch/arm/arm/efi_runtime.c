@@ -1,4 +1,4 @@
-/* $NetBSD: efi_runtime.c,v 1.1 2018/10/28 10:21:42 jmcneill Exp $ */
+/* $NetBSD: efi_runtime.c,v 1.5 2020/12/18 07:40:27 skrll Exp $ */
 
 /*-
  * Copyright (c) 2018 The NetBSD Foundation, Inc.
@@ -30,10 +30,11 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: efi_runtime.c,v 1.1 2018/10/28 10:21:42 jmcneill Exp $");
+__KERNEL_RCSID(0, "$NetBSD: efi_runtime.c,v 1.5 2020/12/18 07:40:27 skrll Exp $");
 
 #include <sys/param.h>
 #include <sys/mutex.h>
+#include <sys/endian.h>
 
 #include <uvm/uvm_extern.h>
 
@@ -41,12 +42,13 @@ __KERNEL_RCSID(0, "$NetBSD: efi_runtime.c,v 1.1 2018/10/28 10:21:42 jmcneill Exp
 
 static kmutex_t efi_lock;
 
-static struct efi_systbl *ST = NULL;
 static struct efi_rt *RT = NULL;
 
 int
 arm_efirt_init(paddr_t efi_system_table)
 {
+#if BYTE_ORDER == LITTLE_ENDIAN
+	struct efi_systbl *ST;
 	const size_t sz = PAGE_SIZE * 2;
 	vaddr_t va, cva;
 	paddr_t cpa;
@@ -65,8 +67,8 @@ arm_efirt_init(paddr_t efi_system_table)
 
 	ST = (void *)(va + (efi_system_table - trunc_page(efi_system_table)));
 	if (ST->st_hdr.th_sig != EFI_SYSTBL_SIG) {
-		aprint_error("EFI: signature mismatch (%#lx != %#lx)\n",
-		    ST->st_hdr.th_sig, EFI_SYSTBL_SIG);
+		aprint_error("EFI: signature mismatch (%#" PRIx64 " != %#"
+		    PRIx64 ")\n", ST->st_hdr.th_sig, EFI_SYSTBL_SIG);
 		return EINVAL;
 	}
 
@@ -74,55 +76,71 @@ arm_efirt_init(paddr_t efi_system_table)
 	mutex_init(&efi_lock, MUTEX_DEFAULT, IPL_HIGH);
 
 	return 0;
+#else
+	/* EFI runtime not supported in big endian mode */
+	return ENXIO;
+#endif
 }
 
 int
 arm_efirt_gettime(struct efi_tm *tm)
 {
-	efi_status status;
+	int error;
 
 	if (RT == NULL || RT->rt_gettime == NULL)
 		return ENXIO;
 
 	mutex_enter(&efi_lock);
-	status = RT->rt_gettime(tm, NULL);
+	if ((error = arm_efirt_md_enter()) == 0) {
+		if (RT->rt_gettime(tm, NULL) != 0)
+			error = EIO;
+	}
+	arm_efirt_md_exit();
 	mutex_exit(&efi_lock);
-	if (status)
-		return EIO;
 
-	return 0;
+	return error;
 }
 
 int
 arm_efirt_settime(struct efi_tm *tm)
 {
-	efi_status status;
+	int error;
 
 	if (RT == NULL || RT->rt_settime == NULL)
 		return ENXIO;
 
 	mutex_enter(&efi_lock);
-	status = RT->rt_settime(tm);
+	if ((error = arm_efirt_md_enter()) == 0) {
+		if (RT->rt_settime(tm) != 0)
+			error = EIO;
+	}
+	arm_efirt_md_exit();
 	mutex_exit(&efi_lock);
-	if (status)
-		return EIO;
 
-	return 0;
+	return error;
 }
 
 int
 arm_efirt_reset(enum efi_reset type)
 {
-	efi_status status;
+	static int reset_called = false;
+	int error;
 
 	if (RT == NULL || RT->rt_reset == NULL)
 		return ENXIO;
 
 	mutex_enter(&efi_lock);
-	status = RT->rt_reset(type, 0, 0, NULL);
+	if (reset_called == false) {
+		reset_called = true;
+		if ((error = arm_efirt_md_enter()) == 0) {
+			if (RT->rt_reset(type, 0, 0, NULL) != 0)
+				error = EIO;
+		}
+		arm_efirt_md_exit();
+	} else {
+		error = EPERM;
+	}
 	mutex_exit(&efi_lock);
-	if (status)
-		return EIO;
 
-	return 0;
+	return error;
 }

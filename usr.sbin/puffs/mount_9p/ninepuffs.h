@@ -1,4 +1,4 @@
-/*	$NetBSD: ninepuffs.h,v 1.14 2019/06/07 05:34:34 ozaki-r Exp $	*/
+/*	$NetBSD: ninepuffs.h,v 1.16 2020/05/26 22:54:43 uwe Exp $	*/
 
 /*
  * Copyright (c) 2007  Antti Kantee.  All Rights Reserved.
@@ -64,7 +64,7 @@ typedef uint32_t p9pfid_t;
 #define AUTOVAR(pu)							\
 	struct puffs_cc *pcc = puffs_cc_getcc(pu);			\
 	struct puffs9p *p9p = puffs_getspecific(pu);			\
-	uint16_t tag = NEXTTAG(p9p);					\
+	p9ptag_t tag;							\
 	struct puffs_framebuf *pb = p9pbuf_makeout();			\
 	int rv = 0
 
@@ -105,6 +105,9 @@ struct puffs9p {
 	size_t maxreq;		/* negotiated with server */
 
 	int protover;
+	int server;
+#define P9P_SERVER_TCP		0
+#define P9P_SERVER_CDEV		1
 };
 
 struct dirfid {

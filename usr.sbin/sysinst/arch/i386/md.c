@@ -1,4 +1,4 @@
-/*	$NetBSD: md.c,v 1.16 2019/06/17 14:18:32 martin Exp $ */
+/*	$NetBSD: md.c,v 1.33 2020/10/23 19:03:42 martin Exp $ */
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -60,19 +60,39 @@
 #endif
 
 static struct biosdisk_info *biosdisk = NULL;
+static bool uefi_boot;
 
 /* prototypes */
 
 static bool get_bios_info(const char*, struct disk_partitions*, int*, int*, int*);
-static int mbr_root_above_chs(void);
+static int mbr_root_above_chs(daddr_t);
 static int md_read_bootcode(const char *, struct mbr_sector *);
 static unsigned int get_bootmodel(void);
 
-static int conmib[] = {CTL_MACHDEP, CPU_CONSDEV};
+static int conmib[] = { CTL_MACHDEP, CPU_CONSDEV };
+
+#define	BOOT_PART	(128*(MEG/512))
+#define	BOOT_PART_TYPE	PT_EFI_SYSTEM
+
+static const char * uefi_bootloaders[] = {
+	"/usr/mdec/bootia32.efi",
+	"/usr/mdec/bootx64.efi",
+};
 
 void
 md_init(void)
 {
+	char boot_method[100];
+	size_t len;
+
+	len = sizeof(boot_method);
+	if (sysctlbyname("machdep.bootmethod", boot_method, &len, NULL, 0)
+	    != -1) {
+		if (strcmp(boot_method, "BIOS") == 0)
+			uefi_boot = false;
+		else if (strcmp(boot_method, "UEFI") == 0)
+			uefi_boot = true;
+	}
 }
 
 void
@@ -87,22 +107,23 @@ md_init_set_status(int flags)
 bool
 md_get_info(struct install_partition_desc *install)
 {
-	int bcyl = 0, bhead = 0, bsec = 0;
+	int bcyl = 0, bhead = 0, bsec = 0, res;
 
 	if (pm->no_mbr || pm->no_part)
 		return true;
 
+again:
 	if (pm->parts == NULL) {
 
 		const struct disk_partitioning_scheme *ps =
 		    select_part_scheme(pm, NULL, true, NULL);
 
 		if (!ps)
-			return true;
+			return false;
 
 		struct disk_partitions *parts =
 		   (*ps->create_new_for_disk)(pm->diskdev,
-		   0, pm->dlsize, pm->dlsize, true);
+		   0, pm->dlsize, true, NULL);
 		if (!parts)
 			return false;
 
@@ -116,7 +137,7 @@ md_get_info(struct install_partition_desc *install)
 		pm->parts->pscheme->change_disk_geom(pm->parts,
 		    bcyl, bhead, bsec);
 	else
-		set_default_sizemult(MEG/512);
+		set_default_sizemult(pm->diskdev, MEG, pm->sectorsize);
 
 	/*
 	 * If the selected scheme does not need two-stage partitioning
@@ -129,13 +150,21 @@ md_get_info(struct install_partition_desc *install)
 	if (pm->no_mbr || pm->no_part)
 		return true;
 
-	return edit_outer_parts(pm->parts);
+	res = edit_outer_parts(pm->parts);
+	if (res == 0)
+		return false;
+	else if (res == 1)
+		return true;
+
+	pm->parts->pscheme->destroy_part_scheme(pm->parts);
+	pm->parts = NULL;
+	goto again;
 }
 
 /*
  * md back-end code for menu-driven BSD disklabel editor.
  */
-bool
+int
 md_make_bsd_partitions(struct install_partition_desc *install)
 {
 	return make_bsd_partitions(install);
@@ -149,6 +178,10 @@ md_check_partitions(struct install_partition_desc *install)
 {
 	int rval;
 	char *bootxx;
+
+	/* if booting via UEFI no boot blocks are needed */
+	if (uefi_boot)
+		return true;
 
 	/* check we have boot code for the root partition type */
 	bootxx = bootxx_name(install);
@@ -197,12 +230,10 @@ md_post_disklabel(struct install_partition_desc *install,
 }
 
 /*
- * hook called after upgrade() or install() has finished setting
- * up the target disk but immediately before the user is given the
- * ``disks are now set up'' message.
+ * Do all legacy bootblock update/setup here
  */
-int
-md_post_newfs(struct install_partition_desc *install)
+static int
+md_post_newfs_bios(struct install_partition_desc *install)
 {
 	int ret;
 	size_t len;
@@ -234,17 +265,18 @@ md_post_newfs(struct install_partition_desc *install)
 		 * Too hard to double check, so just 'know' the device numbers.
 		 */
 		len = sizeof condev;
-		if (sysctl(conmib, __arraycount(conmib), &condev, &len, NULL, 0) != -1
-		    && (condev & ~3) == 0x800) {
+		if (sysctl(conmib, __arraycount(conmib), &condev, &len, NULL,
+		    0) != -1 && (condev & ~3) == 0x800) {
 			/* Motherboard serial port */
 			boottype.bp_consdev = (condev & 3) + 1;
-			/* Defaulting the baud rate to that of stdin should suffice */
+			/* Defaulting the baud rate to that of stdin should
+			   suffice */
 			if (tcgetattr(0, &t) != -1)
 				boottype.bp_conspeed = t.c_ispeed;
 		}
 
 		process_menu(MENU_getboottype, &boottype);
-		msg_display(MSG_dobootblks, pm->diskdev);
+		msg_fmt_display(MSG_dobootblks, "%s", pm->diskdev);
 		if (boottype.bp_consdev == ~0u)
 			/* Use existing bootblocks */
 			return 0;
@@ -262,13 +294,13 @@ md_post_newfs(struct install_partition_desc *install)
 
 		install->infos[0].parts->pscheme->get_part_device(
 		    install->infos[0].parts, install->infos[0].cur_part_id,
-		    rdev, sizeof rdev, NULL, raw_dev_name, true);
+		    rdev, sizeof rdev, NULL, raw_dev_name, true, true);
 
 		snprintf(boot_options, sizeof boot_options,
 		    "console=%s,speed=%u", consoles[boottype.bp_consdev],
 		    boottype.bp_conspeed);
                	ret = run_program(RUN_DISPLAY,
-                	    "/usr/sbin/installboot -o %s %s %s",
+                	    "/usr/sbin/installboot -f -o %s %s %s",
 			    boot_options, rdev, bootxx_filename);
                 free(bootxx_filename);
         } else {
@@ -282,9 +314,94 @@ md_post_newfs(struct install_partition_desc *install)
 	return ret;
 }
 
+/*
+ * Make sure our bootloader(s) are in the proper directory in the boot
+ * boot partition (or update them).
+ */
+static int
+copy_uefi_boot(const struct part_usage_info *boot)
+{
+	char dev[MAXPATHLEN], path[MAXPATHLEN];
+	size_t i;
+	int err;
+
+	if (!boot->parts->pscheme->get_part_device(boot->parts,
+	    boot->cur_part_id, dev, sizeof(dev), NULL, plain_name, true, true))
+		return -1;
+
+	/*
+	 * We should have a valid file system on that partition.
+	 * Try to mount it and check if there is a /EFI in there.
+	 */
+	if (boot->mount[0])
+		strlcpy(path, boot->mount, sizeof(path));
+	else
+		strcpy(path, "/mnt");
+
+	if (!(boot->instflags & PUIINST_MOUNT)) {
+		make_target_dir(path);
+		err = target_mount("", dev, path);
+		if (err != 0)
+			return err;
+	}
+
+	strlcat(path, "/EFI/boot", sizeof(path));
+	make_target_dir(path);
+
+	for (i = 0; i < __arraycount(uefi_bootloaders); i++) {
+		if (access(uefi_bootloaders[i], R_OK) != 0)
+			continue;
+		err = cp_to_target(uefi_bootloaders[i], path);
+		if (err)
+			return err;
+	}
+
+	return 0;
+}
+
+/*
+ * Find (U)EFI boot partition and install/update bootloaders
+ */
+static int
+md_post_newfs_uefi(struct install_partition_desc *install)
+{
+	size_t i;
+
+	for (i = 0; i < install->num; i++) {
+		if (!(install->infos[i].instflags & PUIINST_BOOT))
+			continue;
+
+		return copy_uefi_boot(&install->infos[i]);
+	}
+
+	return -1;	/* no EFI boot partition found */
+}
+
+/*
+ * hook called after upgrade() or install() has finished setting
+ * up the target disk but immediately before the user is given the
+ * ``disks are now set up'' message.
+ */
+int
+md_post_newfs(struct install_partition_desc *install)
+{
+
+	return uefi_boot ? md_post_newfs_uefi(install)
+	    : md_post_newfs_bios(install);
+}
+
 int
 md_post_extract(struct install_partition_desc *install)
 {
+#if defined(__amd64__)
+	if (get_kernel_set() == SET_KERNEL_2) {
+		int ret;
+
+		ret = cp_within_target("/usr/mdec/prekern", "/prekern", 0);
+		if (ret)
+			return ret;
+	}
+#endif
 	return 0;
 }
 
@@ -354,6 +471,7 @@ md_check_mbr(struct disk_partitions *parts, mbr_info_t *mbri, bool quiet)
 	mbr_info_t *ext;
 	struct mbr_partition *p;
 	const char *bootcode;
+	daddr_t inst_start, inst_size;
 	int i, names, fl, ofl;
 #define	ACTIVE_FOUND	0x0100
 #define	NETBSD_ACTIVE	0x0200
@@ -361,8 +479,15 @@ md_check_mbr(struct disk_partitions *parts, mbr_info_t *mbri, bool quiet)
 #define	ACTIVE_NAMED	0x0800
 
 	root_limit = 0;
+	if (parts->pscheme->guess_install_target == NULL ||
+	    !parts->pscheme->guess_install_target(parts, &inst_start,
+	    &inst_size)) {
+		inst_start = parts->disk_start;
+		inst_size = parts->disk_size;
+	}
+
 	if (biosdisk != NULL && (biosdisk->bi_flags & BIFLAG_EXTINT13) == 0) {
-		if (mbr_root_above_chs()) {
+		if (mbr_root_above_chs(inst_start)) {
 			if (quiet)
 				return 0;
 			msg_display(MSG_partabovechs);
@@ -379,7 +504,7 @@ md_check_mbr(struct disk_partitions *parts, mbr_info_t *mbri, bool quiet)
 	}
 
 	/*
-	 * Ensure the install partition (at sector pm->ptstart) and the active
+	 * Ensure the install partition (at sector inst_start) and the active
 	 * partition are bootable.
 	 * Determine whether the bootselect code is needed.
 	 * Note that MBR_BS_NEWMBR is always set, so we ignore it!
@@ -391,14 +516,14 @@ md_check_mbr(struct disk_partitions *parts, mbr_info_t *mbri, bool quiet)
 		for (i = 0; i < MBR_PART_COUNT; p++, i++) {
 			if (p->mbrp_flag == MBR_PFLAG_ACTIVE) {
 				fl |= ACTIVE_FOUND;
-			    if (ext->sector + p->mbrp_start == pm->ptstart)
+			    if (ext->sector + p->mbrp_start == inst_start)
 				fl |= NETBSD_ACTIVE;
 			}
 			if (ext->mbrb.mbrbs_nametab[i][0] == 0) {
 				/* No bootmenu label... */
 				if (ext->sector == 0)
 					continue;
-				if (ext->sector + p->mbrp_start == pm->ptstart)
+				if (ext->sector + p->mbrp_start == inst_start)
 					/*
 					 * Have installed into an extended ptn
 					 * force name & bootsel...
@@ -409,7 +534,7 @@ md_check_mbr(struct disk_partitions *parts, mbr_info_t *mbri, bool quiet)
 			/* Partition has a bootmenu label... */
 			if (ext->sector != 0)
 				fl |= MBR_BS_EXTLBA;
-			if (ext->sector + p->mbrp_start == pm->ptstart)
+			if (ext->sector + p->mbrp_start == inst_start)
 				fl |= NETBSD_NAMED;
 			else if (p->mbrp_flag == MBR_PFLAG_ACTIVE)
 				fl |= ACTIVE_NAMED;
@@ -448,12 +573,14 @@ md_check_mbr(struct disk_partitions *parts, mbr_info_t *mbri, bool quiet)
 	}
 
 	/* Sort out the name of the mbr code we need */
-	if (names > 0 || fl & (NETBSD_NAMED | ACTIVE_NAMED)) {
+	if (names > 1 ||
+	    (parts->num_part > 1 && (fl & (NETBSD_NAMED | ACTIVE_NAMED)))) {
 		/* Need bootselect code */
 		fl |= MBR_BS_ACTIVE;
 		bootcode = fl & MBR_BS_EXTLBA ? _PATH_BOOTEXT : _PATH_BOOTSEL;
-	} else
+	} else {
 		bootcode = _PATH_MBR;
+	}
 
 	fl &=  MBR_BS_ACTIVE | MBR_BS_EXTLBA;
 
@@ -463,7 +590,7 @@ md_check_mbr(struct disk_partitions *parts, mbr_info_t *mbri, bool quiet)
 		/* Check there is some bootcode at all... */
 		if (mbri->mbr.mbr_magic != htole16(MBR_MAGIC) ||
 		    mbri->mbr.mbr_jmpboot[0] == 0 ||
-		    mbr_root_above_chs())
+		    mbr_root_above_chs(inst_start))
 			/* Existing won't do, force update */
 			fl |= MBR_BS_NEWMBR;
 	}
@@ -490,14 +617,25 @@ md_check_mbr(struct disk_partitions *parts, mbr_info_t *mbri, bool quiet)
 		return 2;
 
 	/* This shouldn't happen since the files are in the floppy fs... */
-	msg_display("Can't find %s", bootcode);
+	msg_fmt_display("Can't find %s", "%s", bootcode);
 	return ask_reedit(parts);
 }
 
 bool
 md_parts_use_wholedisk(struct disk_partitions *parts)
 {
-	return parts_use_wholedisk(parts, 0, NULL);
+	struct disk_part_info boot_part = {
+		.size = BOOT_PART,
+		.fs_type = FS_MSDOS, .fs_sub_type = MBR_PTYPE_FAT32L,
+	};
+
+	if (!uefi_boot)
+		return parts_use_wholedisk(parts, 0, NULL);
+
+	boot_part.nat_type = parts->pscheme->get_generic_part_type(
+	    PT_EFI_SYSTEM);
+
+	return parts_use_wholedisk(parts, 1, &boot_part);
 }
 
 static bool
@@ -533,10 +671,14 @@ get_bios_info(const char *dev, struct disk_partitions *parts, int *bcyl,
 	if (nip == NULL || nip->ni_nmatches == 0) {
 nogeom:
 		if (nip != NULL)
-			msg_display(MSG_nobiosgeom, pm->dlcyl, pm->dlhead, pm->dlsec);
+			msg_fmt_display(MSG_nobiosgeom, "%d%d%d",
+			    pm->dlcyl, pm->dlhead, pm->dlsec);
 		if (guess_biosgeom_from_parts(parts, &cyl, &head, &sec) >= 0
 		    && nip != NULL)
-			msg_display_add(MSG_biosguess, cyl, head, sec);
+		{
+			msg_fmt_display_add(MSG_biosguess, "%d%d%d",
+			    cyl, head, sec);
+		}
 		biosdisk = NULL;
 	} else {
 		guess_biosgeom_from_parts(parts, &cyl, &head, &sec);
@@ -544,8 +686,8 @@ nogeom:
 			bip = &disklist->dl_biosdisks[nip->ni_biosmatches[0]];
 			msg_display(MSG_onebiosmatch);
 			msg_table_add(MSG_onebiosmatch_header);
-			msg_table_add(MSG_onebiosmatch_row, bip->bi_dev,
-			    bip->bi_cyl, bip->bi_head, bip->bi_sec,
+			msg_fmt_table_add(MSG_onebiosmatch_row, "%d%d%d%d%u%u",
+			    bip->bi_dev, bip->bi_cyl, bip->bi_head, bip->bi_sec,
 			    (unsigned)bip->bi_lbasecs,
 			    (unsigned)(bip->bi_lbasecs / (1000000000 / 512)));
 			msg_display_add(MSG_biosgeom_advise);
@@ -557,7 +699,8 @@ nogeom:
 			for (i = 0; i < nip->ni_nmatches; i++) {
 				bip = &disklist->dl_biosdisks[
 							nip->ni_biosmatches[i]];
-				msg_table_add(MSG_biosmultmatch_row, i,
+				msg_fmt_table_add(MSG_biosmultmatch_row, 
+				    "%d%d%d%d%d%u%u", i,
 				    bip->bi_dev, bip->bi_cyl, bip->bi_head,
 				    bip->bi_sec, (unsigned)bip->bi_lbasecs,
 				    (unsigned)bip->bi_lbasecs/(1000000000/512));
@@ -571,13 +714,11 @@ nogeom:
 		}
 	}
 	if (biosdisk == NULL) {
-		if (nip != NULL) {
-			set_bios_geom(parts, cyl, head, sec);
-		} else {
-			*bcyl = cyl;
-			*bhead = head;
-			*bsec = sec;
-		}
+		*bcyl = cyl;
+		*bhead = head;
+		*bsec = sec;
+		if (nip != NULL)
+			set_bios_geom(parts, bcyl, bhead, bsec);
 	} else {
 		*bcyl = biosdisk->bi_cyl;
 		*bhead = biosdisk->bi_head;
@@ -587,9 +728,9 @@ nogeom:
 }
 
 static int
-mbr_root_above_chs(void)
+mbr_root_above_chs(daddr_t ptstart)
 {
-	return pm->ptstart + (daddr_t)DEFROOTSIZE * (daddr_t)(MEG / 512)
+	return ptstart + (daddr_t)DEFROOTSIZE * (daddr_t)(MEG / 512)
 	    >= pm->max_chs;
 }
 
@@ -699,7 +840,7 @@ get_bootmodel(void)
 
 
 int
-md_pre_mount(struct install_partition_desc *install)
+md_pre_mount(struct install_partition_desc *install, size_t ndx)
 {
 	return 0;
 }
@@ -715,8 +856,6 @@ md_gpt_post_write(struct disk_partitions *parts, part_id root_id,
 {
 	struct disk_part_info info;
 
-	assert(efi_id == NO_PART);	/* XXX EFI support still missing */
-
 	if (root_id != NO_PART) {
 		/* we always update the gpt boot record for now */
 		if (!parts->pscheme->get_part_info(parts, root_id, &info))
@@ -729,3 +868,72 @@ md_gpt_post_write(struct disk_partitions *parts, part_id root_id,
 	return true;
 }
 #endif
+
+/*
+ * When we do an UEFI install, we have completely different default
+ * partitions and need to adjust the description at runtime.
+ */
+void
+x86_md_part_defaults(struct pm_devs *cur_pm, struct part_usage_info **partsp,
+    size_t *num_usage_infos)
+{
+	static const struct part_usage_info uefi_boot_part =
+	{
+		.size = BOOT_PART,
+		.type = BOOT_PART_TYPE,
+		.instflags = PUIINST_NEWFS|PUIINST_BOOT,
+		.fs_type = FS_MSDOS, .fs_version = MBR_PTYPE_FAT32L,
+		.flags = PUIFLAG_ADD_OUTER,
+	};
+
+	struct disk_partitions *parts;
+	struct part_usage_info *new_usage, *boot;
+	struct disk_part_info info;
+	size_t num;
+	part_id pno;
+
+	if (!uefi_boot)
+		return;		/* legacy defaults apply */
+
+	/*
+	 * Insert a UEFI boot partition at the beginning of the array
+	 */
+
+	/* create space for new description */
+	num = *num_usage_infos + 1;
+	new_usage = realloc(*partsp, sizeof(*new_usage)*num);
+	if (new_usage == NULL)
+		return;
+	*partsp = new_usage;
+	*num_usage_infos = num;
+	boot = new_usage;
+	memmove(boot+1, boot, sizeof(*boot)*(num-1));
+	*boot = uefi_boot_part;
+
+	/*
+	 * Check if the UEFI partition already exists
+	 */
+	parts = pm->parts;
+	if (parts->parent != NULL)
+		parts = parts->parent;
+	for (pno = 0; pno < parts->num_part; pno++) {
+		if (!parts->pscheme->get_part_info(parts, pno, &info))
+			continue;
+		if (info.nat_type->generic_ptype != boot->type)
+			continue;
+		boot->flags &= ~PUIFLAG_ADD_OUTER;
+		boot->flags |= PUIFLG_IS_OUTER|PUIFLG_ADD_INNER;
+		boot->size = info.size;
+		boot->cur_start = info.start;
+		boot->cur_flags = info.flags;
+		break;
+	}
+}
+
+/* no need to install bootblock if installing for UEFI */
+bool
+x86_md_need_bootblock(struct install_partition_desc *install)
+{
+
+	return !uefi_boot;
+}

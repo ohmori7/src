@@ -1,11 +1,11 @@
-/*	$NetBSD: atma_34.c,v 1.2 2019/01/09 16:55:13 christos Exp $	*/
+/*	$NetBSD: atma_34.c,v 1.5 2021/02/19 16:42:18 christos Exp $	*/
 
 /*
  * Copyright (C) Internet Systems Consortium, Inc. ("ISC")
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ * file, you can obtain one at https://mozilla.org/MPL/2.0/.
  *
  * See the COPYRIGHT file distributed with this work for additional
  * information regarding copyright ownership.
@@ -24,7 +24,7 @@ fromtext_in_atma(ARGS_FROMTEXT) {
 	isc_textregion_t *sr;
 	int n;
 	bool valid = false;
-	bool lastwasperiod = true;	/* leading periods not allowed */
+	bool lastwasperiod = true; /* leading periods not allowed */
 	int digits = 0;
 	unsigned char c = 0;
 
@@ -203,7 +203,7 @@ fromstruct_in_atma(ARGS_FROMSTRUCT) {
 
 	REQUIRE(type == dns_rdatatype_atma);
 	REQUIRE(rdclass == dns_rdataclass_in);
-	REQUIRE(source != NULL);
+	REQUIRE(atma != NULL);
 	REQUIRE(atma->common.rdtype == type);
 	REQUIRE(atma->common.rdclass == rdclass);
 	REQUIRE(atma->atma != NULL || atma->atma_len == 0);
@@ -222,7 +222,7 @@ tostruct_in_atma(ARGS_TOSTRUCT) {
 
 	REQUIRE(rdata->type == dns_rdatatype_atma);
 	REQUIRE(rdata->rdclass == dns_rdataclass_in);
-	REQUIRE(target != NULL);
+	REQUIRE(atma != NULL);
 	REQUIRE(rdata->length != 0);
 
 	atma->common.rdclass = rdata->rdclass;
@@ -246,7 +246,7 @@ static inline void
 freestruct_in_atma(ARGS_FREESTRUCT) {
 	dns_rdata_in_atma_t *atma = source;
 
-	REQUIRE(source != NULL);
+	REQUIRE(atma != NULL);
 	REQUIRE(atma->common.rdclass == dns_rdataclass_in);
 	REQUIRE(atma->common.rdtype == dns_rdatatype_atma);
 
@@ -286,7 +286,6 @@ digest_in_atma(ARGS_DIGEST) {
 
 static inline bool
 checkowner_in_atma(ARGS_CHECKOWNER) {
-
 	REQUIRE(type == dns_rdatatype_atma);
 	REQUIRE(rdclass == dns_rdataclass_in);
 
@@ -300,7 +299,6 @@ checkowner_in_atma(ARGS_CHECKOWNER) {
 
 static inline bool
 checknames_in_atma(ARGS_CHECKNAMES) {
-
 	REQUIRE(rdata->type == dns_rdatatype_atma);
 	REQUIRE(rdata->rdclass == dns_rdataclass_in);
 
@@ -316,4 +314,4 @@ casecompare_in_atma(ARGS_COMPARE) {
 	return (compare_in_atma(rdata1, rdata2));
 }
 
-#endif	/* RDATA_IN_1_atma_22_C */
+#endif /* RDATA_IN_1_atma_22_C */

@@ -1,5 +1,5 @@
 /* Implement classes and message passing for Objective C.
-   Copyright (C) 1992-2016 Free Software Foundation, Inc.
+   Copyright (C) 1992-2018 Free Software Foundation, Inc.
    Contributed by Steve Naroff.
 
 This file is part of GCC.
@@ -2115,7 +2115,7 @@ objc_build_struct (tree klass, tree fields, tree super_name)
 	= size_binop (FLOOR_DIV_EXPR, convert (sizetype, DECL_SIZE (base)),
 		      size_int (BITS_PER_UNIT));
       DECL_ARTIFICIAL (base) = 1;
-      DECL_ALIGN (base) = 1;
+      SET_DECL_ALIGN (base, 1);
       DECL_FIELD_CONTEXT (base) = s;
 #ifdef OBJCPLUS
       DECL_FIELD_IS_BASE (base) = 1;
@@ -2654,7 +2654,8 @@ objc_build_component_ref (tree datum, tree component)
   return finish_class_member_access_expr (datum, component, false,
                                           tf_warning_or_error);
 #else
-  return build_component_ref (input_location, datum, component);
+  return build_component_ref (input_location, datum, component,
+			      UNKNOWN_LOCATION);
 #endif
 }
 
@@ -2943,16 +2944,24 @@ synth_module_prologue (void)
   objc_class_reference = xref_tag (RECORD_TYPE, objc_class_id);
 
   objc_object_type = build_pointer_type (objc_object_reference);
+  objc_instancetype_type = build_pointer_type (objc_object_reference);
   objc_class_type = build_pointer_type (objc_class_reference);
 
   objc_object_name = get_identifier (OBJECT_TYPEDEF_NAME);
+  objc_instancetype_name = get_identifier (INSTANCE_TYPEDEF_NAME);
   objc_class_name = get_identifier (CLASS_TYPEDEF_NAME);
 
-  /* Declare the 'id' and 'Class' typedefs.  */
+  /* Declare the 'id', 'instancetype' and 'Class' typedefs.  */
   type = lang_hooks.decls.pushdecl (build_decl (input_location,
 						TYPE_DECL,
 						objc_object_name,
 						objc_object_type));
+  TREE_NO_WARNING (type) = 1;
+
+  type = lang_hooks.decls.pushdecl (build_decl (input_location,
+						TYPE_DECL,
+						objc_instancetype_name,
+						objc_instancetype_type));
   TREE_NO_WARNING (type) = 1;
 
   type = lang_hooks.decls.pushdecl (build_decl (input_location,
@@ -4601,8 +4610,14 @@ check_ivars (tree inter, tree imp)
       t1 = TREE_TYPE (intdecls); t2 = TREE_TYPE (impdecls);
 
       if (!comptypes (t1, t2)
+#ifdef OBJCPLUS
+	  || !tree_int_cst_equal (DECL_BIT_FIELD_REPRESENTATIVE (intdecls),
+				  DECL_BIT_FIELD_REPRESENTATIVE (impdecls))
+#else
 	  || !tree_int_cst_equal (DECL_INITIAL (intdecls),
-				  DECL_INITIAL (impdecls)))
+				  DECL_INITIAL (impdecls))
+#endif
+	 )
 	{
 	  if (DECL_NAME (intdecls) == DECL_NAME (impdecls))
 	    {
@@ -4893,10 +4908,10 @@ objc_decl_method_attributes (tree *node, tree attributes, int flags)
 		  number = TREE_VALUE (second_argument);
 		  if (number
 		      && TREE_CODE (number) == INTEGER_CST
-		      && !wi::eq_p (number, 0))
+		      && wi::to_wide (number) != 0)
 		    TREE_VALUE (second_argument)
 		      = wide_int_to_tree (TREE_TYPE (number),
-					  wi::add (number, 2));
+					  wi::to_wide (number) + 2);
 
 		  /* This is the third argument, the "first-to-check",
 		     which specifies the index of the first argument to
@@ -4906,10 +4921,10 @@ objc_decl_method_attributes (tree *node, tree attributes, int flags)
 		  number = TREE_VALUE (third_argument);
 		  if (number
 		      && TREE_CODE (number) == INTEGER_CST
-		      && !wi::eq_p (number, 0))
+		      && wi::to_wide (number) != 0)
 		    TREE_VALUE (third_argument)
 		      = wide_int_to_tree (TREE_TYPE (number),
-					  wi::add (number, 2));
+					  wi::to_wide (number) + 2);
 		}
 	      filtered_attributes = chainon (filtered_attributes,
 					     new_attribute);
@@ -4942,10 +4957,10 @@ objc_decl_method_attributes (tree *node, tree attributes, int flags)
 		  /* Get the value of the argument and add 2.  */
 		  tree number = TREE_VALUE (argument);
 		  if (number && TREE_CODE (number) == INTEGER_CST
-		      && !wi::eq_p (number, 0))
+		      && wi::to_wide (number) != 0)
 		    TREE_VALUE (argument)
 		      = wide_int_to_tree (TREE_TYPE (number),
-					  wi::add (number, 2));
+					  wi::to_wide (number) + 2);
 		  argument = TREE_CHAIN (argument);
 		}
 
@@ -7053,7 +7068,6 @@ continue_class (tree klass)
 #endif /* OBJCPLUS */
 
 	return get_class_ivars (implementation_template, true);
-	break;
       }
     case CLASS_INTERFACE_TYPE:
       {
@@ -7069,7 +7083,6 @@ continue_class (tree klass)
 	pop_lang_context ();
 #endif /* OBJCPLUS */
 	return NULL_TREE;
-	break;
       }
     default:
       return error_mark_node;
@@ -7998,7 +8011,7 @@ finish_class (tree klass)
 		    char *setter_name = (char *) alloca (length);
 		    tree ret_type, selector, arg_type, arg_name;
 
-		    strcpy (setter_name, full_setter_name);
+		    memcpy (setter_name, full_setter_name, length - 1);
 		    setter_name[length - 1] = '\0';
 		    ret_type = build_tree_list (NULL_TREE, void_type_node);
 		    arg_type = build_tree_list (NULL_TREE, TREE_TYPE (x));
@@ -8896,10 +8909,14 @@ gen_declaration (tree decl)
 	  strcat (errbuf, IDENTIFIER_POINTER (DECL_NAME (decl)));
 	}
 
-      if (DECL_INITIAL (decl)
-	  && TREE_CODE (DECL_INITIAL (decl)) == INTEGER_CST)
+#ifdef OBJCPLUS
+      tree w = DECL_BIT_FIELD_REPRESENTATIVE (decl);
+#else
+      tree w = DECL_INITIAL (decl);
+#endif
+      if (w && TREE_CODE (w) == INTEGER_CST)
 	sprintf (errbuf + strlen (errbuf), ": " HOST_WIDE_INT_PRINT_DEC,
-		 TREE_INT_CST_LOW (DECL_INITIAL (decl)));
+		 TREE_INT_CST_LOW (w));
     }
 
   return errbuf;
@@ -9278,7 +9295,6 @@ objc_maybe_printable_name (tree decl, int v ATTRIBUTE_UNUSED)
     {
     case FUNCTION_DECL:
       return objc_demangle (IDENTIFIER_POINTER (DECL_NAME (decl)));
-      break;
 
       /* The following happens when we are printing a deprecation
 	 warning for a method.  The warn_deprecation() will end up
@@ -9293,17 +9309,14 @@ objc_maybe_printable_name (tree decl, int v ATTRIBUTE_UNUSED)
     case INSTANCE_METHOD_DECL:
     case CLASS_METHOD_DECL:
       return IDENTIFIER_POINTER (DECL_NAME (decl));
-      break;
       /* This happens when printing a deprecation warning for a
 	 property.  We may want to consider some sort of pretty
 	 printing (eg, include the class name where it was declared
 	 ?).  */
     case PROPERTY_DECL:
       return IDENTIFIER_POINTER (PROPERTY_NAME (decl));
-      break;
     default:
       return NULL;
-      break;
     }
 }
 
@@ -10113,11 +10126,14 @@ objc_common_tree_size (enum tree_code code)
     case CLASS_METHOD_DECL:
     case INSTANCE_METHOD_DECL:
     case KEYWORD_DECL:
-    case PROPERTY_DECL:
-      return sizeof (struct tree_decl_non_common);
+    case PROPERTY_DECL:			return sizeof (tree_decl_non_common);
+    case CLASS_INTERFACE_TYPE:
+    case CLASS_IMPLEMENTATION_TYPE:
+    case CATEGORY_INTERFACE_TYPE:
+    case CATEGORY_IMPLEMENTATION_TYPE:
+    case PROTOCOL_INTERFACE_TYPE:	return sizeof (tree_type_non_common);
     default:
       gcc_unreachable ();
-  
     }
 }
 

@@ -1,4 +1,4 @@
-/*	$NetBSD: md.c,v 1.4 2019/06/12 06:20:22 martin Exp $	*/
+/*	$NetBSD: md.c,v 1.8 2020/10/12 16:14:36 martin Exp $	*/
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -109,7 +109,7 @@ md_get_info(struct install_partition_desc *install)
 /*
  * md back-end code for menu-driven BSD disklabel editor.
  */
-bool
+int
 md_make_bsd_partitions(struct install_partition_desc *install)
 {
 	return make_bsd_partitions(install);
@@ -163,7 +163,7 @@ md_post_newfs(struct install_partition_desc *install)
 		return 0;
 	}
 
-	msg_display(MSG_dobootblks, pm->diskdev);
+	msg_fmt_display(MSG_dobootblks, "%s", pm->diskdev);
 	cp_to_target("/usr/mdec/boot.pmax", "/boot.pmax");
 	bootxx = bootxx_name(install);
 	if (bootxx != NULL) {
@@ -176,6 +176,11 @@ md_post_newfs(struct install_partition_desc *install)
 	if (error != 0)
 		process_menu(MENU_ok,
 		    __UNCONST("Warning: disk is probably not bootable"));
+
+	wclear(stdscr);
+	touchwin(stdscr);
+	clearok(stdscr, 1);
+	refresh();
 
 	return 0;
 }
@@ -209,7 +214,7 @@ md_update(struct install_partition_desc *install)
 }
 
 int
-md_pre_mount(struct install_partition_desc *install)
+md_pre_mount(struct install_partition_desc *install, size_t ndx)
 {
 	return 0;
 }

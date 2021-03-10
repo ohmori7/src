@@ -1,6 +1,6 @@
 /* Native-dependent code for NetBSD/amd64.
 
-   Copyright (C) 2003-2019 Free Software Foundation, Inc.
+   Copyright (C) 2003-2020 Free Software Foundation, Inc.
 
    This file is part of GDB.
 
@@ -31,16 +31,6 @@
 #include <machine/frame.h>
 #include <machine/pcb.h>
 #include <machine/reg.h>
-
-#ifndef HAVE_GREGSET_T
-typedef struct reg gregset_t;
-#endif
-
-#ifndef HAVE_FPREGSET_T
-typedef struct fpreg fpregset_t;
-#endif
-
-#include "gregset.h"
 
 /* Mapping between the general-purpose registers in NetBSD/amd64
    `struct reg' format and GDB's register cache layout for
@@ -75,8 +65,6 @@ static int
 amd64nbsd_supply_pcb (struct regcache *regcache, struct pcb *pcb)
 {
   struct switchframe sf;
-  int regnum;
-  long zero = 0;
 
   /* The following is true for NetBSD/amd64:
 
@@ -124,8 +112,9 @@ amd64nbsd_supply_pcb (struct regcache *regcache, struct pcb *pcb)
 
 static amd64_bsd_nat_target<nbsd_nat_target> the_amd64_nbsd_nat_target;
 
+void _initialize_amd64nbsd_nat ();
 void
-_initialize_amd64nbsd_nat (void)
+_initialize_amd64nbsd_nat ()
 {
   amd64_native_gregset32_reg_offset = amd64nbsd32_r_reg_offset;
   amd64_native_gregset32_num_regs = ARRAY_SIZE (amd64nbsd32_r_reg_offset);

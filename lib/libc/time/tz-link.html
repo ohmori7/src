@@ -18,6 +18,47 @@ histories and planned futures are often recorded only fitfully. Here
 is a summary of attempts to organize and record relevant data in this
 area.
 </p>
+  <h3>Outline</h3>
+  <nav>
+    <ul>
+      <li>The <code><abbr>tz</abbr></code> database product and process
+	<ul>
+	  <li><a href="#tzdb">The <code><abbr>tz</abbr></code> database</a></li>
+	  <li><a href="#download">Downloading the <code><abbr>tz</abbr></code> database</a></li>
+	  <li><a href="#changes">Changes to the <code><abbr>tz</abbr></code> database</a></li>
+	  <li><a href="#commentary">Commentary on the <code><abbr>tz</abbr></code> database</a></li>
+	</ul>
+      </li>
+      <li>Uses of the <code><abbr>tz</abbr></code> database
+	<ul>
+	  <li><a href="#web">Web sites using recent versions of the <code><abbr>tz</abbr></code> database</a></li>
+	  <li><a href="#protocols">Network protocols for <code><abbr>tz</abbr></code> data</a></li>
+	  <li><a href="#compilers">Other <code><abbr>tz</abbr></code> compilers</a></li>
+	  <li><a href="#TZif">Other <abbr>TZif</abbr> readers</a></li>
+	  <li><a href="#software">Other <code><abbr>tz</abbr></code>-based time zone software</a></li>
+	</ul>
+      </li>
+      <li>Related data
+	<ul>
+	  <li><a href="#other-dbs">Other time zone databases</a></li>
+	  <li><a href="#maps">Maps</a></li>
+	  <li><a href="#boundaries">Time zone boundaries</a></li>
+	</ul>
+      </li>
+      <li>Timekeeping concepts
+	<ul>
+	  <li><a href="#civil">Civil time concepts and history</a></li>
+	  <li><a href="#national">National histories of legal time</a></li>
+	  <li><a href="#costs">Costs and benefits of time shifts</a></li>
+	  <li><a href="#precision">Precision timekeeping</a></li>
+	  <li><a href="#notation">Time notation</a></li>
+	  <li><a href="#see-also">See also</a></li>
+	</ul>
+      </li>
+    </ul>
+  </nav>
+
+<section>
 <h2 id="tzdb">The <code><abbr title="time zone">tz</abbr></code> database</h2>
 <p>
 The <a href="https://en.wikipedia.org/wiki/Public_domain">public-domain</a>
@@ -41,22 +82,21 @@ title="Berkeley Software Distribution">BSD</abbr></a>,
 <a href="https://www.openbsd.org">Open<abbr>BSD</abbr></a>,
 <a href="https://www.chromium.org/chromium-os">Chromium OS</a>,
 <a href="https://cygwin.com">Cygwin</a>,
-<a href="http://www.delorie.com/djgpp/"><abbr
-title="DJ's GNU Programming Platform">DJGPP</abbr></a>,
+<a href="https://mariadb.org">MariaDB</a>,
 <a href="https://en.wikipedia.org/wiki/MINIX">MINIX</a>,
 <a href="https://www.mysql.com">MySQL</a>,
 <a href="https://en.wikipedia.org/wiki/WebOS"><abbr
 title="Web Operating System">webOS</abbr></a>,
-<a href="https://ibm.com/aix"><abbr
+<a href="https://en.wikipedia.org/wiki/IBM_AIX"><abbr
 title="Advanced Interactive eXecutive">AIX</abbr></a>,
 <a href="https://en.wikipedia.org/wiki/BlackBerry_10">BlackBerry 10</a>,
-<a href="https://www.apple.com/ios/"><abbr
+<a href="https://www.apple.com/ios"><abbr
 title="iPhone OS">iOS</abbr></a>,
-<a href="https://www.apple.com/macos/">macOS</a>,
+<a href="https://www.apple.com/macos">macOS</a>,
 <a href="https://www.microsoft.com/en-us/windows">Microsoft Windows</a>,
-<a href="https://www.hpe.com/info/openvms">Open<abbr
+<a href="https://www.vmssoftware.com">Open<abbr
 title="Virtual Memory System">VMS</abbr></a>,
-<a href="https://www.oracle.com/database/index.html">Oracle Database</a>, and
+<a href="https://www.oracle.com/database/">Oracle Database</a>, and
 <a href="https://www.oracle.com/solaris">Oracle Solaris</a>.</p>
 <p>
 Each main entry in the database represents a <dfn>timezone</dfn>
@@ -90,6 +130,9 @@ Universal Time</a> (<abbr>UTC</abbr>).
 The database also records when daylight saving time was in use,
 along with some time zone abbreviations such as <abbr>EST</abbr>
 for Eastern Standard Time in the <abbr>US</abbr>.</p>
+</section>
+
+<section>
 <h2 id="download">Downloading the <code><abbr>tz</abbr></code> database</h2>
 <p>
 The following <a
@@ -126,7 +169,8 @@ then <samp>za</samp> through <samp>zz</samp>, then <samp>zza</samp>
 through <samp>zzz</samp>, and so on).
 Since version 2016h, each release has contained a text file named
 "<samp>version</samp>" whose first (and currently only) line is the version.
-The releases are also available in an
+Older releases are <a href="https://ftp.iana.org/tz/releases/">archived</a>,
+and are also available in an
 <a href="ftp://ftp.iana.org/tz/releases/"><abbr
 title="File Transfer Protocol">FTP</abbr> directory</a> via a
 less-secure protocol.</p>
@@ -150,6 +194,9 @@ specified by <a href="https://tools.ietf.org/html/8536">Internet
 The code also lets
 you read a <abbr>TZif</abbr> file and interpret timestamps for that
 location.</p>
+</section>
+
+<section>
 <h2 id="changes">Changes to the <code><abbr>tz</abbr></code> database</h2>
 <p>
 The <code><abbr>tz</abbr></code> code and data
@@ -168,13 +215,18 @@ generated <a href="https://github.com/timparenti/tzdata-meta">automatically</a>.
 If your government plans to change its time zone boundaries or
 daylight saving rules, inform <code>tz@iana.org</code> well in
 advance, as this will coordinate updates to many cell phones,
-computers, and other devices around the world. With
-less than a year's notice there is a good chance that some
-computer-based clocks will operate incorrectly after the change, due
+computers, and other devices around the world.
+The change should be officially announced at least a year before it affects
+how clocks operate; otherwise, there is a good chance that some
+clocks will operate incorrectly after the change, due
 to delays in propagating updates to software and data. The shorter
 the notice, the more likely clock problems will arise; see "<a
 href="https://codeofmatt.com/2016/04/23/on-the-timing-of-time-zone-changes/">On
 the Timing of Time Zone Changes</a>" for examples.
+The <code><abbr>tz</abbr></code> data can represent planned changes
+far into the future, and a long-planned change can easily be reverted
+or otherwise altered with a year's notice before the change would have
+affected clocks.
 </p>
 <p>
 Changes to the <code><abbr>tz</abbr></code> code and data are often
@@ -193,13 +245,12 @@ href="https://play.google.com/store/apps/details?id=com.google.android.timezone.
 <a
 href="http://userguide.icu-project.org/datetime/timezone"><abbr
 title="International Components for Unicode">ICU</abbr></a>,
-<a href="https://developer.ibm.com/javasdk/support/dst/jtzu/"><abbr>IBM</abbr></a>
-and <a
-href="https://www.oracle.com/technetwork/java/javase/tzupdater-readme-136440.html">Oracle</a>
-Java, <a href="https://www.joda.org/joda-time/tz_update.html">Joda-Time</a>, <a
+<a href="https://developer.ibm.com/javasdk/support/dst/jtzu/"><abbr>IBM</abbr>
+JDK</a>,
+<a href="https://www.joda.org/joda-time/tz_update.html">Joda-Time</a>, <a
 href="https://dev.mysql.com/doc/refman/en/time-zone-support.html">MySQL</a>,
-and <a
-href="https://nodatime.org/userguide/tzdb">Noda Time</a> (see below).
+<a href="https://nodatime.org/userguide/tzdb">Noda Time</a>, and <a
+href="https://www.oracle.com/java/technologies/javase/tzupdater-readme.html#usage">OpenJDK/Oracle JDK</a>.
 </p>
 <p>Sources for the <code><abbr>tz</abbr></code> database are
 <a href="https://en.wikipedia.org/wiki/UTF-8"><abbr
@@ -224,10 +275,14 @@ For further information about updates, please see
 <a href="https://tools.ietf.org/html/rfc6557">Procedures for
 Maintaining the Time Zone Database</a> (Internet <abbr
 title="Request For Comments">RFC</abbr> 6557). More detail can be
-found in <a href="theory.html">Theory and pragmatics of the tz code and data</a>.
+found in <a href="theory.html">Theory and pragmatics of the
+<code><abbr>tz</abbr></code> code and data</a>.
 <a href="https://a0.github.io/a0-tzmigration/">A0 TimeZone Migration</a>
 displays changes between recent <code><abbr>tzdb</abbr></code> versions.
 </p>
+</section>
+
+<section>
 <h2 id="commentary">Commentary on the <code><abbr>tz</abbr></code> database</h2>
 <ul>
 <li>The article
@@ -241,6 +296,9 @@ href="https://blog.jonudell.net/2009/10/23/a-literary-appreciation-of-the-olsonz
 literary appreciation of the Olson/Zoneinfo/tz database</a> comments on the
 database's style.</li>
 </ul>
+</section>
+
+<section>
 <h2 id="web">Web sites using recent versions of the
 <code><abbr>tz</abbr></code> database</h2>
 <p>
@@ -251,18 +309,23 @@ These are listed roughly in ascending order of complexity and fanciness.
 time and zones.</li>
 <li><a href="https://www.timejones.com">TimeJones.com</a>,
 <a href="https://timezoneconverterapp.com">Time Zone Converter</a> and
-<a href="http://worldclock.com">The World Clock</a>
+<a href="https://www.worldclock.com">The World Clock</a>
 are time zone converters.</li>
+<li><a href="https://timezonedb.com/download">TimeZoneDB Database</a>
+publishes <code><abbr>tzdb</abbr></code>-derived data in
+<a href="https://en.wikipedia.org/wiki/Comma-separated_values"><abbr
+title="comma-separated values">CSV</abbr></a> and
+in <a href="https://en.wikipedia.org/wiki/SQL"><abbr
+title="Structured Query Language">SQL</abbr></a> form.</li>
 <li><a
-href="http://twiki.org/cgi-bin/xtra/tzdatepick.html">Date and Time Gateway</a>
+href="https://twiki.org/cgi-bin/xtra/tzdatepick.html">Date and Time Gateway</a>
 lets you see the <code><abbr>TZ</abbr></code> values directly.</li>
 <li><a
 href="http://www.convertit.com/Go/ConvertIt/World_Time/Current_Time.ASP">Current
 Time in 1000 Places</a> uses descriptions of the values.</li>
-<li><a href="http://www.timezoneconverter.com/cgi-bin/tzc.tzc">Time Zone
-Converter</a>
+<li><a href="https://timezoneconverterapp.com/">Time Zone Converter</a>
 uses a pulldown menu.</li>
-<li><a href="http://home.kpn.nl/vanadovv/time/TZworld.html">Complete
+<li><a href="https://home.kpn.nl/vanadovv/time/TZworld.html">Complete
 timezone information for all countries</a> displays tables of DST rules.
 <li><a href="https://www.timeanddate.com/worldclock/">The World Clock &ndash;
 Worldwide</a> lets you sort zone names and convert times.</li>
@@ -273,6 +336,9 @@ calculates the current time difference between locations.</li>
 <li><a href="http://www.wx-now.com">Weather Now</a> and
 <a href="http://www.thetimenow.com">The Time Now</a> list the weather too.</li>
 </ul>
+</section>
+
+<section>
 <h2 id="protocols">Network protocols for <code><abbr>tz</abbr></code> data</h2>
 <ul>
 <li>The <a href="https://www.ietf.org">Internet Engineering Task Force</a>'s
@@ -283,13 +349,10 @@ href="https://tools.ietf.org/html/rfc7808">TZDIST</a>
 along with <a href="https://tools.ietf.org/html/rfc7809">CalDAV</a>
 (Internet <abbr>RFC</abbr> 7809), a calendar access protocol for
 transferring time zone data by reference.
+<a href="https://devguide.calconnect.org/Time-Zones/TZDS/">TZDIST
+implementations</a> are available.
 The <a href="https://www.ietf.org/mailman/listinfo/tzdist-bis">tzdist-bis
-mailing list</a> discusses the Internet draft <a
-id="TZDIST-Geolocate"
-href="https://tools.ietf.org/html/draft-murchison-tzdist-geolocate">TZDIST
-Geolocate Extension</a>, which lets a client determine its timezone
-from its geographic location using a <a
-href="https://tools.ietf.org/html/rfc5870">'geo' URI</a>.</li>
+mailing list</a> discusses possible extensions.</li>
 <li>The <a href="https://tools.ietf.org/html/rfc5545">
 Internet Calendaring and Scheduling Core Object Specification
 (iCalendar)</a> (Internet <abbr>RFC</abbr> 5445)
@@ -305,7 +368,15 @@ title="Extensible Markup Language">XML</abbr></a> format, and a variant
 uses <a href="https://www.json.org"><abbr
 title="JavaScript Object Notation">JSON</abbr></a> format.</li>
 </ul>
+</section>
+
+<section>
 <h2 id="compilers">Other <code><abbr>tz</abbr></code> compilers</h2>
+<p>Although some of these do not fully support
+<code><abbr>tz</abbr></code> data, in recent <code><abbr>tzdb</abbr></code>
+distributions you can generally work around compatibility problems by
+running the command <code>make rearguard_tarballs</code> and compiling
+from the resulting tarballs instead.</p>
 <ul>
 <li><a href="https://sourceforge.net/projects/vzic/">Vzic</a> is a <a
 href="https://en.wikipedia.org/wiki/C_%28programming_language%29">C</a>
@@ -318,7 +389,7 @@ General Public License (<abbr
 title="General Public License">GPL</abbr>)</a>.</li>
 <li><a href="https://sourceforge.net/projects/tzical/">tziCal &ndash; tz
 database conversion utility</a> is like Vzic, except for the <a
-href="https://www.microsoft.com/net">.NET framework</a>
+href="https://dotnet.microsoft.com">.NET framework</a>
 and with a <abbr>BSD</abbr>-style license.</li>
 <li><a
 href="https://metacpan.org/release/DateTime-TimeZone">DateTime::TimeZone</a>
@@ -334,13 +405,11 @@ transition in the <code><abbr>tz</abbr></code> database.</li>
 <li>The <a href="https://howardhinnant.github.io/date/tz.html">Time Zone
 Database Parser</a> is a
 <a href="https://en.wikipedia.org/wiki/C%2B%2B">C++</a> parser and
-runtime library that is <a
-href="http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2017/p0355r4.html">moving
-forward</a> for inclusion in the next iteration of <a
-href="https://isocpp.org/std/the-standard"><em><abbr
-title="International Organization for Standardization">ISO</abbr>
-International Standard ISO/IEC 14882:2017(E) &ndash; Programming
-Language C++</em></a>.
+runtime library with <a
+href="http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2018/p0355r7.html">API</a>
+adopted by
+<a href="https://en.wikipedia.org/wiki/C++20">C++20</a>,
+the current iteration of the C++ standard.
 It is freely available under the
 <abbr title="Massachusetts Institute of Technology">MIT</abbr> license.</li>
 <li><a id="ICU" href="http://site.icu-project.org">International Components for
@@ -355,19 +424,22 @@ into an <abbr>ICU</abbr>-specific format.
 <abbr>BSD</abbr>-style license.</li>
 <li>The <a href="https://github.com/lau/tzdata">Tzdata</a> package for
 the <a href="https://elixir-lang.org">Elixir</a> language downloads
-and compiles tz source and exposes <abbr
+and compiles <code><abbr>tz</abbr></code> source and exposes <abbr
 title="Application Program Interface">API</abbr>s for use. It is
 freely available under the <abbr>MIT</abbr> license.</li>
 <li>Java-based compilers and libraries include:
 <ul>
 <li>The <a
-href="https://www.oracle.com/technetwork/java/javase/tzupdater-readme-136440.html">TZUpdater
+href="https://www.oracle.com/java/technologies/javase/tzupdater-readme.html">TZUpdater
 tool</a> compiles <code><abbr>tz</abbr></code> source into the format used by
-Oracle Java.</li>
+<a href="https://openjdk.java.net/">OpenJDK</a> and
+<a href="https://jdk.java.net/">Oracle JDK</a>.
+Although its source code is proprietary, its executable is available under the
+<a href="https://www.oracle.com/a/tech/docs/tzupdater-lic.html">Java SE
+Timezone Updater License Agreement</a>.</li>
 <li>The <a
 href="https://www.oracle.com/technetwork/articles/java/jf14-date-time-2125367.html">Java
-SE <code>java.time</code> <abbr>API</abbr></a> in Java 8 and later
-can be supplemented by <a
+SE 8 Date and Time</a> <abbr>API</abbr> can be supplemented by <a
 href="https://www.threeten.org/threeten-extra/">ThreeTen-Extra</a>,
 which is freely available under a <abbr>BSD</abbr>-style license.</li>
 <li><a href="https://www.joda.org/joda-time/">Joda-Time &ndash; Java date
@@ -377,6 +449,10 @@ and time <abbr>API</abbr></a> contains a class
 Java 8 <code>java.time</code>, which its users should migrate to once
 they can assume Java 8 or later. It is available under the <a
 href="https://www.apache.org/licenses/LICENSE-2.0">Apache License</a>.</li>
+<li><a href="https://bell-sw.com/pages/iana-updater/">IANA Updater</a> and <a
+href="https://www.azul.com/products/open-source-tools/ziupdater-time-zone-tool/">ZIUpdater</a>
+are alternatives to TZUpdater. IANA Updater's license is unclear;
+ZIUpdater is licensed under the <abbr>GPL</abbr>.</li>
 <li><a href="https://github.com/MenoData/Time4A">Time4A: Advanced date and
 time library for Android</a> and
 <a href="https://github.com/MenoData/Time4J/">Time4J: Advanced date,
@@ -394,9 +470,16 @@ Java-based libraries.</li>
 time <abbr>API</abbr> for .NET</a>
 is like Joda-Time and Time4J, but for the .NET framework instead of Java.
 It is freely available under the Apache License.</li>
-<li><a href="https://en.wikipedia.org/wiki/JavaScript">JavaScript</a>-based
-compilers and libraries include:
+<li>Many modern
+<a href="https://en.wikipedia.org/wiki/JavaScript">JavaScript</a>
+runtimes support <code><abbr>tz</abbr></code> natively via the
+<samp>timeZone</samp> option of <a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl/DateTimeFormat"><samp>Intl.DateTimeFormat</samp></a>.
+On other runtimes, you can use one of the following.
 <ul>
+<li>The <a
+href="https://github.com/formatjs/date-time-format-timezone"><samp>Intl.DateTimeFormat</samp>
+timezone polyfill</a>
+is freely available under a <abbr>BSD</abbr>-style license.</li>
 <li><a
 href="https://github.com/kshetline/compact-time-zone-generator">CompactTimeZoneGenerator</a>
 compiles time zone data into a compact form designed for
@@ -406,19 +489,20 @@ the <abbr>MIT</abbr> license and the Apache License.</li>
 plugin for the <a href="https://momentjs.com">Moment.js</a> date
 manipulation library. It is freely available under the <abbr>MIT</abbr>
 license.</li>
+<li><a href="https://github.com/bigeasy/timezone">Timezone</a> is a
+JavaScript library that supports date arithmetic that is time zone
+aware. It is freely available under the <abbr>MIT</abbr> license.</li>
 <li><a href="https://github.com/mde/timezone-js">TimezoneJS.Date</a>'s
 <abbr>API</abbr> is upward compatible with standard JavaScript
 Dates. It is freely available under the Apache License.</li>
-<li><a href="https://github.com/sproutsocial/walltime-js">Walltime-js</a>
-translates <abbr>UT</abbr> to local time. It is freely available under
-the <abbr>MIT</abbr> license.</li>
 </ul>
 <li><a href="https://github.com/JuliaTime/">JuliaTime</a> contains a
 compiler from <code><abbr>tz</abbr></code> source into
 <a href="https://julialang.org/">Julia</a>. It is freely available
 under the <abbr>MIT</abbr> license.</li>
-<li><a href="https://github.com/pavkam/tzdb">Delphi/<abbr
-title="Free Pascal Compiler">FPC</abbr> Time Zone Database</a>
+<li><a href="https://github.com/pavkam/tzdb"><abbr>TZDB</abbr> &ndash;
+<abbr>IANA</abbr> Time Zone Database for Delphi/<abbr
+title="Free Pascal Compiler">FPC</abbr></a>
 compiles from <code><abbr>tz</abbr></code> source into
 <a href="https://en.wikipedia.org/wiki/Object_Pascal">Object Pascal</a>
 as compiled by <a href="https://en.wikipedia.org/wiki/Delphi_(IDE)">Delphi</a>
@@ -428,7 +512,10 @@ It is freely available under a <abbr>BSD</abbr>-style license.</li>
 <li><a href="http://pytz.sourceforge.net">pytz &ndash; World Timezone
 Definitions for Python</a> compiles <code><abbr>tz</abbr></code> source into
 <a href="https://www.python.org">Python</a>.
-It is freely available under a <abbr>BSD</abbr>-style license.</li>
+It is freely available under a <abbr>BSD</abbr>-style license.
+In code that can assume Python 3.9 or later it is superseded by
+<a href="#python-zoneinfo"><code>zoneinfo.ZoneInfo</code></a>
+and the <a href="#pypi-tzdata"><code>tzdata</code> Python package</a>.</li>
 <li><a href="https://tzinfo.github.io">TZInfo &ndash;
 Ruby Timezone Library</a>
 compiles <code><abbr>tz</abbr></code> source into
@@ -447,6 +534,9 @@ source into text files, along with a runtime that can read those
 files. Tcl is freely available under a <abbr>BSD</abbr>-style
 license.</li>
 </ul>
+</section>
+
+<section>
 <h2 id="TZif">Other <abbr>TZif</abbr> readers</h2>
 <ul>
 <li>The <a
@@ -482,9 +572,6 @@ title="PHP: Hypertext Preprocessor">PHP</abbr></a>,
 <a href="https://hhvm.com"><abbr title="HipHop Virtual Machine">HHVM</abbr></a>,
 and <a href="https://www.mongodb.com">MongoDB</a>.
 It is freely available under the <abbr>MIT</abbr> license.</li>
-<li><a href="https://github.com/bigeasy/timezone">Timezone</a> is a
-JavaScript library that supports date arithmetic that is time zone
-aware. It is freely available under the <abbr>MIT</abbr> license.</li>
 <li>Tcl, mentioned <a href="#Tcl">above</a>, also contains a
 <abbr>TZif</abbr> file reader.</li>
 <li><a href="https://metacpan.org/pod/DateTime::TimeZone::Tzfile">
@@ -492,6 +579,17 @@ DateTime::TimeZone::Tzfile</a>
 is a <abbr>TZif</abbr> file reader written in Perl.
 It is freely available under the same terms as Perl
 (dual <abbr>GPL</abbr> and Artistic license).</li>
+<li>Python has a <a id="python-zoneinfo"
+href="https://docs.python.org/3.9/library/zoneinfo.html"><code>zoneinfo.ZoneInfo</code>
+class</a> that reads <abbr>TZif</abbr> data and creates objects
+that represent <code><abbr>tzdb</abbr></code> timezones.
+Python is freely available under the
+<a href="https://docs.python.org/3.9/license.html">Python Software Foundation
+License</a>.
+A companion <a id="pypi-tzdata" href="https://pypi.org/">PyPI</a> module
+<a href="https://pypi.org/project/tzdata/"><code>tzdata</code></a>
+supplies TZif data if the underlying system data cannot be found;
+it is freely available under the Apache License.</li>
 <li>The
 public-domain <a href="https://github.com/dbaron/tz.js">tz.js</a>
 library contains a Python tool that
@@ -505,6 +603,9 @@ package contains <a href="https://www.haskell.org">Haskell</a> code that
 parses and uses <abbr>TZif</abbr> data. It is freely
 available under a <abbr>BSD</abbr>-style license.</li>
 </ul>
+</section>
+
+<section>
 <h2 id="software">Other <code><abbr>tz</abbr></code>-based time zone software</h2>
 <ul>
 <li><a href="https://foxclocks.org">FoxClocks</a>
@@ -521,11 +622,6 @@ It is freely available under the <abbr>GPL</abbr>.</li>
 implementations contain a copy of a 32-bit subset of a recent
 <code><abbr>tz</abbr></code> database in a
 Go-specific format.</li>
-<li><a
-href="http://users.skynet.be/Peter.Verthez/projects/intclock/">International
-clock (intclock)</a> is a clock that displays multiple time zones on
-<abbr>GNU</abbr>/Linux and similar systems. It is freely available
-under the <abbr>GPL</abbr>.</li>
 <li>Microsoft Windows 8.1
 and later has <code><abbr>tz</abbr></code> data and <abbr>CLDR</abbr>
 data (mentioned <a href="#CLDR">below</a>) used by the
@@ -542,7 +638,7 @@ which stores time zone data in the
 <a
 href="https://unicode.org/cldr/charts/latest/supplemental/zone_tzid.html">Zone &rarr;
 Tzid table</a> or <a
-href="https://unicode.org/repos/cldr/trunk/common/supplemental/windowsZones.xml"><abbr>XML</abbr>
+href="https://github.com/unicode-org/cldr/blob/master/common/supplemental/windowsZones.xml"><abbr>XML</abbr>
 file</a> of the <abbr>CLDR</abbr> data maps proprietary zone IDs
 to <code><abbr>tz</abbr></code> names.
 These mappings can be performed programmatically via the <a href="https://github.com/mj1856/TimeZoneConverter">TimeZoneConverter</a> .NET library,
@@ -562,16 +658,16 @@ a macOS program. Its developers
 <a href="http://veladg.com/tzoffer.html">offer free
 licenses</a> to <code><abbr>tz</abbr></code> contributors.</li>
 </ul>
+</section>
+
+<section>
 <h2 id="other-dbs">Other time zone databases</h2>
 <ul>
 <li><a href="https://www.astro.com/atlas">Time-zone Atlas</a>
 is Astrodienst's Web version of Shanks and Pottenger's out-of-print
 time zone history atlases
 <a href="https://www.worldcat.org/oclc/468828649">for the US</a> and
-<a href="https://www.worldcat.org/oclc/76950459">for the world</a>,
-now published in <a
-href="https://astrocom.com/astrology-products/software/acs-atlas-software">software</a>
-form by <a href="https://astrocom.com">ACS-Starcrafts</a>.
+<a href="https://www.worldcat.org/oclc/76950459">for the world</a>.
 Although these extensive atlases
 <a href="https://astrologynewsservice.com/opinion/how-astrologers-contributed-to-the-information-age-a-brief-history-of-time/">were
 sources for much of the older <code><abbr>tz</abbr></code> data</a>,
@@ -590,23 +686,28 @@ Schedules Information Manual</a> of the
 International Air Transport Association
 gives current time zone rules for airports served by commercial aviation.</li>
 </ul>
+</section>
+
+<section>
 <h2 id="maps">Maps</h2>
 <ul>
-<li>The <a href="https://www.cia.gov/index.html">United States Central
-Intelligence Agency (<abbr
-title="Central Intelligence Agency">CIA</abbr>)</a> publishes a <a
-href="https://www.cia.gov/library/publications/the-world-factbook/graphics/ref_maps/physical/pdf/standard_time_zones_of_the_world.pdf">time
-zone map</a>; the
+<li>The <a
+href="https://www.cia.gov/the-world-factbook/maps/world-regional/">World
+and Regional Maps section</a> of <em>The World Factbook</em>, published by the
+<a href="https://www.cia.gov">US Central Intelligence
+Agency (<abbr
+title="Central Intelligence Agency">CIA</abbr>)</a>, contains a time
+zone map; the
 <a
-href="https://www.lib.utexas.edu/maps/world.html">Perry&ndash;Casta&ntilde;eda
+href="https://legacy.lib.utexas.edu/maps/world.html">Perry&ndash;Casta&ntilde;eda
 Library Map Collection</a>
 of the University of Texas at Austin has copies of
 recent editions.
 The pictorial quality is good,
 but the maps do not indicate daylight saving time,
 and parts of the data are a few years out of date.</li>
-<li><a href="https://www.worldtimezone.com">Current time around the world
-and standard time zones map of the world</a>
+<li><a href="https://www.worldtimezone.com">World Time Zone Map
+with current time</a>
 has several fancy time zone maps; it covers Russia particularly well.
 The maps' pictorial quality is not quite as good as the
 <abbr>CIA</abbr>'s
@@ -617,9 +718,14 @@ much is time wrong around the world?</a> maps the difference between
 mean solar and standard time, highlighting areas such as western China
 where the two differ greatly. It's a bit out of date, unfortunately.</li>
 </ul>
+</section>
+
+<section>
 <h2 id="boundaries">Time zone boundaries</h2>
 <p>Geographical boundaries between timezones are available
-from several <a href="https://en.wikipedia.org/wiki/Geolocation">geolocation</a>
+from several <a
+href="https://en.wikipedia.org/wiki/Internet_geolocation">Internet
+geolocation</a>
 services and other sources.</p>
 <ul>
 <li><a href="https://github.com/evansiroky/timezone-boundary-builder">Timezone
@@ -661,7 +767,7 @@ href="https://www.geonames.org/export/web-services.html#timezone">GeoNames
 Timezone web service</a>, the <a
 href="https://developers.google.com/maps/documentation/timezone/intro">Google
 Maps Time Zone API</a>, and
-the <a href="https://timezonedb.com">Time Zone Database &amp; API</a>.
+the <a href="https://timezonedb.com/api">TimeZoneDB API</a>.
 Commercial network API access is provided
 by <a href="https://askgeo.com">AskGeo</a>
 and <a href="https://www.geogarage.com/blog/news-1/post/geogarage-time-zone-api-31">GeoGarage</a>.
@@ -673,7 +779,7 @@ coordinates?</a>" discusses other geolocation possibilities.</li>
 <li><a href="http://statoids.com/statoids.html">Administrative
 Divisions of Countries ("Statoids")</a> lists
 political subdivision data related to time zones.</li>
-<li><a href="http://home.kpn.nl/vanadovv/time/Multizones.html">Time
+<li><a href="https://home.kpn.nl/vanadovv/time/Multizones.html">Time
 zone boundaries for multizone countries</a> summarizes legal
 boundaries between time zones within countries.</li>
 <li><a href="http://manifold.net/info/freestuff.shtml">Manifold Software
@@ -691,6 +797,9 @@ for land and territorial waters only). A captain can change ship's
 clocks any time after entering a new time zone; midnight changes are
 common.</li>
 </ul>
+</section>
+
+<section>
 <h2 id="civil">Civil time concepts and history</h2>
 <ul>
 <li><a href="https://www.nist.gov/pml/time-and-frequency-division/popular-links/walk-through-time">A
@@ -712,19 +821,25 @@ time zone boundary.</li>
 <li><a href="http://statoids.com/tconcept.html">Basic Time
 Zone Concepts</a> discusses terminological issues behind time zones.</li>
 </ul>
+</section>
+
+<section>
 <h2 id="national">National histories of legal time</h2>
 <dl>
 <dt>Australia</dt>
-<dd>The Parliamentary Library has commissioned a <a
+<dd>The Parliamentary Library commissioned a <a
 href="https://www.aph.gov.au/binaries/library/pubs/rp/2009-10/10rp10.pdf">research
 paper on daylight saving time in Australia</a>.
 The Bureau of Meteorology publishes a list of <a
 href="http://www.bom.gov.au/climate/averages/tables/dst_times.shtml">Implementation
 Dates of Daylight Savings Time within Australia</a>.</dd>
 <dt>Belgium</dt>
-<dd>The Royal Observatory of Belgium maintains a table of <a
-href="https://www.astro.oma.be/GENERAL/INFO/nli001a.html"
-hreflang="nl">time in Belgium (in Dutch)</a>.</dd>
+<dd>The Royal Observatory of Belgium maintains a table of time in
+Belgium (in
+<a href="https://www.astro.oma.be/GENERAL/INFO/nli001a.html"
+hreflang="nl">Dutch</a> and <a
+href="https://www.astro.oma.be/GENERAL/INFO/fri001a.html"
+hreflang="fr">French</a>).</dd>
 <dt>Brazil</dt>
 <dd>The Time Service Department of the National Observatory
 records <a href="http://pcdsh01.on.br/DecHV.html"
@@ -733,18 +848,18 @@ Portuguese)</a>.</dd>
 <dt>Canada</dt>
 <dd>National Research Council Canada publishes current
 and some older information about <a
-href="https://www.nrc-cnrc.gc.ca/eng/services/time/time_zones.html">time
-zones &amp; daylight saving time</a>.</dd>
+href="https://nrc.canada.ca/en/certifications-evaluations-standards/canadas-official-time/time-zones-daylight-saving-time">time
+zones and daylight saving time</a>.</dd>
 <dt>Chile</dt>
 <dd>The Hydrographic and Oceanographic Service of the Chilean Navy publishes a
 <a href="https://www.horaoficial.cl/historia_hora.html" hreflang="es">history of
 Chile's official time (in Spanish)</a>.</dd>
 <dt>China</dt>
 <dd>The Hong Kong Observatory maintains a
-<a href="https://www.hko.gov.hk/gts/time/Summertime.htm">history of
+<a href="https://www.hko.gov.hk/en/gts/time/Summertime.htm">history of
  summer time in Hong Kong</a>,
 and Macau's Meteorological and Geophysical Bureau maintains a <a
-href="http://www.smg.gov.mo/smg/geophysics/e_t_Summer%20Time.htm">similar
+href="https://www.smg.gov.mo/en/subpage/224/page/174">similar
 history for Macau</a>.
 Unfortunately the latter is incomplete and has errors.</dd>
 <dt>Czech Republic</dt>
@@ -759,10 +874,6 @@ of Legal Time in Germany</a>.</dd>
 <dd>The Interior Ministry periodically issues <a
 href="ftp://ftp.cs.huji.ac.il/pub/tz/announcements"
 hreflang="he">announcements (in Hebrew)</a>.</dd>
-<dt>Italy</dt>
-<dd>The National Institute of Metrological Research maintains a
-<a href="http://oldsite.inrim.it/res/tf/ora_legale_i.shtml" hreflang="it">table
-of civil time (in Italian)</a>.</dd>
 <dt>Malaysia</dt>
 <dd>See Singapore <a href="#Singapore">below</a>.</dd>
 <dt>Mexico</dt>
@@ -777,22 +888,17 @@ covers the history of local time in the Netherlands from ancient times.</dd>
 <dt>New Zealand</dt>
 <dd>The Department of Internal Affairs maintains a brief <a
 href="https://www.dia.govt.nz/Daylight-Saving-History">History of
-Daylight Saving</a>. The privately-maintained <a
-href="http://astrologyschool.com/nztime.html">History of New Zealand
-time</a> has more details.</dd>
+Daylight Saving</a>.</dd>
 <dt>Singapore</dt>
 <dd><a id="Singapore"
-href="http://www.math.nus.edu.sg/aslaksen/teaching/timezone.html">Why
+href="https://web.archive.org/web/20190822231045/http://www.math.nus.edu.sg/~mathelmr/teaching/timezone.html">Why
 is Singapore in the "Wrong" Time Zone?</a> details the
 history of legal time in Singapore and Malaysia.</dd>
 <dt>United Kingdom</dt>
 <dd><a
 href="https://www.polyomino.org.uk/british-time/">History of
 legal time in Britain</a> discusses in detail the country
-with perhaps the best-documented history of clock adjustments.
-The National Physical Laboratory also maintains an <a
-href="http://www.npl.co.uk/educate-explore/what-is-time/archive-of-summer-time-dates">Archive
-of Summer time dates</a>.</dd>
+with perhaps the best-documented history of clock adjustments.</dd>
 <dt>United States</dt>
 <dd>The Department of Transportation's <a
 href="https://www.transportation.gov/regulations/recent-time-zone-proceedings">Recent
@@ -800,9 +906,54 @@ Time Zone Proceedings</a> lists changes to time zone boundaries.</dd>
 <dt>Uruguay</dt>
 <dd>The Oceanography, Hydrography, and Meteorology Service of the Uruguayan
 Navy (SOHMA) publishes an annual <a
-href="http://www.armada.mil.uy/Pagina/institucion/dimat/sohma/almanaque.html" hreflang="es">almanac
+href="http://sohma.armada.mil.uy/index.php/servicios/datos-astronomicos" hreflang="es">almanac
 (in Spanish)</a>.</dd>
 </dl>
+</section>
+
+<section>
+<h2 id="costs">Costs and benefits of time shifts</h2>
+<p>Various sources argue for and against daylight saving time and time
+zone shifts, and many scientific studies have been conducted. This
+section summarizes reviews and position statements based on
+scientific literature in the area.</p>
+<ul>
+<li>Carey RN, Sarma KM.
+<a href="https://bmjopen.bmj.com/content/7/6/e014319.long">Impact of
+daylight saving time on road traffic collision risk: a systematic
+review</a>.
+<em>BMJ Open.</em> 2017;7(6):e014319. doi:<a href="https://doi.org/10.1136/bmjopen-2016-014319">10.1136/bmjopen-2016-014319</a>.
+This reviews research literature and concludes that the evidence
+neither supports nor refutes road safety benefits from
+shifts in time zones.</li>
+<li>Havranek T, Herman D, Irsova D.
+<a href="https://www.econstor.eu/handle/10419/174191">Does daylight
+saving save electricity? A meta-analysis</a>. <em>Energy J.</em>
+2018;39(2).
+doi:<a href="https://doi.org/10.5547/01956574.39.2.thav">10.5547/01956574.39.2.thav</a>.
+This analyzes research literature and concludes, "Electricity savings
+are larger for countries farther away from the equator, while
+subtropical regions consume more electricity because of DST."</li>
+<li>Rishi MA, Ahmed O, Barrantes Perez JH <em>et al</em>.
+<a href="https://jcsm.aasm.org/doi/10.5664/jcsm.8780">Daylight saving time:
+an American Academy of Sleep Medicine position statement</a>.
+<em>J Clin Sleep Med.</em>
+2020;<a href="https://doi.org/10.5664/jcsm.8780">10.5664/jcsm.8780</a>.
+This argues for permanent standard time due to health risks of both
+DST transitions and permanent DST.</li>
+<li>Roenneberg T, Winnebeck EC, Klerman EB.
+<a href="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6692659/">Daylight
+saving time and artificial time zones &ndash; a battle between
+biological and social times</a>. <em>Front Physiol.</em> 2019;10:944.
+doi:<a href="https://doi.org/10.3389/fphys.2019.00944">10.3389/fphys.2019.00944</a>.
+This reviews evidence about the health effects of DST and concludes,
+"In summary, the scientific literature strongly argues against the
+switching between DST and Standard Time and even more so against
+adopting DST permanently."</li>
+</ul>
+</section>
+
+<section>
 <h2 id="precision">Precision timekeeping</h2>
 <ul>
 <li><a
@@ -860,14 +1011,31 @@ scales used by each landed mission on Mars.</li>
 dedicated not only to leap seconds but to precise time and frequency
 in general. It covers the state of the art in amateur timekeeping, and
 how the art has progressed over the past few decades.</li>
+<li>The rules for leap seconds are specified in Annex 1 (Time scales) of <a
+href="https://www.itu.int/rec/R-REC-TF.460-6-200202-I/">Standard-frequency
+and time-signal emissions</a>, International Telecommunication Union &ndash;
+Radiocommunication Sector (ITU-R) Recommendation TF.460-6 (02/2002).</li>
 <li><a
 href="https://www.iers.org/IERS/EN/Publications/Bulletins/bulletins.html"><abbr
 title="International Earth Rotation and Reference Systems Service">IERS</abbr>
 Bulletins</a> contains official publications of the International
 Earth Rotation and Reference Systems Service, which decides when leap
 seconds occur. The <code><abbr>tz</abbr></code> code and data support leap seconds
-via an optional "<code>right</code>" configuration, as opposed to the
-default "<code>posix</code>" configuration.</li>
+via an optional "<code>right</code>" configuration where a computer's internal
+<code>time_t</code> integer clock counts every <abbr>TAI</abbr> second,
+as opposed to the default "<code>posix</code>" configuration
+where the internal clock ignores leap seconds.
+The two configurations agree for timestamps starting with 1972-01-01 00:00:00
+<abbr>UTC</abbr> (<code>time_t</code> 63&thinsp;072&thinsp;000) and diverge for
+timestamps starting with <code>time_t</code> 78&thinsp;796&thinsp;800,
+which corresponds to the first leap second
+1972-06-30 23:59:60 <abbr>UTC</abbr> in the "<code>right</code>" configuration,
+and to
+1972-07-01 00:00:00 <abbr>UTC</abbr> in the "<code>posix</code>" configuration.
+In practice the two configurations also agree for timestamps before
+1972 even though the historical situation is messy, partly because
+neither <abbr>UTC</abbr> nor <abbr>TAI</abbr>
+is well-defined for sufficiently-old timestamps.</li>
 <li><a href="https://developers.google.com/time/smear">Leap Smear</a>
 discusses how to gradually adjust <abbr>POSIX</abbr> clocks near a
 leap second so that they disagree with <abbr>UTC</abbr> by at most a
@@ -876,7 +1044,12 @@ sixty seconds. This approach works with the default <code><abbr>tz</abbr></code>
 "<code>posix</code>" configuration, is <a
 href="http://bk1.ntp.org/ntp-stable/README.leapsmear">supported</a> by
 the <abbr>NTP</abbr> reference implementation, and is used by major
-cloud service providers.</li>
+cloud service providers. However, according to
+<a href="https://tools.ietf.org/html/rfc8633#section-3.7.1">&sect;3.7.1 of
+Network Time Protocol Best Current Practices</a>
+(Internet <abbr>RFC</abbr> 8633), leap smearing is not suitable for
+applications requiring accurate <abbr>UTC</abbr> or civil time,
+and is intended for use only in single, well-controlled environments.</li>
 <li>The <a
 href="https://pairlist6.pair.net/mailman/listinfo/leapsecs">Leap
 Second Discussion List</a> covers <a
@@ -891,6 +1064,9 @@ without Leap Seconds</a> gives pointers on this
 contentious issue, which was active until 2015 and could become active
 again.</li>
 </ul>
+</section>
+
+<section>
 <h2 id="notation">Time notation</h2>
 <ul>
 <li>The <a id="CLDR" href="http://cldr.unicode.org">Unicode Common Locale Data
@@ -905,14 +1081,14 @@ both <abbr title="Locale Data Markup Language">LDML</abbr>
 (an <abbr>XML</abbr> format) and <abbr>JSON</abbr>.
 <li>
 <a href="https://www.cl.cam.ac.uk/~mgk25/iso-time.html">A summary of
-the international standard date and time notation</a> is a good
-summary of
+the international standard date and time notation</a> covers
 <a
-href="https://www.iso.org/standard/40874.html"><em><abbr>ISO</abbr>
-8601:2004 &ndash; Data elements and interchange formats &ndash; Information
-interchange &ndash; Representation of dates and times</em></a>.</li>
+href="https://www.iso.org/standard/70907.html"><em><abbr
+title="International Organization for Standardization">ISO</abbr>
+8601-1:2019 &ndash; Date and time &ndash; Representations for information
+interchange &ndash; Part 1: Basic rules</em></a>.</li>
 <li>
-<a href="https://www.w3.org/TR/xmlschema-2/#dateTime"><abbr>XML</abbr>
+<a href="https://www.w3.org/TR/xmlschema/#dateTime"><abbr>XML</abbr>
 Schema: Datatypes &ndash; dateTime</a> specifies a format inspired by
 <abbr>ISO</abbr> 8601 that is in common use in <abbr>XML</abbr> data.</li>
 <li><a href="https://tools.ietf.org/html/rfc5322#section-3.3">&sect;3.3 of
@@ -927,7 +1103,7 @@ specifies an <abbr>ISO</abbr> 8601
 profile for use in new Internet
 protocols.</li>
 <li>
-<a href="https://www.hackcraft.net/web/datetime/">Date &amp; Time
+<a href="https://web.archive.org/web/20190130042457/https://www.hackcraft.net/web/datetime/">Date &amp; Time
 Formats on the Web</a> surveys web- and Internet-oriented date and time
 formats.</li>
 <li>Alphabetic time zone abbreviations should not be used as unique
@@ -959,18 +1135,24 @@ any future changes to the rules. One should never set
 local time is nine hours ahead of <abbr>UT</abbr> and the time zone
 is called "<abbr>GMT</abbr>".</li>
 </ul>
+</section>
+
+<section>
 <h2 id="see-also">See also</h2>
 <ul>
-<li><a href="theory.html">Theory and pragmatics of the tz code and data</a></li>
+<li><a href="theory.html">Theory and pragmatics of the
+<code><abbr>tz</abbr></code> code and data</a></li>
 <li><a href="tz-art.html">Time and the Arts</a></li>
 </ul>
+</section>
+
+<footer>
 <hr>
-<address>
 This web page is in the public domain, so clarified as of
 2009-05-17 by Arthur David Olson.
 <br>
 Please send corrections to this web page to the
 <a href="mailto:tz@iana.org">time zone mailing list</a>.
-</address>
+</footer>
 </body>
 </html>

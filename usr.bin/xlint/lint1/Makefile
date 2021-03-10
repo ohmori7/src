@@ -1,10 +1,11 @@
-#	$NetBSD: Makefile,v 1.52 2015/04/04 19:32:06 christos Exp $
+#	$NetBSD: Makefile,v 1.62 2021/02/20 18:10:22 rillig Exp $
 
 .include <bsd.own.mk>
 
 PROG=		lint1
-SRCS=		cgram.y decl.c emit.c emit1.c err.c func.c init.c inittyp.c \
-		main1.c mem.c mem1.c print.c scan.l tree.c tyname.c
+SRCS=		cgram.y ckgetopt.c decl.c emit.c emit1.c err.c \
+		func.c init.c inittyp.c lex.c \
+		main1.c mem.c mem1.c oper.c print.c scan.l tree.c tyname.c
 
 MAN=		lint.7
 YHEADER=
@@ -13,12 +14,15 @@ YHEADER=
 #YFLAGS+=-v
 #LFLAGS+=-d
 
-CPPFLAGS+=	-I${.CURDIR} -I. -DPASS=\"${PROG}.h\"
+CWARNFLAGS.clang+=	-Wno-error=implicit-int-float-conversion
 
-LINTFLAGS=	-aehpz
+CPPFLAGS+=	-I${.CURDIR} -I. -DPASS=\"${PROG}.h\"
+CPPFLAGS+=	${DEBUG:D-DDEBUG}
+
 BINDIR=		/usr/libexec
 
 CLEANFILES+=	${MAN}
+CLEANFILES+=	*.gcno *.gcda *.gcov
 
 .if ${USETOOLS} == "yes"
 LINT1=		${TOOLDIR}/libexec/${MACHINE_GNU_PLATFORM}-lint1
@@ -37,9 +41,49 @@ LDADD+=		-ll
 DPADD+=		${LIBL}
 .endif
 
-.include "Makefile.ops-h"
-.include "Makefile.ops-c"
+oper.o: ops.def
+
+.include "Makefile.err-msgs-h"
+${SRCS:Nerr.c}: err-msgs.h
+
+add-test: .PHONY
+	@set -eu; \
+	test=${NAME:Q}; \
+	[ "$$test" ] || { \
+		echo "usage: ${MAKE} add-test NAME=<name>"; \
+		exit; \
+	}; \
+	\
+	cd '../../../tests/usr.bin/xlint/lint1'; \
+	if [ -f "$$test.c" ]; then \
+		echo "error: test $$test already exists in $$PWD."; \
+		exit 1; \
+	fi; \
+	\
+	echo "=> Adding test $$test"; \
+	printf '%s\n' \
+		'/*	$$''NetBSD$$	*/' \
+		"# 3 \"$$test.c\"" \
+		'' \
+		'/*' \
+		' * TODO: Explain the purpose of the test.' \
+		'*/' \
+		'' \
+		'/* lint1-extra-flags: -p */' \
+		'' \
+		'// TODO: Add some code that passes.' \
+		'// TODO: Add some code that fails.' \
+	> "$$test.c"; \
+	> "$$test.exp"; \
+	cvs add "$$test.c" "$$test.exp"; \
+	printf '%s\n' \
+		'/^FILES+=/i' \
+		"FILES+=		$$test.c" \
+		"FILES+=		$$test.exp" \
+		'.' 'w' 'q' \
+	| ed Makefile; \
+	${MAKE} sync-mi; \
+	printf '%s\n' '/^test_case /i' "test_case $$test" '.' 'w' 'q' \
+	| ed t_integration.sh
 
 .include <bsd.prog.mk>
-
-${SRCS}: ops.h

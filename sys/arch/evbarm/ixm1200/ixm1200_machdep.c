@@ -1,4 +1,4 @@
-/*	$NetBSD: ixm1200_machdep.c,v 1.61 2018/10/28 14:30:31 skrll Exp $ */
+/*	$NetBSD: ixm1200_machdep.c,v 1.65 2020/04/18 11:00:40 skrll Exp $ */
 
 /*
  * Copyright (c) 2002, 2003
@@ -61,13 +61,12 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: ixm1200_machdep.c,v 1.61 2018/10/28 14:30:31 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ixm1200_machdep.c,v 1.65 2020/04/18 11:00:40 skrll Exp $");
 
 #include "opt_arm_debug.h"
 #include "opt_console.h"
 #include "opt_ddb.h"
 #include "opt_modular.h"
-#include "opt_pmap_debug.h"
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -163,13 +162,9 @@ paddr_t msgbufphys;
 
 extern int end;
 
-#ifdef PMAP_DEBUG
-extern int pmap_debug_level;
-#endif  /* PMAP_DEBUG */
-
 #define KERNEL_PT_SYS		0	/* Page table for mapping proc0 zero page */
 #define KERNEL_PT_KERNEL	1	/* Page table for mapping kernel */
-#define KERNEL_PT_KERNEL_NUM	2	
+#define KERNEL_PT_KERNEL_NUM	2
 #define KERNEL_PT_IO		(KERNEL_PT_KERNEL + KERNEL_PT_KERNEL_NUM)
 					/* Page table for mapping IO */
 #define KERNEL_PT_VMDATA	(KERNEL_PT_IO + 1)
@@ -323,7 +318,7 @@ static const struct pmap_devmap ixm1200_devmap[] = {
  *   Setting up page tables for the kernel
  *   Relocating the kernel to the bottom of physical memory
  */
-u_int
+vaddr_t
 initarm(void *arg)
 {
         int loop;
@@ -362,10 +357,6 @@ initarm(void *arg)
 	kerneldatasize = (uint32_t)&end - (uint32_t)KERNEL_TEXT_BASE;
 
 	symbolsize = 0;
-
-#ifdef PMAP_DEBUG
-	pmap_debug(-1);
-#endif
 
 #if NKSYMS || defined(DDB) || defined(MODULAR)
         if (! memcmp(&end, "\177ELF", 4)) {
@@ -453,10 +444,10 @@ initarm(void *arg)
 	valloc_pages(kernelstack, UPAGES);
 
 #ifdef VERBOSE_INIT_ARM
-	printf("IRQ stack: p0x%08lx v0x%08lx\n", irqstack.pv_pa, irqstack.pv_va); 
-	printf("ABT stack: p0x%08lx v0x%08lx\n", abtstack.pv_pa, abtstack.pv_va); 
-	printf("UND stack: p0x%08lx v0x%08lx\n", undstack.pv_pa, undstack.pv_va); 
-	printf("SVC stack: p0x%08lx v0x%08lx\n", kernelstack.pv_pa, kernelstack.pv_va); 
+	printf("IRQ stack: p0x%08lx v0x%08lx\n", irqstack.pv_pa, irqstack.pv_va);
+	printf("ABT stack: p0x%08lx v0x%08lx\n", abtstack.pv_pa, abtstack.pv_va);
+	printf("UND stack: p0x%08lx v0x%08lx\n", undstack.pv_pa, undstack.pv_va);
+	printf("SVC stack: p0x%08lx v0x%08lx\n", kernelstack.pv_pa, kernelstack.pv_va);
 #endif
 
 	alloc_pages(msgbufphys, round_page(MSGBUFSIZE) / PAGE_SIZE);
@@ -524,7 +515,7 @@ initarm(void *arg)
 
 		textsize = (textsize + PGOFSET) & ~PGOFSET;
 		totalsize = (totalsize + PGOFSET) & ~PGOFSET;
-                
+
 		logical = 0x00200000;   /* offset of kernel in RAM */
 
 		logical += pmap_map_chunk(l1pagetable, KERNEL_BASE + logical,
@@ -583,7 +574,7 @@ initarm(void *arg)
 
 	/*
 	 * Map the Dcache Flush page.
-	 * Hw Ref Manual 3.2.4.5 Software Dcache Flush 
+	 * Hw Ref Manual 3.2.4.5 Software Dcache Flush
 	 */
 	pmap_map_chunk(l1pagetable, ixp12x0_cache_clean_addr, 0xe0000000,
 	    CPU_IXP12X0_CACHE_CLEAN_SIZE, VM_PROT_READ, PTE_CACHE);
@@ -638,11 +629,10 @@ initarm(void *arg)
 	    abtstack.pv_va + ABT_STACK_SIZE * PAGE_SIZE);
 	set_stackptr(PSR_UND32_MODE,
 	    undstack.pv_va + UND_STACK_SIZE * PAGE_SIZE);
-#ifdef PMAP_DEBUG
-	if (pmap_debug_level >= 0)
-		printf("kstack V%08lx P%08lx\n", kernelstack.pv_va,
-		    kernelstack.pv_pa);
-#endif  /* PMAP_DEBUG */
+#ifdef VERBOSE_INIT_ARM
+	printf("kstack V%08lx P%08lx\n", kernelstack.pv_va,
+	    kernelstack.pv_pa);
+#endif  /* VERBOSE_INIT_ARM */
 
 	/*
 	 * Well we should set a data abort handler.
@@ -724,7 +714,7 @@ initarm(void *arg)
 #endif
 
 	/* We return the new stack pointer address */
-	return(kernelstack.pv_va + USPACE_SVC_STACK_TOP);
+	return kernelstack.pv_va + USPACE_SVC_STACK_TOP;
 }
 
 void

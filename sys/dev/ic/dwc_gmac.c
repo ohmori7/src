@@ -1,4 +1,4 @@
-/* $NetBSD: dwc_gmac.c,v 1.62 2019/05/23 13:10:51 msaitoh Exp $ */
+/* $NetBSD: dwc_gmac.c,v 1.72 2020/12/31 15:09:12 ryo Exp $ */
 
 /*-
  * Copyright (c) 2013, 2014 The NetBSD Foundation, Inc.
@@ -41,7 +41,7 @@
 
 #include <sys/cdefs.h>
 
-__KERNEL_RCSID(1, "$NetBSD: dwc_gmac.c,v 1.62 2019/05/23 13:10:51 msaitoh Exp $");
+__KERNEL_RCSID(1, "$NetBSD: dwc_gmac.c,v 1.72 2020/12/31 15:09:12 ryo Exp $");
 
 /* #define	DWC_GMAC_DEBUG	1 */
 
@@ -57,6 +57,7 @@ __KERNEL_RCSID(1, "$NetBSD: dwc_gmac.c,v 1.62 2019/05/23 13:10:51 msaitoh Exp $"
 #include <sys/systm.h>
 #include <sys/sockio.h>
 #include <sys/cprng.h>
+#include <sys/rndsource.h>
 
 #include <net/if.h>
 #include <net/if_ether.h>
@@ -179,10 +180,6 @@ static void dwc_dump_status(struct dwc_gmac_softc *);
 static void dwc_gmac_dump_ffilt(struct dwc_gmac_softc *, uint32_t);
 #endif
 
-#ifdef NET_MPSAFE
-#define DWCGMAC_MPSAFE	1
-#endif
-
 int
 dwc_gmac_attach(struct dwc_gmac_softc *sc, int phy_id, uint32_t mii_clk)
 {
@@ -205,7 +202,7 @@ dwc_gmac_attach(struct dwc_gmac_softc *sc, int phy_id, uint32_t mii_clk)
 		 */
 		KASSERT(prop_object_type(ea) == PROP_TYPE_DATA);
 		KASSERT(prop_data_size(ea) == ETHER_ADDR_LEN);
-		memcpy(enaddr, prop_data_data_nocopy(ea), ETHER_ADDR_LEN);
+		memcpy(enaddr, prop_data_value(ea), ETHER_ADDR_LEN);
 	} else {
 		/*
 		 * If we did not get an externaly configure address,
@@ -256,6 +253,16 @@ dwc_gmac_attach(struct dwc_gmac_softc *sc, int phy_id, uint32_t mii_clk)
 		sc->sc_descm = &desc_methods_enhanced;
 	} else {
 		sc->sc_descm = &desc_methods_standard;
+	}
+	if (hwft & GMAC_DMA_FEAT_RMON) {
+		uint32_t val;
+
+		/* Mask all MMC interrupts */
+		val = 0xffffffff;
+		bus_space_write_4(sc->sc_bst, sc->sc_bsh,
+		    GMAC_MMC_RX_INT_MSK, val);
+		bus_space_write_4(sc->sc_bst, sc->sc_bsh,
+		    GMAC_MMC_TX_INT_MSK, val);
 	}
 
 	/*
@@ -333,6 +340,8 @@ dwc_gmac_attach(struct dwc_gmac_softc *sc, int phy_id, uint32_t mii_clk)
 	ether_ifattach(ifp, enaddr);
 	ether_set_ifflags_cb(&sc->sc_ec, dwc_gmac_ifflags_cb);
 	if_register(ifp);
+	rnd_attach_source(&sc->rnd_source, device_xname(sc->sc_dev),
+	    RND_TYPE_NET, RND_FLAG_DEFAULT);
 
 	/*
 	 * Enable interrupts
@@ -370,7 +379,7 @@ dwc_gmac_reset(struct dwc_gmac_softc *sc)
 	bus_space_write_4(sc->sc_bst, sc->sc_bsh, AWIN_GMAC_DMA_BUSMODE,
 	    bus_space_read_4(sc->sc_bst, sc->sc_bsh, AWIN_GMAC_DMA_BUSMODE)
 	    | GMAC_BUSMODE_RESET);
-	for (cnt = 0; cnt < 3000; cnt++) {
+	for (cnt = 0; cnt < 30000; cnt++) {
 		if ((bus_space_read_4(sc->sc_bst, sc->sc_bsh, AWIN_GMAC_DMA_BUSMODE)
 		    & GMAC_BUSMODE_RESET) == 0)
 			return 0;
@@ -500,15 +509,22 @@ dwc_gmac_alloc_rx_ring(struct dwc_gmac_softc *sc,
 			error = ENOMEM;
 			goto fail;
 		}
+		data->rd_m->m_len = data->rd_m->m_pkthdr.len
+		    = data->rd_m->m_ext.ext_size;
+		if (data->rd_m->m_len > AWGE_MAX_PACKET) {
+			data->rd_m->m_len = data->rd_m->m_pkthdr.len
+			    = AWGE_MAX_PACKET;
+		}
 
-		error = bus_dmamap_load(sc->sc_dmat, data->rd_map,
-		    mtod(data->rd_m, void *), MCLBYTES, NULL,
-		    BUS_DMA_READ | BUS_DMA_NOWAIT);
+		error = bus_dmamap_load_mbuf(sc->sc_dmat, data->rd_map,
+		    data->rd_m, BUS_DMA_READ | BUS_DMA_NOWAIT);
 		if (error != 0) {
 			aprint_error_dev(sc->sc_dev,
 			    "could not load rx buf DMA map #%d", i);
 			goto fail;
 		}
+		bus_dmamap_sync(sc->sc_dmat, data->rd_map, 0,
+		    data->rd_map->dm_mapsize, BUS_DMASYNC_PREREAD);
 		physaddr = data->rd_map->dm_segs[0].ds_addr;
 
 		desc = &sc->sc_rxq.r_desc[i];
@@ -517,7 +533,7 @@ dwc_gmac_alloc_rx_ring(struct dwc_gmac_softc *sc,
 		desc->ddesc_next = htole32(ring->r_physaddr
 		    + next * sizeof(*desc));
 		sc->sc_descm->rx_init_flags(desc);
-		sc->sc_descm->rx_set_len(desc, AWGE_MAX_PACKET);
+		sc->sc_descm->rx_set_len(desc, data->rd_m->m_len);
 		sc->sc_descm->rx_set_owned_by_dev(desc);
 	}
 
@@ -539,13 +555,15 @@ dwc_gmac_reset_rx_ring(struct dwc_gmac_softc *sc,
 	struct dwc_gmac_rx_ring *ring)
 {
 	struct dwc_gmac_dev_dmadesc *desc;
+	struct dwc_gmac_rx_data *data;
 	int i;
 
 	mutex_enter(&ring->r_mtx);
 	for (i = 0; i < AWGE_RX_RING_COUNT; i++) {
 		desc = &sc->sc_rxq.r_desc[i];
+		data = &sc->sc_rxq.r_data[i];
 		sc->sc_descm->rx_init_flags(desc);
-		sc->sc_descm->rx_set_len(desc, AWGE_MAX_PACKET);
+		sc->sc_descm->rx_set_len(desc, data->rd_m->m_len);
 		sc->sc_descm->rx_set_owned_by_dev(desc);
 	}
 
@@ -695,7 +713,7 @@ fail:
 static void
 dwc_gmac_txdesc_sync(struct dwc_gmac_softc *sc, int start, int end, int ops)
 {
-	/* 'end' is pointing one descriptor beyound the last we want to sync */
+	/* 'end' is pointing one descriptor beyond the last we want to sync */
 	if (end > start) {
 		bus_dmamap_sync(sc->sc_dmat, sc->sc_dma_ring_map,
 		    TX_DESC_OFFSET(start),
@@ -1095,7 +1113,7 @@ dwc_gmac_ifflags_cb(struct ethercom *ec)
 	int ret = 0;
 
 	mutex_enter(sc->sc_lock);
-	int change = ifp->if_flags ^ sc->sc_if_flags;
+	u_short change = ifp->if_flags ^ sc->sc_if_flags;
 	sc->sc_if_flags = ifp->if_flags;
 
 	if ((change & ~(IFF_CANTCHANGE | IFF_DEBUG)) != 0) {
@@ -1184,7 +1202,7 @@ dwc_gmac_tx_intr(struct dwc_gmac_softc *sc)
 		if (data->td_m == NULL)
 			continue;
 
-		ifp->if_opackets++;
+		if_statinc(ifp, if_opackets);
 		nsegs = data->td_active->dm_nsegs;
 		bus_dmamap_sync(sc->sc_dmat, data->td_active, 0,
 		    data->td_active->dm_mapsize, BUS_DMASYNC_POSTWRITE);
@@ -1237,7 +1255,7 @@ dwc_gmac_rx_intr(struct dwc_gmac_softc *sc)
 			    "RX error: descriptor status %08x, skipping\n",
 			    le32toh(desc->ddesc_status0));
 #endif
-			ifp->if_ierrors++;
+			if_statinc(ifp, if_ierrors);
 			goto skip;
 		}
 
@@ -1256,14 +1274,18 @@ dwc_gmac_rx_intr(struct dwc_gmac_softc *sc)
 		 */
 		MGETHDR(mnew, M_DONTWAIT, MT_DATA);
 		if (mnew == NULL) {
-			ifp->if_ierrors++;
+			if_statinc(ifp, if_ierrors);
 			goto skip;
 		}
 		MCLGET(mnew, M_DONTWAIT);
 		if ((mnew->m_flags & M_EXT) == 0) {
 			m_freem(mnew);
-			ifp->if_ierrors++;
+			if_statinc(ifp, if_ierrors);
 			goto skip;
+		}
+		mnew->m_len = mnew->m_pkthdr.len = mnew->m_ext.ext_size;
+		if (mnew->m_len > AWGE_MAX_PACKET) {
+			mnew->m_len = mnew->m_pkthdr.len = AWGE_MAX_PACKET;
 		}
 
 		/* unload old DMA map */
@@ -1272,20 +1294,18 @@ dwc_gmac_rx_intr(struct dwc_gmac_softc *sc)
 		bus_dmamap_unload(sc->sc_dmat, data->rd_map);
 
 		/* and reload with new mbuf */
-		error = bus_dmamap_load(sc->sc_dmat, data->rd_map,
-		    mtod(mnew, void*), MCLBYTES, NULL,
-		    BUS_DMA_READ | BUS_DMA_NOWAIT);
+		error = bus_dmamap_load_mbuf(sc->sc_dmat, data->rd_map,
+		    mnew, BUS_DMA_READ | BUS_DMA_NOWAIT);
 		if (error != 0) {
 			m_freem(mnew);
 			/* try to reload old mbuf */
-			error = bus_dmamap_load(sc->sc_dmat, data->rd_map,
-			    mtod(data->rd_m, void*), MCLBYTES, NULL,
-			    BUS_DMA_READ | BUS_DMA_NOWAIT);
+			error = bus_dmamap_load_mbuf(sc->sc_dmat, data->rd_map,
+			    data->rd_m, BUS_DMA_READ | BUS_DMA_NOWAIT);
 			if (error != 0) {
 				panic("%s: could not load old rx mbuf",
 				    device_xname(sc->sc_dev));
 			}
-			ifp->if_ierrors++;
+			if_statinc(ifp, if_ierrors);
 			goto skip;
 		}
 		physaddr = data->rd_map->dm_segs[0].ds_addr;
@@ -1309,7 +1329,7 @@ skip:
 		    data->rd_map->dm_mapsize, BUS_DMASYNC_PREREAD);
 
 		sc->sc_descm->rx_init_flags(desc);
-		sc->sc_descm->rx_set_len(desc, AWGE_MAX_PACKET);
+		sc->sc_descm->rx_set_len(desc, data->rd_m->m_len);
 		sc->sc_descm->rx_set_owned_by_dev(desc);
 
 		bus_dmamap_sync(sc->sc_dmat, sc->sc_dma_ring_map,
@@ -1449,11 +1469,13 @@ dwc_gmac_intr(struct dwc_gmac_softc *sc)
 	 * Check error conditions
 	 */
 	if (dma_status & GMAC_DMA_INT_ERRORS) {
-		sc->sc_ec.ec_if.if_oerrors++;
+		if_statinc(&sc->sc_ec.ec_if, if_oerrors);
 #ifdef DWC_GMAC_DEBUG
 		dwc_dump_and_abort(sc, "interrupt error condition");
 #endif
 	}
+
+	rnd_add_uint32(&sc->rnd_source, dma_status);
 
 	/* ack interrupt */
 	if (dma_status)

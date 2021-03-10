@@ -1,4 +1,4 @@
-/*	$NetBSD: cats_machdep.c,v 1.87 2019/04/26 07:32:40 skrll Exp $	*/
+/*	$NetBSD: cats_machdep.c,v 1.89 2020/04/18 11:00:38 skrll Exp $	*/
 
 /*
  * Copyright (c) 1997,1998 Mark Brinicombe.
@@ -40,11 +40,10 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: cats_machdep.c,v 1.87 2019/04/26 07:32:40 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: cats_machdep.c,v 1.89 2020/04/18 11:00:38 skrll Exp $");
 
 #include "opt_ddb.h"
 #include "opt_modular.h"
-#include "opt_pmap_debug.h"
 
 #include "isadma.h"
 
@@ -114,12 +113,6 @@ BootConfig bootconfig;		/* Boot config storage */
 static char bootargs[MAX_BOOT_STRING + 1];
 char *boot_args = NULL;
 char *boot_file = NULL;
-
-
-#ifdef PMAP_DEBUG
-extern int pmap_debug_level;
-#endif
-
 
 /* Prototypes */
 
@@ -218,7 +211,7 @@ extern struct bus_space footbridge_pci_mem_bs_tag;
 void footbridge_pci_bs_tag_init(void);
 
 /*
- * u_int initarm(struct ebsaboot *bootinfo)
+ * vaddr_t initarm(struct ebsaboot *bootinfo)
  *
  * Initial entry point on startup. This gets called before main() is
  * entered.
@@ -231,7 +224,7 @@ void footbridge_pci_bs_tag_init(void);
  *   Relocating the kernel to the bottom of physical memory
  */
 
-u_int
+vaddr_t
 initarm(void *arm_bootargs)
 {
 	struct ebsaboot *bootinfo = arm_bootargs;
@@ -467,7 +460,7 @@ initarm(void *arm_bootargs)
 	cpu_reset_address_paddr = DC21285_ROM_BASE;
 
 	/* initarm_common returns the new stack pointer address */
-	u_int sp;
+	vaddr_t sp;
 	sp = initarm_common(KERNEL_VM_BASE, KERNEL_VM_SIZE, cats_physmem,
 	    ncats_physmem);
 

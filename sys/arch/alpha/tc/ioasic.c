@@ -1,4 +1,4 @@
-/* $NetBSD: ioasic.c,v 1.46 2014/03/26 08:09:06 christos Exp $ */
+/* $NetBSD: ioasic.c,v 1.48 2020/11/18 02:04:30 thorpej Exp $ */
 
 /*-
  * Copyright (c) 1997, 1998 The NetBSD Foundation, Inc.
@@ -61,13 +61,13 @@
 
 #include <sys/cdefs.h>			/* RCS ID & Copyright macro defns */
 
-__KERNEL_RCSID(0, "$NetBSD: ioasic.c,v 1.46 2014/03/26 08:09:06 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: ioasic.c,v 1.48 2020/11/18 02:04:30 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/systm.h>
 #include <sys/device.h>
-#include <sys/malloc.h>
+#include <sys/kmem.h>
 
 #include <machine/autoconf.h>
 #include <sys/bus.h>
@@ -192,14 +192,10 @@ ioasicattach(device_t parent, device_t self, void *aux)
 	 */
 	pevcnt = tc_intr_evcnt(parent, ta->ta_cookie);
 	for (i = 0; i < IOASIC_NCOOKIES; i++) {
-		static const size_t len = 12;
 		ioasicintrs[i].iai_func = ioasic_intrnull;
 		ioasicintrs[i].iai_arg = (void *)i;
 
-		cp = malloc(len, M_DEVBUF, M_NOWAIT);
-		if (cp == NULL)
-			panic("ioasicattach");
-		snprintf(cp, len, "slot %lu", i);
+		cp = kmem_asprintf("slot %lu", i);
 		evcnt_attach_dynamic(&ioasicintrs[i].iai_evcnt,
 		    EVCNT_TYPE_INTR, pevcnt, device_xname(self), cp);
 	}

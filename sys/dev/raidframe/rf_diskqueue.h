@@ -1,4 +1,4 @@
-/*	$NetBSD: rf_diskqueue.h,v 1.24 2011/05/05 06:04:09 mrg Exp $	*/
+/*	$NetBSD: rf_diskqueue.h,v 1.26 2020/06/19 19:29:39 jdolecek Exp $	*/
 /*
  * Copyright (c) 1995 Carnegie-Mellon University.
  * All rights reserved.
@@ -62,7 +62,7 @@ struct RF_DiskQueueData_s {
 					 * access is for */
 	RF_ReconUnitNum_t which_ru;	/* which RU within this parity stripe */
 	int     priority;	/* the priority of this request */
-	int     (*CompleteFunc) (void *, int);	/* function to be called upon
+	void    (*CompleteFunc) (void *, int);	/* function to be called upon
 						 * completion */
 	void   *argument;	/* argument to be passed to CompleteFunc */
 	RF_Raid_t *raidPtr;	/* needed for simulation */
@@ -74,8 +74,6 @@ struct RF_DiskQueueData_s {
 				 * targeted */
 	RF_DiskQueueDataFlags_t flags;	/* flags controlling operation */
 
-	struct proc *b_proc;	/* the b_proc from the original bp passed into
-				 * the driver for this I/O */
 	struct buf *bp;		/* a bp to use to get this I/O done */
 	/* TAILQ bits for a queue for completed I/O requests */
 	TAILQ_ENTRY(RF_DiskQueueData_s) iodone_entries;
@@ -141,11 +139,11 @@ int rf_DiskIOPromote(RF_DiskQueue_t *, RF_StripeNum_t,  RF_ReconUnitNum_t);
 RF_DiskQueueData_t *rf_CreateDiskQueueData(RF_IoType_t, RF_SectorNum_t,
 					   RF_SectorCount_t , void *,
 					   RF_StripeNum_t, RF_ReconUnitNum_t,
-					   int (*wakeF) (void *, int),
+					   void (*wakeF) (void *, int),
 					   void *,
 					   RF_AccTraceEntry_t *, RF_Raid_t *,
 					   RF_DiskQueueDataFlags_t,
-					   void *, int);
+					   const struct buf *, int);
 void rf_FreeDiskQueueData(RF_DiskQueueData_t *);
 int rf_ConfigureDiskQueue(RF_Raid_t *, RF_DiskQueue_t *,
 			  RF_RowCol_t, const RF_DiskQueueSW_t *,

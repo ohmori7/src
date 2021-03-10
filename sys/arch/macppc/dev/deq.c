@@ -1,4 +1,4 @@
-/*	$NetBSD: deq.c,v 1.16 2018/06/26 06:03:57 thorpej Exp $	*/
+/*	$NetBSD: deq.c,v 1.20 2021/01/27 02:17:27 thorpej Exp $	*/
 
 /*-
  * Copyright (C) 2005 Michael Lorenz
@@ -32,7 +32,7 @@
  */
  
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: deq.c,v 1.16 2018/06/26 06:03:57 thorpej Exp $");
+__KERNEL_RCSID(0, "$NetBSD: deq.c,v 1.20 2021/01/27 02:17:27 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -53,12 +53,12 @@ CFATTACH_DECL_NEW(deq, sizeof(struct deq_softc),
     deq_match, deq_attach, NULL, NULL);
 
 static const struct device_compatible_entry compat_data[] = {
-	{ "deq",		0 },
-	{ "tas3004",		0 },
-	{ "pcm3052",		0 },
-	{ "cs8416",		0 },
-	{ "codec",		0 },
-	{ NULL,			0 }
+	{ .compat = "deq" },
+	{ .compat = "tas3004" },
+	{ .compat = "pcm3052" },
+	{ .compat = "cs8416" },
+	{ .compat = "codec" },
+	DEVICE_COMPAT_EOL
 };
 
 int
@@ -88,10 +88,13 @@ deq_attach(device_t parent, device_t self, void *aux)
 	sc->sc_address = ia->ia_addr;
 	sc->sc_i2c = ia->ia_tag;
 	if (OF_getprop(sc->sc_node, "compatible", name, 256) <= 0) {
-		/* deq has no 'compatible' on my iBook G4 */
+		/* deq has no 'compatible' on my iBook G4 or Quicksilver */
 		switch (sc->sc_address) {
 			case 0x35:
 				strcpy(name, "tas3004");
+				break;
+			case 0x34:
+				strcpy(name, "tas3001");
 				break;
 			default:
 				strcpy(name, "unknown");

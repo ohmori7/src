@@ -1,11 +1,11 @@
-/*	$NetBSD: udsir.c,v 1.7 2018/09/03 16:29:34 riastradh Exp $	*/
+/*	$NetBSD: udsir.c,v 1.12 2020/12/18 01:40:20 thorpej Exp $	*/
 
 /*
  * Copyright (c) 2001 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
- * by David Sainty <David.Sainty@dtsp.co.nz>
+ * by David Sainty <dsainty@NetBSD.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: udsir.c,v 1.7 2018/09/03 16:29:34 riastradh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: udsir.c,v 1.12 2020/12/18 01:40:20 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/device.h>
@@ -680,29 +680,29 @@ static int
 udsir_kqfilter(void *h, struct knote *kn)
 {
 	struct udsir_softc *sc = h;
-	struct klist *klist;
+	struct selinfo *sip;
 	int s;
 
 	switch (kn->kn_filter) {
 	case EVFILT_READ:
-		klist = &sc->sc_rd_sel.sel_klist;
+		sip = &sc->sc_rd_sel;
 		kn->kn_fop = &udsirread_filtops;
 		break;
 	case EVFILT_WRITE:
-		klist = &sc->sc_wr_sel.sel_klist;
+		sip = &sc->sc_wr_sel;
 		kn->kn_fop = &udsirwrite_filtops;
 		break;
 	default:
-		return (EINVAL);
+		return EINVAL;
 	}
 
 	kn->kn_hook = sc;
 
 	s = splusb();
-	SLIST_INSERT_HEAD(klist, kn, kn_selnext);
+	selrecord_knote(sip, kn);
 	splx(s);
 
-	return (0);
+	return 0;
 }
 
 static int
@@ -772,7 +772,7 @@ filt_udsirrdetach(struct knote *kn)
 	int s;
 
 	s = splusb();
-	SLIST_REMOVE(&sc->sc_rd_sel.sel_klist, kn, knote, kn_selnext);
+	selremove_knote(&sc->sc_rd_sel, kn);
 	splx(s);
 }
 
@@ -783,7 +783,7 @@ filt_udsirread(struct knote *kn, long hint)
 	struct udsir_softc *sc = kn->kn_hook;
 
 	kn->kn_data = sc->sc_ur_framelen;
-	return (kn->kn_data > 0);
+	return kn->kn_data > 0;
 }
 
 static void
@@ -793,7 +793,7 @@ filt_udsirwdetach(struct knote *kn)
 	int s;
 
 	s = splusb();
-	SLIST_REMOVE(&sc->sc_wr_sel.sel_klist, kn, knote, kn_selnext);
+	selremove_knote(&sc->sc_wr_sel, kn);
 	splx(s);
 }
 
@@ -804,7 +804,7 @@ filt_udsirwrite(struct knote *kn, long hint)
 	struct udsir_softc *sc = kn->kn_hook;
 
 	kn->kn_data = 0;
-	return (sc->sc_direction != udir_input);
+	return sc->sc_direction != udir_input;
 }
 
 

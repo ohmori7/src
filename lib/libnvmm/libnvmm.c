@@ -1,11 +1,10 @@
-/*	$NetBSD: libnvmm.c,v 1.14 2019/06/08 07:27:44 maxv Exp $	*/
+/*	$NetBSD: libnvmm.c,v 1.19 2020/09/05 07:22:25 maxv Exp $	*/
 
 /*
- * Copyright (c) 2018 The NetBSD Foundation, Inc.
+ * Copyright (c) 2018-2020 Maxime Villard, m00nbsd.net
  * All rights reserved.
  *
- * This code is derived from software contributed to The NetBSD Foundation
- * by Maxime Villard.
+ * This code is part of the NVMM hypervisor.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -16,17 +15,17 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
- * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
- * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
  */
 
 #include <sys/cdefs.h>
@@ -156,12 +155,12 @@ __area_remove_all(struct nvmm_machine *mach)
 
 /* -------------------------------------------------------------------------- */
 
-static int
+int
 nvmm_init(void)
 {
 	if (nvmm_fd != -1)
 		return 0;
-	nvmm_fd = open("/dev/nvmm", O_RDWR);
+	nvmm_fd = open("/dev/nvmm", O_RDONLY | O_CLOEXEC);
 	if (nvmm_fd == -1)
 		return -1;
 	if (nvmm_capability(&__capability) == -1) {
@@ -169,6 +168,36 @@ nvmm_init(void)
 		nvmm_fd = -1;
 		return -1;
 	}
+	if (__capability.version != NVMM_KERN_VERSION) {
+		close(nvmm_fd);
+		nvmm_fd = -1;
+		errno = EPROGMISMATCH;
+		return -1;
+	}
+
+	return 0;
+}
+
+int
+nvmm_root_init(void)
+{
+	if (nvmm_fd != -1)
+		return 0;
+	nvmm_fd = open("/dev/nvmm", O_WRONLY | O_CLOEXEC);
+	if (nvmm_fd == -1)
+		return -1;
+	if (nvmm_capability(&__capability) == -1) {
+		close(nvmm_fd);
+		nvmm_fd = -1;
+		return -1;
+	}
+	if (__capability.version != NVMM_KERN_VERSION) {
+		close(nvmm_fd);
+		nvmm_fd = -1;
+		errno = EPROGMISMATCH;
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -177,10 +206,6 @@ nvmm_capability(struct nvmm_capability *cap)
 {
 	struct nvmm_ioc_capability args;
 	int ret;
-
-	if (nvmm_init() == -1) {
-		return -1;
-	}
 
 	ret = ioctl(nvmm_fd, NVMM_IOC_CAPABILITY, &args);
 	if (ret == -1)
@@ -198,10 +223,6 @@ nvmm_machine_create(struct nvmm_machine *mach)
 	struct nvmm_comm_page **pages;
 	area_list_t *areas;
 	int ret;
-
-	if (nvmm_init() == -1) {
-		return -1;
-	}
 
 	areas = calloc(1, sizeof(*areas));
 	if (areas == NULL)
@@ -252,12 +273,6 @@ nvmm_machine_configure(struct nvmm_machine *mach, uint64_t op, void *conf)
 {
 	struct nvmm_ioc_machine_configure args;
 	int ret;
-
-	switch (op) {
-	case NVMM_MACH_CONF_CALLBACKS:
-		memcpy(&mach->cbs, conf, sizeof(mach->cbs));
-		return 0;
-	}
 
 	args.machid = mach->machid;
 	args.op = op;
@@ -317,6 +332,31 @@ nvmm_vcpu_destroy(struct nvmm_machine *mach, struct nvmm_vcpu *vcpu)
 	comm = mach->pages[vcpu->cpuid];
 	munmap(comm, PAGE_SIZE);
 	free(vcpu->exit);
+
+	return 0;
+}
+
+int
+nvmm_vcpu_configure(struct nvmm_machine *mach, struct nvmm_vcpu *vcpu,
+    uint64_t op, void *conf)
+{
+	struct nvmm_ioc_vcpu_configure args;
+	int ret;
+
+	switch (op) {
+	case NVMM_VCPU_CONF_CALLBACKS:
+		memcpy(&vcpu->cbs, conf, sizeof(vcpu->cbs));
+		return 0;
+	}
+
+	args.machid = mach->machid;
+	args.cpuid = vcpu->cpuid;
+	args.op = op;
+	args.conf = conf;
+
+	ret = ioctl(nvmm_fd, NVMM_IOC_VCPU_CONFIGURE, &args);
+	if (ret == -1)
+		return -1;
 
 	return 0;
 }
@@ -510,10 +550,6 @@ nvmm_ctl(int op, void *data, size_t size)
 {
 	struct nvmm_ioc_ctl args;
 	int ret;
-
-	if (nvmm_init() == -1) {
-		return -1;
-	}
 
 	args.op = op;
 	args.data = data;

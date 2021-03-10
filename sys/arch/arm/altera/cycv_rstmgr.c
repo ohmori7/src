@@ -1,9 +1,9 @@
-/* $NetBSD: cycv_rstmgr.c,v 1.2 2018/10/14 18:53:01 aymeric Exp $ */
+/* $NetBSD: cycv_rstmgr.c,v 1.4 2021/01/27 03:10:18 thorpej Exp $ */
 
 /* This file is in the public domain. */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: cycv_rstmgr.c,v 1.2 2018/10/14 18:53:01 aymeric Exp $");
+__KERNEL_RCSID(0, "$NetBSD: cycv_rstmgr.c,v 1.4 2021/01/27 03:10:18 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -49,13 +49,17 @@ CFATTACH_DECL_NEW(cycvrstmgr, sizeof (struct cycv_rstmgr_softc),
 
 static struct cycv_rstmgr_softc *cycv_rstmgr_sc;
 
+static const struct device_compatible_entry compat_data[] = {
+	{ .compat = "altr,rst-mgr" },
+	DEVICE_COMPAT_EOL
+};
+
 static int
 cycv_rstmgr_match(device_t parent, cfdata_t cf, void *aux)
 {
-	const char *compatible[] = { "altr,rst-mgr", NULL };
 	struct fdt_attach_args *faa = aux;
 
-	return of_match_compatible(faa->faa_phandle, compatible);
+	return of_compatible_match(faa->faa_phandle, compat_data);
 }
 
 static void
@@ -77,8 +81,8 @@ cycv_rstmgr_attach(device_t parent, device_t self, void *aux)
 	sc->sc_bst = faa->faa_bst;
 	error = bus_space_map(sc->sc_bst, addr, size, 0, &sc->sc_bsh);
 	if (error) {
-		aprint_error(": couldn't map %#llx: %d",
-			     (uint64_t) addr, error);
+		aprint_error(": couldn't map %#" PRIxBUSADDR ": %d",
+			     addr, error);
 		return;
 	}
 

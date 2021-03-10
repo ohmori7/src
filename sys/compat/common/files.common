@@ -1,4 +1,4 @@
-#	$NetBSD: files.common,v 1.4 2019/05/17 07:37:11 msaitoh Exp $
+#	$NetBSD: files.common,v 1.6 2020/01/21 02:37:16 pgoyette Exp $
 
 #
 # Generic utility files, used by various compat options.
@@ -80,6 +80,7 @@ file	compat/common/kern_select_50.c		compat_50
 file	compat/common/rndpseudo_50.c		compat_50
 file	compat/common/rtsock_50.c		compat_50
 file	compat/common/vfs_syscalls_50.c		compat_50
+file	compat/common/compat_50_quota.c		compat_50 & quota
 file	compat/common/uipc_syscalls_50.c	compat_50
 file	compat/common/vnd_50.c			compat_50
 file	compat/common/clockctl_50.c		compat_50
@@ -100,16 +101,20 @@ file	compat/common/compat_70_mod.c		compat_70
 file	compat/common/rtsock_70.c		compat_70
 file	compat/common/uipc_usrreq_70.c		compat_70
 
-# Compatability code for NetBSD 8.0
+# Compatibility code for NetBSD 8.0
 file	compat/common/compat_80_mod.c		compat_80
 file	compat/common/kern_mod_80.c		compat_80
 file	compat/common/if_media_80.c		compat_80
+
+# Compatibility code for NetBSD 9.0
+file	compat/common/compat_90_mod.c		compat_90
+file	compat/common/vfs_syscalls_90.c		compat_90
 
 #
 # Sources for sysv ipc compatibility across the versions.
 #
 
-# Module interface for sysv ipc compatability options
+# Module interface for sysv ipc compatibility options
 
 # Compatibility code for NetBSD 1.0
 file	compat/common/compat_sysv_10_mod.c	compat_10 &

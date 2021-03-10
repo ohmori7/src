@@ -1,4 +1,4 @@
-/*	$NetBSD: if_bge.c,v 1.334 2019/05/29 10:07:29 msaitoh Exp $	*/
+/*	$NetBSD: if_bge.c,v 1.346 2020/07/02 09:07:10 msaitoh Exp $	*/
 
 /*
  * Copyright (c) 2001 Wind River Systems
@@ -79,7 +79,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: if_bge.c,v 1.334 2019/05/29 10:07:29 msaitoh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: if_bge.c,v 1.346 2020/07/02 09:07:10 msaitoh Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -1027,10 +1027,10 @@ bge_eeprom_getbyte(struct bge_softc *sc, int addr, uint8_t *dest)
 	 * Enable use of auto EEPROM access so we can avoid
 	 * having to use the bitbang method.
 	 */
-	BGE_SETBIT(sc, BGE_MISC_LOCAL_CTL, BGE_MLC_AUTO_EEPROM);
+	BGE_SETBIT_FLUSH(sc, BGE_MISC_LOCAL_CTL, BGE_MLC_AUTO_EEPROM);
 
 	/* Reset the EEPROM, load the clock period. */
-	CSR_WRITE_4(sc, BGE_EE_ADDR,
+	CSR_WRITE_4_FLUSH(sc, BGE_EE_ADDR,
 	    BGE_EEADDR_RESET | BGE_EEHALFCLK(BGE_HALFCLK_384SCL));
 	DELAY(20);
 
@@ -1113,9 +1113,11 @@ bge_miibus_readreg(device_t dev, int phy, int reg, uint16_t *val)
 	if (i == BGE_TIMEOUT) {
 		aprint_error_dev(sc->bge_dev, "PHY read timed out\n");
 		rv = ETIMEDOUT;
-	} else if ((data & BGE_MICOMM_READFAIL) != 0)
-		rv = -1;
-	else
+	} else if ((data & BGE_MICOMM_READFAIL) != 0) {
+		/* XXX This error occurs on some devices while attaching. */
+		aprint_debug_dev(sc->bge_dev, "PHY read I/O error\n");
+		rv = EIO;
+	} else
 		*val = data & BGE_MICOMM_DATA;
 
 	if (autopoll & BGE_MIMODE_AUTOPOLL) {
@@ -1133,7 +1135,8 @@ static int
 bge_miibus_writereg(device_t dev, int phy, int reg, uint16_t val)
 {
 	struct bge_softc *sc = device_private(dev);
-	uint32_t autopoll;
+	uint32_t data, autopoll;
+	int rv = 0;
 	int i;
 
 	if (BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5906 &&
@@ -1156,11 +1159,20 @@ bge_miibus_writereg(device_t dev, int phy, int reg, uint16_t val)
 
 	for (i = 0; i < BGE_TIMEOUT; i++) {
 		delay(10);
-		if (!(CSR_READ_4(sc, BGE_MI_COMM) & BGE_MICOMM_BUSY)) {
+		data = CSR_READ_4(sc, BGE_MI_COMM);
+		if (!(data & BGE_MICOMM_BUSY)) {
 			delay(5);
-			CSR_READ_4(sc, BGE_MI_COMM);
+			data = CSR_READ_4(sc, BGE_MI_COMM);
 			break;
 		}
+	}
+
+	if (i == BGE_TIMEOUT) {
+		aprint_error_dev(sc->bge_dev, "PHY write timed out\n");
+		rv = ETIMEDOUT;
+	} else if ((data & BGE_MICOMM_READFAIL) != 0) {
+		aprint_error_dev(sc->bge_dev, "PHY write I/O error\n");
+		rv = EIO;
 	}
 
 	if (autopoll & BGE_MIMODE_AUTOPOLL) {
@@ -1176,7 +1188,7 @@ bge_miibus_writereg(device_t dev, int phy, int reg, uint16_t val)
 		return ETIMEDOUT;
 	}
 
-	return 0;
+	return rv;
 }
 
 static void
@@ -1359,13 +1371,7 @@ bge_alloc_jumbo_mem(struct bge_softc *sc)
 		sc->bge_cdata.bge_jslots[i] = ptr;
 		ptr += BGE_JLEN;
 		entry = malloc(sizeof(struct bge_jpool_entry),
-		    M_DEVBUF, M_NOWAIT);
-		if (entry == NULL) {
-			aprint_error_dev(sc->bge_dev,
-			    "no memory for jumbo buffer queue!\n");
-			error = ENOBUFS;
-			goto out;
-		}
+		    M_DEVBUF, M_WAITOK);
 		entry->slot = i;
 		SLIST_INSERT_HEAD(&sc->bge_jfree_listhead,
 				 entry, jpool_entries);
@@ -1827,7 +1833,7 @@ bge_setmulti(struct bge_softc *sc)
 		/* Just want the 7 least-significant bits. */
 		h &= 0x7f;
 
-		hashes[(h & 0x60) >> 5] |= 1 << (h & 0x1F);
+		hashes[(h & 0x60) >> 5] |= 1U << (h & 0x1F);
 		ETHER_NEXT_MULTI(step, enm);
 	}
 	ETHER_UNLOCK(ec);
@@ -2286,7 +2292,7 @@ bge_chipinit(struct bge_softc *sc)
 #endif
 
 	/* Set the timer prescaler (always 66MHz) */
-	CSR_WRITE_4(sc, BGE_MISC_CFG, BGE_32BITTIME_66MHZ);
+	CSR_WRITE_4_FLUSH(sc, BGE_MISC_CFG, BGE_32BITTIME_66MHZ);
 
 	if (BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5906) {
 		DELAY(40);	/* XXX */
@@ -3182,14 +3188,14 @@ bge_attach(device_t parent, device_t self, void *aux)
 	uint32_t		command;
 	struct ifnet		*ifp;
 	struct mii_data * const mii = &sc->bge_mii;
-	uint32_t		misccfg, mimode;
+	uint32_t		misccfg, mimode, macmode;
 	void *			kva;
 	u_char			eaddr[ETHER_ADDR_LEN];
 	pcireg_t		memtype, subid, reg;
 	bus_addr_t		memaddr;
 	uint32_t		pm_ctl;
 	bool			no_seeprom;
-	int			capmask;
+	int			capmask, trys;
 	int			mii_flags;
 	int			map_flags;
 	char intrbuf[PCI_INTRSTR_LEN];
@@ -3433,14 +3439,6 @@ bge_attach(device_t parent, device_t self, void *aux)
 	    BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM57780)
 		sc->bge_flags |= BGEF_CPMU_PRESENT;
 
-	/* Set MI_MODE */
-	mimode = BGE_MIMODE_PHYADDR(sc->bge_phy_addr);
-	if ((sc->bge_flags & BGEF_CPMU_PRESENT) != 0)
-		mimode |= BGE_MIMODE_500KHZ_CONST;
-	else
-		mimode |= BGE_MIMODE_BASE;
-	CSR_WRITE_4(sc, BGE_MI_MODE, mimode);
-
 	/*
 	 * When using the BCM5701 in PCI-X mode, data corruption has
 	 * been observed in the first few bytes of some received packets.
@@ -3636,10 +3634,10 @@ bge_attach(device_t parent, device_t self, void *aux)
 	 * Reset NVRAM before bge_reset(). It's required to acquire NVRAM
 	 * lock in bge_reset().
 	 */
-	CSR_WRITE_4(sc, BGE_EE_ADDR,
+	CSR_WRITE_4_FLUSH(sc, BGE_EE_ADDR,
 	    BGE_EEADDR_RESET | BGE_EEHALFCLK(BGE_HALFCLK_384SCL));
 	delay(1000);
-	BGE_SETBIT(sc, BGE_MISC_LOCAL_CTL, BGE_MLC_AUTO_EEPROM);
+	BGE_SETBIT_FLUSH(sc, BGE_MISC_LOCAL_CTL, BGE_MLC_AUTO_EEPROM);
 
 	bge_stop_fw(sc);
 	bge_sig_pre_reset(sc, BGE_RESET_START);
@@ -3684,6 +3682,21 @@ bge_attach(device_t parent, device_t self, void *aux)
 		bge_release_resources(sc);
 		return;
 	}
+
+	if (BGE_ASICREV(sc->bge_chipid) == BGE_ASICREV_BCM5700) {
+		BGE_SETBIT_FLUSH(sc, BGE_MISC_LOCAL_CTL,
+		    BGE_MLC_MISCIO_OUT1 | BGE_MLC_MISCIO_OUTEN1);
+		DELAY(100);
+	}
+
+	/* Set MI_MODE */
+	mimode = BGE_MIMODE_PHYADDR(sc->bge_phy_addr);
+	if ((sc->bge_flags & BGEF_CPMU_PRESENT) != 0)
+		mimode |= BGE_MIMODE_500KHZ_CONST;
+	else
+		mimode |= BGE_MIMODE_BASE;
+	CSR_WRITE_4_FLUSH(sc, BGE_MI_MODE, mimode);
+	DELAY(80);
 
 	/*
 	 * Get station address from the EEPROM.
@@ -3832,6 +3845,7 @@ bge_attach(device_t parent, device_t self, void *aux)
 #endif
 	sc->ethercom.ec_capabilities |=
 	    ETHERCAP_VLAN_HWTAGGING | ETHERCAP_VLAN_MTU;
+	sc->ethercom.ec_capenable |= ETHERCAP_VLAN_HWTAGGING;
 
 	if (sc->bge_flags & BGEF_TSO)
 		sc->ethercom.ec_if.if_capabilities |= IFCAP_TSOv4;
@@ -3852,7 +3866,7 @@ bge_attach(device_t parent, device_t self, void *aux)
 	 * by its PCI subsystem ID, as we do below for the SysKonnect SK-9D41.
 	 * The SysKonnect SK-9D41 is a 1000baseSX card.
 	 */
-	if (PCI_PRODUCT(pa->pa_id) == SK_SUBSYSID_9D41 ||
+	if (PCI_PRODUCT(subid) == SK_SUBSYSID_9D41 ||
 	    (hwcfg & BGE_HWCFG_MEDIA) == BGE_MEDIA_FIBER) {
 		if (BGE_IS_5705_PLUS(sc)) {
 			sc->bge_flags |= BGEF_FIBER_MII;
@@ -3870,8 +3884,14 @@ bge_attach(device_t parent, device_t self, void *aux)
 	prop_dictionary_set_uint32(dict, "phyflags", sc->bge_phy_flags);
 	prop_dictionary_set_uint32(dict, "chipid", sc->bge_chipid);
 
+	macmode = CSR_READ_4(sc, BGE_MAC_MODE);
+	macmode &= ~BGE_MACMODE_PORTMODE;
 	/* Initialize ifmedia structures. */
 	if (sc->bge_flags & BGEF_FIBER_TBI) {
+		CSR_WRITE_4_FLUSH(sc, BGE_MAC_MODE,
+		    macmode | BGE_PORTMODE_TBI);
+		DELAY(40);
+
 		sc->ethercom.ec_ifmedia = &sc->bge_ifmedia;
 		ifmedia_init(&sc->bge_ifmedia, IFM_IMASK, bge_ifmedia_upd,
 		    bge_ifmedia_sts);
@@ -3883,6 +3903,8 @@ bge_attach(device_t parent, device_t self, void *aux)
 		/* Pretend the user requested this setting */
 		sc->bge_ifmedia.ifm_media = sc->bge_ifmedia.ifm_cur->ifm_media;
 	} else {
+		uint16_t phyreg;
+		int rv;
 		/*
 		 * Do transceiver setup and tell the firmware the
 		 * driver is down so we can try to get access the
@@ -3890,17 +3912,52 @@ bge_attach(device_t parent, device_t self, void *aux)
 		 * if we get a conflict with the ASF firmware accessing
 		 * the PHY.
 		 */
-		BGE_CLRBIT(sc, BGE_MODE_CTL, BGE_MODECTL_STACKUP);
-		bge_asf_driver_up(sc);
+		if (sc->bge_flags & BGEF_FIBER_MII)
+			macmode |= BGE_PORTMODE_GMII;
+		else
+			macmode |= BGE_PORTMODE_MII;
+		CSR_WRITE_4_FLUSH(sc, BGE_MAC_MODE, macmode);
+		DELAY(40);
 
+		/*
+		 * Do transceiver setup and tell the firmware the
+		 * driver is down so we can try to get access the
+		 * probe if ASF is running.  Retry a couple of times
+		 * if we get a conflict with the ASF firmware accessing
+		 * the PHY.
+		 */
+		trys = 0;
+		BGE_CLRBIT(sc, BGE_MODE_CTL, BGE_MODECTL_STACKUP);
 		sc->ethercom.ec_mii = mii;
 		ifmedia_init(&mii->mii_media, 0, bge_ifmedia_upd,
 			     bge_ifmedia_sts);
 		mii_flags = MIIF_DOPAUSE;
 		if (sc->bge_flags & BGEF_FIBER_MII)
 			mii_flags |= MIIF_HAVEFIBER;
+again:
+		bge_asf_driver_up(sc);
+		rv = bge_miibus_readreg(sc->bge_dev, sc->bge_phy_addr,
+		    MII_BMCR, &phyreg);
+		if ((rv != 0) || ((phyreg & BMCR_PDOWN) != 0)) {
+			int i;
+
+			bge_miibus_writereg(sc->bge_dev, sc->bge_phy_addr,
+			    MII_BMCR, BMCR_RESET);
+			/* Wait up to 500ms for it to complete. */
+			for (i = 0; i < 500; i++) {
+				bge_miibus_readreg(sc->bge_dev,
+				    sc->bge_phy_addr, MII_BMCR, &phyreg);
+				if ((phyreg & BMCR_RESET) == 0)
+					break;
+				DELAY(1000);
+			}
+		}
+
 		mii_attach(sc->bge_dev, mii, capmask, sc->bge_phy_addr,
 		    MII_OFFSET_ANY, mii_flags);
+
+		if (LIST_EMPTY(&mii->mii_phys) && (trys++ < 4))
+			goto again;
 
 		if (LIST_EMPTY(&mii->mii_phys)) {
 			aprint_error_dev(sc->bge_dev, "no PHY found!\n");
@@ -3953,6 +4010,7 @@ bge_attach(device_t parent, device_t self, void *aux)
 #endif /* BGE_EVENT_COUNTERS */
 	DPRINTFN(5, ("callout_init\n"));
 	callout_init(&sc->bge_timeout, 0);
+	callout_setfunc(&sc->bge_timeout, bge_tick, sc);
 
 	if (pmf_device_register(self, NULL, NULL))
 		pmf_class_network_register(self, ifp);
@@ -3984,11 +4042,11 @@ bge_detach(device_t self, int flags __unused)
 
 	mii_detach(&sc->bge_mii, MII_PHY_ANY, MII_OFFSET_ANY);
 
-	/* Delete all remaining media. */
-	ifmedia_delete_instance(&sc->bge_mii.mii_media, IFM_INST_ANY);
-
 	ether_ifdetach(ifp);
 	if_detach(ifp);
+
+	/* Delete all remaining media. */
+	ifmedia_fini(&sc->bge_mii.mii_media);
 
 	bge_release_resources(sc);
 
@@ -4396,13 +4454,13 @@ bge_rxeof(struct bge_softc *sc)
 			    mtod(m, char *) - (char *)sc->bge_cdata.bge_jumbo_buf,
 			    BGE_JLEN, BUS_DMASYNC_POSTREAD);
 			if (cur_rx->bge_flags & BGE_RXBDFLAG_ERROR) {
-				ifp->if_ierrors++;
+				if_statinc(ifp, if_ierrors);
 				bge_newbuf_jumbo(sc, sc->bge_jumbo, m);
 				continue;
 			}
 			if (bge_newbuf_jumbo(sc, sc->bge_jumbo,
 					     NULL)== ENOBUFS) {
-				ifp->if_ierrors++;
+				if_statinc(ifp, if_ierrors);
 				bge_newbuf_jumbo(sc, sc->bge_jumbo, m);
 				continue;
 			}
@@ -4415,7 +4473,7 @@ bge_rxeof(struct bge_softc *sc)
 			dmamap = sc->bge_cdata.bge_rx_std_map[rxidx];
 			sc->bge_cdata.bge_rx_std_map[rxidx] = NULL;
 			if (dmamap == NULL) {
-				ifp->if_ierrors++;
+				if_statinc(ifp, if_ierrors);
 				bge_newbuf_std(sc, sc->bge_std, m, dmamap);
 				continue;
 			}
@@ -4423,13 +4481,13 @@ bge_rxeof(struct bge_softc *sc)
 			    dmamap->dm_mapsize, BUS_DMASYNC_POSTREAD);
 			bus_dmamap_unload(sc->bge_dmatag, dmamap);
 			if (cur_rx->bge_flags & BGE_RXBDFLAG_ERROR) {
-				ifp->if_ierrors++;
+				if_statinc(ifp, if_ierrors);
 				bge_newbuf_std(sc, sc->bge_std, m, dmamap);
 				continue;
 			}
 			if (bge_newbuf_std(sc, sc->bge_std,
 			    NULL, dmamap) == ENOBUFS) {
-				ifp->if_ierrors++;
+				if_statinc(ifp, if_ierrors);
 				bge_newbuf_std(sc, sc->bge_std, m, dmamap);
 				continue;
 			}
@@ -4560,7 +4618,7 @@ bge_txeof(struct bge_softc *sc)
 		idx = sc->bge_tx_saved_considx;
 		cur_tx = &sc->bge_rdata->bge_tx_ring[idx];
 		if (cur_tx->bge_flags & BGE_TXBDFLAG_END)
-			ifp->if_opackets++;
+			if_statinc(ifp, if_opackets);
 		m = sc->bge_cdata.bge_tx_chain[idx];
 		if (m != NULL) {
 			sc->bge_cdata.bge_tx_chain[idx] = NULL;
@@ -4745,7 +4803,7 @@ bge_tick(void *xsc)
 	bge_asf_driver_up(sc);
 
 	if (!sc->bge_detaching)
-		callout_reset(&sc->bge_timeout, hz, bge_tick, sc);
+		callout_schedule(&sc->bge_timeout, hz);
 
 	splx(s);
 }
@@ -4755,8 +4813,11 @@ bge_stats_update_regs(struct bge_softc *sc)
 {
 	struct ifnet *ifp = &sc->ethercom.ec_if;
 
-	ifp->if_collisions += CSR_READ_4(sc, BGE_MAC_STATS +
-	    offsetof(struct bge_mac_stats_regs, etherStatsCollisions));
+	net_stat_ref_t nsr = IF_STAT_GETREF(ifp);
+
+	if_statadd_ref(nsr, if_collisions,
+	    CSR_READ_4(sc, BGE_MAC_STATS +
+	    offsetof(struct bge_mac_stats_regs, etherStatsCollisions)));
 
 	/*
 	 * On BCM5717, BCM5718, BCM5719 A0 and BCM5720 A0,
@@ -4767,10 +4828,15 @@ bge_stats_update_regs(struct bge_softc *sc)
 	if (BGE_ASICREV(sc->bge_chipid) != BGE_ASICREV_BCM5717 &&
 	    sc->bge_chipid != BGE_CHIPID_BCM5719_A0 &&
 	    sc->bge_chipid != BGE_CHIPID_BCM5720_A0) {
-		ifp->if_ierrors += CSR_READ_4(sc, BGE_RXLP_LOCSTAT_IFIN_DROPS);
+		if_statadd_ref(nsr, if_ierrors,
+		    CSR_READ_4(sc, BGE_RXLP_LOCSTAT_IFIN_DROPS));
 	}
-	ifp->if_ierrors += CSR_READ_4(sc, BGE_RXLP_LOCSTAT_IFIN_ERRORS);
-	ifp->if_ierrors += CSR_READ_4(sc, BGE_RXLP_LOCSTAT_OUT_OF_BDS);
+	if_statadd_ref(nsr, if_ierrors,
+	    CSR_READ_4(sc, BGE_RXLP_LOCSTAT_IFIN_ERRORS));
+	if_statadd_ref(nsr, if_ierrors,
+	    CSR_READ_4(sc, BGE_RXLP_LOCSTAT_OUT_OF_BDS));
+
+	IF_STAT_PUTREF(ifp);
 
 	if (sc->bge_flags & BGEF_RDMA_BUG) {
 		uint32_t val, ucast, mcast, bcast;
@@ -4808,12 +4874,15 @@ bge_stats_update(struct bge_softc *sc)
 #define READ_STAT(sc, stats, stat) \
 	  CSR_READ_4(sc, stats + offsetof(struct bge_stats, stat))
 
-	ifp->if_collisions +=
+	uint64_t collisions =
 	  (READ_STAT(sc, stats, dot3StatsSingleCollisionFrames.bge_addr_lo) +
 	   READ_STAT(sc, stats, dot3StatsMultipleCollisionFrames.bge_addr_lo) +
 	   READ_STAT(sc, stats, dot3StatsExcessiveCollisions.bge_addr_lo) +
-	   READ_STAT(sc, stats, dot3StatsLateCollisions.bge_addr_lo)) -
-	  ifp->if_collisions;
+	   READ_STAT(sc, stats, dot3StatsLateCollisions.bge_addr_lo));
+
+	if_statadd(ifp, if_collisions, collisions - sc->bge_if_collisions);
+	sc->bge_if_collisions = collisions;
+
 
 	BGE_EVCNT_UPD(sc->bge_ev_tx_xoff,
 		      READ_STAT(sc, stats, outXoffSent.bge_addr_lo));
@@ -4962,8 +5031,7 @@ bge_compact_dma_runt(struct mbuf *pkt)
 			if (!M_READONLY(m)) {
 				if (M_LEADINGSPACE(m) < shorfall) {
 					void *m_dat;
-					m_dat = (m->m_flags & M_PKTHDR) ?
-					    m->m_pktdat : m->dat;
+					m_dat = M_BUFADDR(m);
 					memmove(m_dat, mtod(m, void*),
 					    m->m_len);
 					m->m_data = m_dat;
@@ -5529,7 +5597,8 @@ bge_init(struct ifnet *ifp)
 	/* Load our MAC address. */
 	m = (const uint16_t *)&(CLLADDR(ifp->if_sadl)[0]);
 	CSR_WRITE_4(sc, BGE_MAC_ADDR1_LO, htons(m[0]));
-	CSR_WRITE_4(sc, BGE_MAC_ADDR1_HI, (htons(m[1]) << 16) | htons(m[2]));
+	CSR_WRITE_4(sc, BGE_MAC_ADDR1_HI,
+	    ((uint32_t)htons(m[1]) << 16) | htons(m[2]));
 
 	/* Enable or disable promiscuous mode as needed. */
 	if (ifp->if_flags & IFF_PROMISC)
@@ -5625,7 +5694,7 @@ bge_init(struct ifnet *ifp)
 	ifp->if_flags |= IFF_RUNNING;
 	ifp->if_flags &= ~IFF_OACTIVE;
 
-	callout_reset(&sc->bge_timeout, hz, bge_tick, sc);
+	callout_schedule(&sc->bge_timeout, hz);
 
 out:
 	sc->bge_if_flags = ifp->if_flags;
@@ -5675,10 +5744,10 @@ bge_ifmedia_upd(struct ifnet *ifp)
 			break;
 		case IFM_1000_SX:
 			if ((ifm->ifm_media & IFM_FDX) != 0) {
-				BGE_CLRBIT(sc, BGE_MAC_MODE,
+				BGE_CLRBIT_FLUSH(sc, BGE_MAC_MODE,
 				    BGE_MACMODE_HALF_DUPLEX);
 			} else {
-				BGE_SETBIT(sc, BGE_MAC_MODE,
+				BGE_SETBIT_FLUSH(sc, BGE_MAC_MODE,
 				    BGE_MACMODE_HALF_DUPLEX);
 			}
 			DELAY(40);
@@ -5768,7 +5837,7 @@ bge_ifflags_cb(struct ethercom *ec)
 {
 	struct ifnet *ifp = &ec->ec_if;
 	struct bge_softc *sc = ifp->if_softc;
-	int change = ifp->if_flags ^ sc->bge_if_flags;
+	u_short change = ifp->if_flags ^ sc->bge_if_flags;
 
 	if ((change & ~(IFF_CANTCHANGE | IFF_DEBUG)) != 0)
 		return ENETRESET;
@@ -5885,7 +5954,7 @@ bge_watchdog(struct ifnet *ifp)
 	ifp->if_flags &= ~IFF_RUNNING;
 	bge_init(ifp);
 
-	ifp->if_oerrors++;
+	if_statinc(ifp, if_oerrors);
 }
 
 static void
@@ -6076,7 +6145,7 @@ bge_link_upd(struct bge_softc *sc)
 				BGE_STS_SETBIT(sc, BGE_STS_LINK);
 				if (BGE_ASICREV(sc->bge_chipid)
 				    == BGE_ASICREV_BCM5704) {
-					BGE_CLRBIT(sc, BGE_MAC_MODE,
+					BGE_CLRBIT_FLUSH(sc, BGE_MAC_MODE,
 					    BGE_MACMODE_TBI_SEND_CFGS);
 					DELAY(40);
 				}
@@ -6290,7 +6359,7 @@ bge_get_eaddr_fw(struct bge_softc *sc, uint8_t ether_addr[])
 	if (ea != NULL) {
 		KASSERT(prop_object_type(ea) == PROP_TYPE_DATA);
 		KASSERT(prop_data_size(ea) == ETHER_ADDR_LEN);
-		memcpy(ether_addr, prop_data_data_nocopy(ea), ETHER_ADDR_LEN);
+		memcpy(ether_addr, prop_data_value(ea), ETHER_ADDR_LEN);
 		return 0;
 	}
 

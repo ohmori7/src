@@ -1,9 +1,9 @@
-#	$NetBSD: Makefile,v 1.3 2018/05/28 21:05:02 chs Exp $
+#	$NetBSD: Makefile,v 1.11 2021/02/02 21:31:11 joerg Exp $
 
 .include <bsd.own.mk>
 
 PROG=	fstyp
-SRCS=	cd9660.c ext2fs.c fstyp.c msdosfs.c ntfs.c ufs.c
+SRCS=	apfs.c cd9660.c exfat.c ext2fs.c fstyp.c hammer.c hammer2.c hfsplus.c msdosfs.c ntfs.c ufs.c
 
 .if (${MKZFS} != "no")
 SRCS+=	zfs.c
@@ -21,12 +21,15 @@ COPTS.zfs.c+=	-Wno-strict-prototypes
 COPTS.zfs.c+=	-I${NETBSDSRCDIR}/external
 COPTS.zfs.c+=	-I${NETBSDSRCDIR}/external/cddl/osnet/include
 COPTS.zfs.c+=	-I${NETBSDSRCDIR}/external/cddl/osnet/sys
+COPTS.zfs.c+=	-I${NETBSDSRCDIR}/external/cddl/osnet/dist/head
+COPTS.zfs.c+=	-I${NETBSDSRCDIR}/external/cddl/osnet/dist/lib/libzpool/common
 COPTS.zfs.c+=	-I${NETBSDSRCDIR}/external/cddl/osnet/dist/uts/common
 COPTS.zfs.c+=	-I${NETBSDSRCDIR}/external/cddl/osnet/dist/uts/common/fs/zfs
 COPTS.zfs.c+=	-I${NETBSDSRCDIR}/external/cddl/osnet/dist/lib/libnvpair
 LDADD+=	-lnvpair -lzfs
 .endif
 
-CWARNFLAGS.clang+=	-Wno-unknown-pragmas
+CWARNFLAGS.clang+=	-Wno-unknown-pragmas -Wno-error=address-of-packed-member
+CWARNFLAGS.gcc+=        ${GCC_NO_ADDR_OF_PACKED_MEMBER}
 
 .include <bsd.prog.mk>

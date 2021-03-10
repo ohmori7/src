@@ -1,6 +1,6 @@
 // class template regex -*- C++ -*-
 
-// Copyright (C) 2013-2016 Free Software Foundation, Inc.
+// Copyright (C) 2013-2018 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -35,10 +35,10 @@
 
 namespace std _GLIBCXX_VISIBILITY(default)
 {
-namespace __detail
-{
 _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
+namespace __detail
+{
   /**
    *  @defgroup regex-detail Base and Implementation Classes
    *  @ingroup regex
@@ -241,7 +241,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       }
 
       _StateIdT
-      _M_insert_alt(_StateIdT __next, _StateIdT __alt, bool __neg)
+      _M_insert_alt(_StateIdT __next, _StateIdT __alt,
+		    bool __neg __attribute__((__unused__)))
       {
 	_StateT __tmp(_S_opcode_alternative);
 	// It labels every quantifier to make greedy comparison easier in BFS
@@ -392,8 +393,9 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     };
 
  //@} regex-detail
-_GLIBCXX_END_NAMESPACE_VERSION
 } // namespace __detail
+
+_GLIBCXX_END_NAMESPACE_VERSION
 } // namespace std
 
 #include <bits/regex_automaton.tcc>

@@ -1,5 +1,5 @@
 #! /usr/bin/atf-sh
-#	$NetBSD: t_raid.sh,v 1.13 2018/01/18 00:32:49 mrg Exp $
+#	$NetBSD: t_raid.sh,v 1.15 2020/11/30 05:33:32 msaitoh Exp $
 #
 # Copyright (c) 2010 The NetBSD Foundation, Inc.
 # All rights reserved.
@@ -113,8 +113,7 @@ old_numrows_config_cleanup()
 	rump.halt
 }
 
-# make this smaller once 44239 is fixed
-export RAID_MEDIASIZE=32m
+export RAID_MEDIASIZE=4m
 
 atf_test_case raid1_compfail cleanup
 raid1_compfail_head()
@@ -152,7 +151,7 @@ raid1_compfail_body()
 
 	atf_check -s exit:0 rump.raidctl -c raid.conf raid0
 
-	# check if we we get what we wrote
+	# check if we get what we wrote
 	atf_check -s exit:0 -o file:testfile -e ignore \
 	    rump.dd if=${rawraid} count=4
 }
@@ -240,7 +239,7 @@ raid1_normal_body()
 
         atf_check -s exit:0 rump.raidctl -c raid.conf raid0
 
-        # check if we we get what we wrote
+        # check if we get what we wrote
         atf_check -s exit:0 -o file:testfile -e ignore \
             rump.dd if=${rawraid} count=4
 
@@ -291,7 +290,7 @@ raid5_compfail_body()
 
 	atf_check -s exit:0 rump.raidctl -c raid.conf raid0
 
-	# check if we we get what we wrote
+	# check if we get what we wrote
 	atf_check -s exit:0 -o file:testfile -e ignore \
 	    rump.dd if=${rawraid} count=4
 }
@@ -341,7 +340,7 @@ raid5_normal_body()
 
         atf_check -s exit:0 rump.raidctl -c raid.conf raid0
 
-        # check if we we get what we wrote
+        # check if we get what we wrote
         atf_check -s exit:0 -o file:testfile -e ignore \
             rump.dd if=${rawraid} count=4
 }

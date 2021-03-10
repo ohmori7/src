@@ -1,4 +1,4 @@
-/*	$NetBSD: bus.h,v 1.2 2012/02/12 16:34:08 matt Exp $	*/
+/*	$NetBSD: bus.h,v 1.5 2021/01/23 19:38:07 christos Exp $	*/
 
 /*-
  * Copyright (c) 1996, 1997, 1998, 2001 The NetBSD Foundation, Inc.
@@ -47,11 +47,16 @@
 typedef u_long bus_addr_t;
 typedef u_long bus_size_t;
 
+#define PRIxBUSADDR	"lx"
+#define PRIxBUSSIZE	"lx"
+#define PRIuBUSSIZE	"lu"
 /*
  * Access methods for bus resources and address space.
  */
 typedef int	bus_space_tag_t;
 typedef u_long	bus_space_handle_t;
+
+#define PRIxBSH		"lx"
 
 /*
  *	int bus_space_map(bus_space_tag_t t, bus_addr_t addr,
@@ -138,10 +143,6 @@ void	bus_space_free(bus_space_tag_t t, bus_space_handle_t bsh,
 #define	bus_space_read_4(t, h, o)					\
      ((void) t, (*(volatile u_int32_t *)((h) + (o))))
 
-#if 0	/* Cause a link error for bus_space_read_8 */
-#define	bus_space_read_8(t, h, o)	!!! bus_space_read_8 unimplemented !!!
-#endif
-
 /*
  *	void bus_space_read_multi_N(bus_space_tag_t tag,
  *	    bus_space_handle_t bsh, bus_size_t offset,
@@ -172,10 +173,6 @@ __CONCAT(bus_space_read_multi_,BYTES)(					\
 __EMIPS_bus_space_read_multi(1,8)
 __EMIPS_bus_space_read_multi(2,16)
 __EMIPS_bus_space_read_multi(4,32)
-
-#if 0	/* Cause a link error for bus_space_read_multi_8 */
-#define	bus_space_read_multi_8	!!! bus_space_read_multi_8 unimplemented !!!
-#endif
 
 #undef __EMIPS_bus_space_read_multi
 
@@ -213,10 +210,6 @@ __EMIPS_bus_space_read_region(1,8)
 __EMIPS_bus_space_read_region(2,16)
 __EMIPS_bus_space_read_region(4,32)
 
-#if 0	/* Cause a link error for bus_space_read_region_8 */
-#define	bus_space_read_region_8	!!! bus_space_read_region_8 unimplemented !!!
-#endif
-
 #undef __EMIPS_bus_space_read_region
 
 /*
@@ -249,10 +242,6 @@ do {									\
 	wbflush();					/* XXX */	\
 } while (0)
 
-#if 0	/* Cause a link error for bus_space_write_8 */
-#define	bus_space_write_8	!!! bus_space_write_8 not implemented !!!
-#endif
-
 /*
  *	void bus_space_write_multi_N(bus_space_tag_t tag,
  *	    bus_space_handle_t bsh, bus_size_t offset,
@@ -283,11 +272,6 @@ __CONCAT(bus_space_write_multi_,BYTES)(					\
 __EMIPS_bus_space_write_multi(1,8)
 __EMIPS_bus_space_write_multi(2,16)
 __EMIPS_bus_space_write_multi(4,32)
-
-#if 0	/* Cause a link error for bus_space_write_8 */
-#define	bus_space_write_multi_8(t, h, o, a, c)				\
-			!!! bus_space_write_multi_8 unimplimented !!!
-#endif
 
 #undef __EMIPS_bus_space_write_multi
 
@@ -324,11 +308,6 @@ __EMIPS_bus_space_write_region(1,8)
 __EMIPS_bus_space_write_region(2,16)
 __EMIPS_bus_space_write_region(4,32)
 
-#if 0	/* Cause a link error for bus_space_write_region_8 */
-#define	bus_space_write_region_8					\
-			!!! bus_space_write_region_8 unimplemented !!!
-#endif
-
 #undef __EMIPS_bus_space_write_region
 
 /*
@@ -361,11 +340,6 @@ __CONCAT(bus_space_set_multi_,BYTES)(					\
 __EMIPS_bus_space_set_multi(1,8)
 __EMIPS_bus_space_set_multi(2,16)
 __EMIPS_bus_space_set_multi(4,32)
-
-#if 0	/* Cause a link error for bus_space_set_multi_8 */
-#define	bus_space_set_multi_8						\
-			!!! bus_space_set_multi_8 unimplemented !!!
-#endif
 
 #undef __EMIPS_bus_space_set_multi
 
@@ -401,11 +375,6 @@ __CONCAT(bus_space_set_region_,BYTES)(					\
 __EMIPS_bus_space_set_region(1,8)
 __EMIPS_bus_space_set_region(2,16)
 __EMIPS_bus_space_set_region(4,32)
-
-#if 0	/* Cause a link error for bus_space_set_region_8 */
-#define	bus_space_set_region_8						\
-			!!! bus_space_set_region_8 unimplemented !!!
-#endif
 
 #undef __EMIPS_bus_space_set_region
 
@@ -453,11 +422,6 @@ __CONCAT(bus_space_copy_region_,BYTES)(					\
 __EMIPS_copy_region(1)
 __EMIPS_copy_region(2)
 __EMIPS_copy_region(4)
-
-#if 0	/* Cause a link error for bus_space_copy_region_8 */
-#define	bus_space_copy_region_8						\
-			!!! bus_space_copy_region_8 unimplemented !!!
-#endif
 
 #undef __EMIPS_copy_region
 

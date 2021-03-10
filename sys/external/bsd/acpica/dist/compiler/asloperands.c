@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2019, Intel Corp.
+ * Copyright (C) 2000 - 2020, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -711,6 +711,7 @@ OpnDoBuffer (
     BufferLengthOp->Asl.Value.Integer = BufferLength;
 
     (void) OpcSetOptimalIntegerSize (BufferLengthOp);
+    UtSetParseOpName (BufferLengthOp);
 
     /* Remaining nodes are handled via the tree walk */
 }
@@ -797,6 +798,7 @@ OpnDoPackage (
          */
         Op->Asl.Child->Asl.ParseOpcode = PARSEOP_INTEGER;
         Op->Asl.Child->Asl.Value.Integer = PackageLength;
+        UtSetParseOpName (Op);
 
         /* Set the AML opcode */
 

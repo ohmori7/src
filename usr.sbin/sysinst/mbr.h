@@ -1,4 +1,4 @@
-/*	$NetBSD: mbr.h,v 1.2 2019/06/12 06:20:17 martin Exp $	*/
+/*	$NetBSD: mbr.h,v 1.6 2020/10/12 16:14:32 martin Exp $	*/
 
 /*
  * Copyright 1997, 1988 Piermont Information Systems Inc.
@@ -54,6 +54,8 @@
 #define MBR_PUT_LSCYL(c)		((c) & 0xff)
 #define MBR_PUT_MSCYLANDSEC(c,s)	(((s) & 0x3f) | (((c) >> 2) & 0xc0))
 
+#define MBR_DEV_LEN	16		/* for wedge names */
+
 typedef struct mbr_info_t mbr_info_t;
 struct mbr_info_t {
 	struct mbr_sector	mbr;
@@ -69,10 +71,12 @@ struct mbr_info_t {
 	/* only in first item... */
 	uint		bootsec;	/* start sector of bootmenu default */
 #endif
+	/* for temporary access */
+	char		wedge[MBR_PART_COUNT][MBR_DEV_LEN];
 };
 
 #ifdef BOOTSEL
-struct mbr_bootsel *mbs;
+extern struct mbr_bootsel *mbs;
 
 	/* sync with src/sbin/fdisk/fdisk.c */
 #define	DEFAULT_BOOTDIR		"/usr/mdec"
@@ -98,8 +102,9 @@ int 	partsoverlap(struct mbr_partition *, int, int);
 /* from mbr.c */
 
 int	guess_biosgeom_from_parts(struct disk_partitions*, int *, int *, int *);
-bool	set_bios_geom_with_mbr_guess(struct disk_partitions*);
-void	set_bios_geom(struct disk_partitions *, int cyl, int head, int sec);
+/* same return values as edit_outer_parts() */
+int	set_bios_geom_with_mbr_guess(struct disk_partitions*);
+void	set_bios_geom(struct disk_partitions *, int *cyl, int *head, int *sec);
 int	otherpart(int);
 int	ourpart(int);
 void	edit_ptn_bounds(void);

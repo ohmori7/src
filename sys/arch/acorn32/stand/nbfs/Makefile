@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.3 2006/07/04 23:08:10 bjh21 Exp $
+#	$NetBSD: Makefile,v 1.5 2021/02/06 21:45:38 joerg Exp $
 
 PROG=		nbfs
 PROGSOURCE=	rmheader.S rmvers.c nbfs.c rmalloc.c

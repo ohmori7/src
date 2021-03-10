@@ -1,5 +1,5 @@
 /* Definitions of target machine for GNU compiler, for IBM S/390
-   Copyright (C) 1999-2016 Free Software Foundation, Inc.
+   Copyright (C) 1999-2018 Free Software Foundation, Inc.
    Contributed by Hartmut Penner (hpenner@de.ibm.com) and
                   Ulrich Weigand (uweigand@de.ibm.com).
                   Andreas Krebbel (Andreas.Krebbel@de.ibm.com)
@@ -37,12 +37,14 @@ enum processor_flags
   PF_ZEC12 = 128,
   PF_TX = 256,
   PF_Z13 = 512,
-  PF_VX = 1024
+  PF_VX = 1024,
+  PF_ARCH12 = 2048,
+  PF_VXE = 4096
 };
 
 /* This is necessary to avoid a warning about comparing different enum
    types.  */
-#define s390_tune_attr ((enum attr_cpu)s390_tune)
+#define s390_tune_attr ((enum attr_cpu)(s390_tune > PROCESSOR_2964_Z13 ? PROCESSOR_2964_Z13 : s390_tune ))
 
 /* These flags indicate that the generated code should run on a cpu
    providing the respective hardware facility regardless of the
@@ -87,11 +89,19 @@ enum processor_flags
 #define TARGET_CPU_Z13 \
 	(s390_arch_flags & PF_Z13)
 #define TARGET_CPU_Z13_P(opts) \
-        (opts->x_s390_arch_flags & PF_Z13)
+	(opts->x_s390_arch_flags & PF_Z13)
 #define TARGET_CPU_VX \
-        (s390_arch_flags & PF_VX)
+	(s390_arch_flags & PF_VX)
 #define TARGET_CPU_VX_P(opts) \
 	(opts->x_s390_arch_flags & PF_VX)
+#define TARGET_CPU_ARCH12 \
+	(s390_arch_flags & PF_ARCH12)
+#define TARGET_CPU_ARCH12_P(opts) \
+	(opts->x_s390_arch_flags & PF_ARCH12)
+#define TARGET_CPU_VXE \
+	(s390_arch_flags & PF_VXE)
+#define TARGET_CPU_VXE_P(opts) \
+	(opts->x_s390_arch_flags & PF_VXE)
 
 #define TARGET_HARD_FLOAT_P(opts) (!TARGET_SOFT_FLOAT_P(opts))
 
@@ -137,6 +147,13 @@ enum processor_flags
 	(TARGET_ZARCH_P (opts->x_target_flags) && TARGET_CPU_VX_P (opts) \
 	 && TARGET_OPT_VX_P (opts->x_target_flags) \
 	 && TARGET_HARD_FLOAT_P (opts->x_target_flags))
+#define TARGET_ARCH12 (TARGET_ZARCH && TARGET_CPU_ARCH12)
+#define TARGET_ARCH12_P(opts)						\
+	(TARGET_ZARCH_P (opts->x_target_flags) && TARGET_CPU_ARCH12_P (opts))
+#define TARGET_VXE				\
+	(TARGET_VX && TARGET_CPU_VXE)
+#define TARGET_VXE_P(opts)						\
+	(TARGET_VX_P (opts) && TARGET_CPU_VXE_P (opts))
 
 #ifdef HAVE_AS_MACHINE_MACHINEMODE
 #define S390_USE_TARGET_ATTRIBUTE 1
@@ -188,7 +205,7 @@ enum processor_flags
 #define OPTION_DEFAULT_SPECS 					\
   { "mode", "%{!mesa:%{!mzarch:-m%(VALUE)}}" },			\
   { "arch", "%{!march=*:-march=%(VALUE)}" },			\
-  { "tune", "%{!mtune=*:-mtune=%(VALUE)}" }
+  { "tune", "%{!mtune=*:%{!march=*:-mtune=%(VALUE)}}" }
 
 #ifdef __s390__
 extern const char *s390_host_detect_local_cpu (int argc, const char **argv);
@@ -247,11 +264,6 @@ extern const char *s390_host_detect_local_cpu (int argc, const char **argv);
 #define S390_TDC_INFINITY (S390_TDC_POSITIVE_INFINITY \
 			  | S390_TDC_NEGATIVE_INFINITY )
 
-/* This is used by float.h to define the float_t and double_t data
-   types.  For historical reasons both are double on s390 what cannot
-   be changed anymore.  */
-#define TARGET_FLT_EVAL_METHOD 1
-
 /* Target machine storage layout.  */
 
 /* Everything is big-endian.  */
@@ -260,13 +272,6 @@ extern const char *s390_host_detect_local_cpu (int argc, const char **argv);
 #define WORDS_BIG_ENDIAN 1
 
 #define STACK_SIZE_MODE (Pmode)
-
-/* Vector arguments are left-justified when placed on the stack during
-   parameter passing.  */
-#define FUNCTION_ARG_PADDING(MODE, TYPE)			\
-  (s390_function_arg_vector ((MODE), (TYPE))			\
-   ? upward							\
-   : DEFAULT_FUNCTION_ARG_PADDING ((MODE), (TYPE)))
 
 #ifndef IN_LIBGCC2
 
@@ -310,7 +315,6 @@ extern const char *s390_host_detect_local_cpu (int argc, const char **argv);
 #define EMPTY_FIELD_BOUNDARY 32
 
 /* Alignment on even addresses for LARL instruction.  */
-#define CONSTANT_ALIGNMENT(EXP, ALIGN) (ALIGN) < 16 ? 16 : (ALIGN)
 #define DATA_ABI_ALIGNMENT(TYPE, ALIGN) (ALIGN) < 16 ? 16 : (ALIGN)
 
 /* Alignment is not required by the hardware.  */
@@ -320,9 +324,9 @@ extern const char *s390_host_detect_local_cpu (int argc, const char **argv);
    FUNCTION is VOIDmode because calling convention maintains SP.
    BLOCK needs Pmode for SP.
    NONLOCAL needs twice Pmode to maintain both backchain and SP.  */
-#define STACK_SAVEAREA_MODE(LEVEL)      \
-  (LEVEL == SAVE_FUNCTION ? VOIDmode    \
-  : LEVEL == SAVE_NONLOCAL ? (TARGET_64BIT ? OImode : TImode) : Pmode)
+#define STACK_SAVEAREA_MODE(LEVEL)					\
+  ((LEVEL) == SAVE_FUNCTION ? VOIDmode					\
+   : (LEVEL) == SAVE_NONLOCAL ? (TARGET_64BIT ? OImode : TImode) : Pmode)
 
 
 /* Type layout.  */
@@ -464,59 +468,25 @@ extern const char *s390_host_detect_local_cpu (int argc, const char **argv);
      15, 32, 33, 34, 35, 36, 37 }
 
 
-/* Fitting values into registers.  */
-
-/* Integer modes <= word size fit into any GPR.
-   Integer modes > word size fit into successive GPRs, starting with
-   an even-numbered register.
-   SImode and DImode fit into FPRs as well.
-
-   Floating point modes <= word size fit into any FPR or GPR.
-   Floating point modes > word size (i.e. DFmode on 32-bit) fit
-   into any FPR, or an even-odd GPR pair.
-   TFmode fits only into an even-odd FPR pair.
-
-   Complex floating point modes fit either into two FPRs, or into
-   successive GPRs (again starting with an even number).
-   TCmode fits only into two successive even-odd FPR pairs.
-
-   Condition code modes fit only into the CC register.  */
-
-/* Because all registers in a class have the same size HARD_REGNO_NREGS
-   is equivalent to CLASS_MAX_NREGS.  */
-#define HARD_REGNO_NREGS(REGNO, MODE)                           \
-  s390_class_max_nregs (REGNO_REG_CLASS (REGNO), (MODE))
-
-#define HARD_REGNO_MODE_OK(REGNO, MODE)         \
-  s390_hard_regno_mode_ok ((REGNO), (MODE))
-
 #define HARD_REGNO_RENAME_OK(FROM, TO)          \
-  s390_hard_regno_rename_ok (FROM, TO)
-
-#define MODES_TIEABLE_P(MODE1, MODE2)		\
-   (((MODE1) == SFmode || (MODE1) == DFmode)	\
-   == ((MODE2) == SFmode || (MODE2) == DFmode))
-
-/* When generating code that runs in z/Architecture mode,
-   but conforms to the 31-bit ABI, GPRs can hold 8 bytes;
-   the ABI guarantees only that the lower 4 bytes are
-   saved across calls, however.  */
-#define HARD_REGNO_CALL_PART_CLOBBERED(REGNO, MODE)			\
-  ((!TARGET_64BIT && TARGET_ZARCH					\
-    && GET_MODE_SIZE (MODE) > 4						\
-    && (((REGNO) >= 6 && (REGNO) <= 15) || (REGNO) == 32))		\
-   || (TARGET_VX							\
-       && GET_MODE_SIZE (MODE) > 8					\
-       && (((TARGET_64BIT && (REGNO) >= 24 && (REGNO) <= 31))		\
-	   || (!TARGET_64BIT && ((REGNO) == 18 || (REGNO) == 19)))))
+  s390_hard_regno_rename_ok ((FROM), (TO))
 
 /* Maximum number of registers to represent a value of mode MODE
    in a register of class CLASS.  */
 #define CLASS_MAX_NREGS(CLASS, MODE)   					\
   s390_class_max_nregs ((CLASS), (MODE))
 
-#define CANNOT_CHANGE_MODE_CLASS(FROM, TO, CLASS)		        \
-  s390_cannot_change_mode_class ((FROM), (TO), (CLASS))
+/* We can reverse a CC mode safely if we know whether it comes from a
+   floating point compare or not.  With the vector modes it is encoded
+   as part of the mode.
+   FIXME: It might make sense to do this for other cc modes as well.  */
+#define REVERSIBLE_CC_MODE(MODE)				\
+  ((MODE) == CCVIALLmode || (MODE) == CCVIANYmode		\
+   || (MODE) == CCVFALLmode || (MODE) == CCVFANYmode)
+
+/* Given a condition code and a mode, return the inverse condition.  */
+#define REVERSE_CONDITION(CODE, MODE) s390_reverse_condition (MODE, CODE)
+
 
 /* Register classes.  */
 
@@ -584,7 +554,7 @@ enum reg_class
    reload can decide not to use the hard register because some
    constant was forced to be in memory.  */
 #define IRA_HARD_REGNO_ADD_COST_MULTIPLIER(regno)	\
-  (regno != BASE_REGNUM ? 0.0 : 0.5)
+  ((regno) != BASE_REGNUM ? 0.0 : 0.5)
 
 /* Register -> class mapping.  */
 extern const enum reg_class regclass_map[FIRST_PSEUDO_REGISTER];
@@ -603,36 +573,6 @@ extern const enum reg_class regclass_map[FIRST_PSEUDO_REGISTER];
 #define REGNO_OK_FOR_BASE_P(REGNO) REGNO_OK_FOR_INDEX_P (REGNO)
 
 
-/* We need secondary memory to move data between GPRs and FPRs.
-
-   - With DFP the ldgr lgdr instructions are available.  Due to the
-     different alignment we cannot use them for SFmode.  For 31 bit a
-     64 bit value in GPR would be a register pair so here we still
-     need to go via memory.
-
-   - With z13 we can do the SF/SImode moves with vlgvf.  Due to the
-     overlapping of FPRs and VRs we still disallow TF/TD modes to be
-     in full VRs so as before also on z13 we do these moves via
-     memory.
-
-     FIXME: Should we try splitting it into two vlgvg's/vlvg's instead?  */
-#define SECONDARY_MEMORY_NEEDED(CLASS1, CLASS2, MODE)			\
-  (((reg_classes_intersect_p (CLASS1, VEC_REGS)				\
-     && reg_classes_intersect_p (CLASS2, GENERAL_REGS))			\
-    || (reg_classes_intersect_p (CLASS1, GENERAL_REGS)			\
-	&& reg_classes_intersect_p (CLASS2, VEC_REGS)))			\
-   && (!TARGET_DFP || !TARGET_64BIT || GET_MODE_SIZE (MODE) != 8)	\
-   && (!TARGET_VX || (SCALAR_FLOAT_MODE_P (MODE)			\
-			  && GET_MODE_SIZE (MODE) > 8)))
-
-/* Get_secondary_mem widens its argument to BITS_PER_WORD which loses on 64bit
-   because the movsi and movsf patterns don't handle r/f moves.  */
-#define SECONDARY_MEMORY_NEEDED_MODE(MODE)		\
- (GET_MODE_BITSIZE (MODE) < 32				\
-  ? mode_for_size (32, GET_MODE_CLASS (MODE), 0)	\
-  : MODE)
-
-
 /* Stack layout and calling conventions.  */
 
 /* Our stack grows from higher to lower addresses.  However, local variables
@@ -649,9 +589,6 @@ extern const enum reg_class regclass_map[FIRST_PSEUDO_REGISTER];
 
 /* Offset from stack-pointer to first location of outgoing args.  */
 #define STACK_POINTER_OFFSET (TARGET_64BIT ? 160 : 96)
-
-/* Offset within stack frame to start allocating local variables at.  */
-#define STARTING_FRAME_OFFSET 0
 
 /* Offset from the stack pointer register to an item dynamically
    allocated on the stack, e.g., by `alloca'.  */
@@ -720,8 +657,8 @@ extern const enum reg_class regclass_map[FIRST_PSEUDO_REGISTER];
 /* Define the dwarf register mapping.
    v16-v31 -> 68-83
    rX      -> X      otherwise  */
-#define DBX_REGISTER_NUMBER(regno)			\
-  ((regno >= 38 && regno <= 53) ? regno + 30 : regno)
+#define DBX_REGISTER_NUMBER(regno)				\
+  (((regno) >= 38 && (regno) <= 53) ? (regno) + 30 : (regno))
 
 /* Frame registers.  */
 
@@ -832,24 +769,25 @@ CUMULATIVE_ARGS;
    operand.  If we find one, push the reload and jump to WIN.  This
    macro is used in only one place: `find_reloads_address' in reload.c.  */
 #define LEGITIMIZE_RELOAD_ADDRESS(AD, MODE, OPNUM, TYPE, IND, WIN)	\
-do {									\
-  rtx new_rtx = legitimize_reload_address (AD, MODE, OPNUM, (int)(TYPE));	\
-  if (new_rtx)								\
-    {									\
-      (AD) = new_rtx;							\
-      goto WIN;								\
-    }									\
-} while (0)
+  do {									\
+    rtx new_rtx = legitimize_reload_address ((AD), (MODE),		\
+					     (OPNUM), (int)(TYPE));	\
+    if (new_rtx)							\
+      {									\
+	(AD) = new_rtx;							\
+	goto WIN;							\
+      }									\
+  } while (0)
 
 /* Helper macro for s390.c and s390.md to check for symbolic constants.  */
-#define SYMBOLIC_CONST(X)       \
-(GET_CODE (X) == SYMBOL_REF                                             \
- || GET_CODE (X) == LABEL_REF                                           \
- || (GET_CODE (X) == CONST && symbolic_reference_mentioned_p (X)))
+#define SYMBOLIC_CONST(X)						\
+  (GET_CODE (X) == SYMBOL_REF						\
+   || GET_CODE (X) == LABEL_REF						\
+   || (GET_CODE (X) == CONST && symbolic_reference_mentioned_p (X)))
 
-#define TLS_SYMBOLIC_CONST(X)	\
-((GET_CODE (X) == SYMBOL_REF && tls_symbolic_operand (X))	\
- || (GET_CODE (X) == CONST && tls_symbolic_reference_mentioned_p (X)))
+#define TLS_SYMBOLIC_CONST(X)						\
+  ((GET_CODE (X) == SYMBOL_REF && tls_symbolic_operand (X))		\
+   || (GET_CODE (X) == CONST && tls_symbolic_reference_mentioned_p (X)))
 
 
 /* Condition codes.  */
@@ -921,6 +859,10 @@ do {									\
 
 #define LEGITIMATE_PIC_OPERAND_P(X)  legitimate_pic_operand_p (X)
 
+#ifndef TARGET_DEFAULT_PIC_DATA_IS_TEXT_RELATIVE
+#define TARGET_DEFAULT_PIC_DATA_IS_TEXT_RELATIVE 1
+#endif
+
 
 /* Assembler file format.  */
 
@@ -928,8 +870,8 @@ do {									\
 #define ASM_COMMENT_START "#"
 
 /* Declare an uninitialized external linkage data object.  */
-#define ASM_OUTPUT_ALIGNED_BSS(FILE, DECL, NAME, SIZE, ALIGN) \
-  asm_output_aligned_bss (FILE, DECL, NAME, SIZE, ALIGN)
+#define ASM_OUTPUT_ALIGNED_BSS(FILE, DECL, NAME, SIZE, ALIGN)		\
+  asm_output_aligned_bss ((FILE), (DECL), (NAME), (SIZE), (ALIGN))
 
 /* Globalizing directive for a label.  */
 #define GLOBAL_ASM_OP ".globl "
@@ -946,7 +888,7 @@ do {									\
 #define LOCAL_LABEL_PREFIX "."
 
 #define LABEL_ALIGN(LABEL) \
-  s390_label_align (LABEL)
+  s390_label_align ((LABEL))
 
 /* How to refer to registers in assembler output.  This sequence is
    indexed by compiler's hard-register-number (see above).  */
@@ -967,8 +909,8 @@ do {									\
     { "v9", 28 }, { "v11", 29 }, { "v13", 30 }, { "v15", 31 } };
 
 /* Print operand X (an rtx) in assembler syntax to file FILE.  */
-#define PRINT_OPERAND(FILE, X, CODE) print_operand (FILE, X, CODE)
-#define PRINT_OPERAND_ADDRESS(FILE, ADDR) print_operand_address (FILE, ADDR)
+#define PRINT_OPERAND(FILE, X, CODE) print_operand ((FILE), (X), (CODE))
+#define PRINT_OPERAND_ADDRESS(FILE, ADDR) print_operand_address ((FILE), (ADDR))
 
 /* Output an element of a case-vector that is absolute.  */
 #define ASM_OUTPUT_ADDR_VEC_ELT(FILE, VALUE)				\
@@ -998,8 +940,8 @@ do {									\
 #define EPILOGUE_USES(REGNO) ((REGNO) == RETURN_REGNUM)
 
 #undef ASM_OUTPUT_FUNCTION_LABEL
-#define ASM_OUTPUT_FUNCTION_LABEL(FILE, NAME, DECL) \
-  s390_asm_output_function_label (FILE, NAME, DECL)
+#define ASM_OUTPUT_FUNCTION_LABEL(FILE, NAME, DECL)		\
+  s390_asm_output_function_label ((FILE), (NAME), (DECL))
 
 #if S390_USE_TARGET_ATTRIBUTE
 /* Hook to output .machine and .machinemode at start of function.  */
@@ -1017,14 +959,10 @@ do {									\
    tablejump instruction.  */
 #define CASE_VECTOR_MODE (TARGET_64BIT ? DImode : SImode)
 
-/* Value is 1 if truncating an integer of INPREC bits to OUTPREC bits
-   is done just by pretending it is already truncated.  */
-#define TRULY_NOOP_TRUNCATION(OUTPREC, INPREC)  1
-
 /* Specify the machine mode that pointers have.
    After generation of rtl, the compiler makes no further distinction
    between pointers and any other objects of this machine mode.  */
-#define Pmode ((machine_mode) (TARGET_64BIT ? DImode : SImode))
+#define Pmode (TARGET_64BIT ? DImode : SImode)
 
 /* This is -1 for "pointer mode" extend.  See ptr_extend in s390.md.  */
 #define POINTERS_EXTEND_UNSIGNED -1
@@ -1056,24 +994,25 @@ do {									\
    the symbol_refs that can be misaligned and assume that the others
    are correctly aligned.  Hence, if a symbol_ref does not have
    a _NOTALIGN flag it is supposed to be correctly aligned.  */
-#define SYMBOL_FLAG_SET_NOTALIGN2(X) SYMBOL_FLAG_SET_ALIGN(X, 1)
-#define SYMBOL_FLAG_SET_NOTALIGN4(X) SYMBOL_FLAG_SET_ALIGN(X, 2)
-#define SYMBOL_FLAG_SET_NOTALIGN8(X) SYMBOL_FLAG_SET_ALIGN(X, 3)
+#define SYMBOL_FLAG_SET_NOTALIGN2(X) SYMBOL_FLAG_SET_ALIGN((X), 1)
+#define SYMBOL_FLAG_SET_NOTALIGN4(X) SYMBOL_FLAG_SET_ALIGN((X), 2)
+#define SYMBOL_FLAG_SET_NOTALIGN8(X) SYMBOL_FLAG_SET_ALIGN((X), 3)
 
 #define SYMBOL_FLAG_NOTALIGN2_P(X) (SYMBOL_FLAG_GET_ALIGN(X) == 1)
-#define SYMBOL_FLAG_NOTALIGN4_P(X) (SYMBOL_FLAG_GET_ALIGN(X) == 2 \
+#define SYMBOL_FLAG_NOTALIGN4_P(X) (SYMBOL_FLAG_GET_ALIGN(X) == 2	\
 				    || SYMBOL_FLAG_GET_ALIGN(X) == 1)
-#define SYMBOL_FLAG_NOTALIGN8_P(X) (SYMBOL_FLAG_GET_ALIGN(X) == 3 \
-				    || SYMBOL_FLAG_GET_ALIGN(X) == 2 \
+#define SYMBOL_FLAG_NOTALIGN8_P(X) (SYMBOL_FLAG_GET_ALIGN(X) == 3	\
+				    || SYMBOL_FLAG_GET_ALIGN(X) == 2	\
 				    || SYMBOL_FLAG_GET_ALIGN(X) == 1)
 
 /* Check whether integer displacement is in range for a short displacement.  */
 #define SHORT_DISP_IN_RANGE(d) ((d) >= 0 && (d) <= 4095)
 
 /* Check whether integer displacement is in range.  */
-#define DISP_IN_RANGE(d) \
-  (TARGET_LONG_DISPLACEMENT? ((d) >= -524288 && (d) <= 524287) \
-                           : SHORT_DISP_IN_RANGE(d))
+#define DISP_IN_RANGE(d)				\
+  (TARGET_LONG_DISPLACEMENT				\
+   ? ((d) >= -524288 && (d) <= 524287)			\
+   : SHORT_DISP_IN_RANGE(d))
 
 /* Reads can reuse write prefetches, used by tree-ssa-prefetch-loops.c.  */
 #define READ_CAN_USE_WRITE_PREFETCH 1

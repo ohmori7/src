@@ -1,4 +1,4 @@
-/* $NetBSD: ti_com.c,v 1.4 2018/12/08 17:46:10 thorpej Exp $ */
+/* $NetBSD: ti_com.c,v 1.11 2021/01/27 03:10:20 thorpej Exp $ */
 
 /*-
  * Copyright (c) 2017 Jared McNeill <jmcneill@invisible.ca>
@@ -28,7 +28,7 @@
 
 #include <sys/cdefs.h>
 
-__KERNEL_RCSID(1, "$NetBSD: ti_com.c,v 1.4 2018/12/08 17:46:10 thorpej Exp $");
+__KERNEL_RCSID(1, "$NetBSD: ti_com.c,v 1.11 2021/01/27 03:10:20 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -47,10 +47,10 @@ __KERNEL_RCSID(1, "$NetBSD: ti_com.c,v 1.4 2018/12/08 17:46:10 thorpej Exp $");
 static int ti_com_match(device_t, cfdata_t, void *);
 static void ti_com_attach(device_t, device_t, void *);
 
-static const char * const compatible[] = {
-	"ti,am3352-uart",
-	"ti,omap3-uart",
-	NULL
+static const struct device_compatible_entry compat_data[] = {
+	{ .compat = "ti,am3352-uart" },
+	{ .compat = "ti,omap3-uart" },
+	DEVICE_COMPAT_EOL
 };
 
 struct ti_com_softc {
@@ -66,7 +66,7 @@ ti_com_match(device_t parent, cfdata_t cf, void *aux)
 {
 	struct fdt_attach_args * const faa = aux;
 
-	return of_match_compatible(faa->faa_phandle, compatible);
+	return of_compatible_match(faa->faa_phandle, compat_data);
 }
 
 static void
@@ -76,10 +76,9 @@ ti_com_attach(device_t parent, device_t self, void *aux)
 	struct com_softc * const sc = &ssc->ssc_sc;
 	struct fdt_attach_args * const faa = aux;
 	const int phandle = faa->faa_phandle;
+	bus_space_tag_t bst = faa->faa_bst;
 	bus_space_handle_t bsh;
-	bus_space_tag_t bst;
 	char intrstr[128];
-	struct clk *hwmod;
 	bus_addr_t addr;
 	bus_size_t size;
 	int error;
@@ -88,8 +87,6 @@ ti_com_attach(device_t parent, device_t self, void *aux)
 		aprint_error(": couldn't get registers\n");
 		return;
 	}
-
-	bst = faa->faa_a4x_bst;
 
 	sc->sc_dev = self;
 
@@ -102,18 +99,16 @@ ti_com_attach(device_t parent, device_t self, void *aux)
 
 	error = bus_space_map(bst, addr, size, 0, &bsh);
 	if (error) {
-		aprint_error(": couldn't map %#llx: %d", (uint64_t)addr, error);
+		aprint_error(": couldn't map %#" PRIxBUSADDR ": %d", addr, error);
 		return;
 	}
 
-	hwmod = ti_prcm_get_hwmod(phandle, 0);
-	KASSERT(hwmod != NULL);
-	if (clk_enable(hwmod) != 0) {
+	if (ti_prcm_enable_hwmod(phandle, 0) != 0) {
 		aprint_error(": couldn't enable module\n");
 		return;
 	}
 
-	com_init_regs(&sc->sc_regs, bst, bsh, addr);
+	com_init_regs_stride(&sc->sc_regs, bst, bsh, addr, 2);
 
 	com_attach_subr(sc);
 	aprint_naive("\n");
@@ -123,8 +118,8 @@ ti_com_attach(device_t parent, device_t self, void *aux)
 		return;
 	}
 
-	ssc->ssc_ih = fdtbus_intr_establish(phandle, 0, IPL_SERIAL,
-	    FDT_INTR_MPSAFE, comintr, sc);
+	ssc->ssc_ih = fdtbus_intr_establish_xname(phandle, 0, IPL_SERIAL,
+	    FDT_INTR_MPSAFE, comintr, sc, device_xname(self));
 	if (ssc->ssc_ih == NULL) {
 		aprint_error_dev(self, "failed to establish interrupt on %s\n",
 		    intrstr);
@@ -139,14 +134,16 @@ ti_com_attach(device_t parent, device_t self, void *aux)
 static int
 ti_com_console_match(int phandle)
 {
-	return of_match_compatible(phandle, compatible);
+	return of_compatible_match(phandle, compat_data);
 }
 
 static void
 ti_com_console_consinit(struct fdt_attach_args *faa, u_int uart_freq)
 {
 	const int phandle = faa->faa_phandle;
-	bus_space_tag_t bst = faa->faa_a4x_bst;
+	bus_space_tag_t bst = faa->faa_bst;
+	bus_space_handle_t dummy_bsh;
+	struct com_regs regs;
 	bus_addr_t addr;
 	tcflag_t flags;
 	int speed;
@@ -157,7 +154,10 @@ ti_com_console_consinit(struct fdt_attach_args *faa, u_int uart_freq)
 		speed = 115200;	/* default */
 	flags = fdtbus_get_stdout_flags();
 
-	if (comcnattach(bst, addr, speed, uart_freq, COM_TYPE_NORMAL, flags))
+	memset(&dummy_bsh, 0, sizeof(dummy_bsh));
+	com_init_regs_stride(&regs, bst, dummy_bsh, addr, 2);
+
+	if (comcnattach1(&regs, speed, uart_freq, COM_TYPE_NORMAL, flags))
 		panic("Cannot initialize ti com console");
 }
 

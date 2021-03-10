@@ -1,11 +1,14 @@
-#	$NetBSD: Makefile,v 1.27 2019/04/20 17:16:41 christos Exp $
+#	$NetBSD: Makefile,v 1.34 2021/03/05 17:47:16 christos Exp $
 
 .include <bsd.own.mk>
 
 .include "../Makefile.inc"
 
+CWARNFLAGS.clang+=	-Wno-error=sizeof-array-div
+CWARNFLAGS.clang+=	-Wno-error=format-nonliteral
 LIB=	ssh
 SRCS=\
+addr.c \
 addrmatch.c \
 atomicio.c \
 authfd.c \
@@ -20,7 +23,6 @@ cipher-chachapoly.c \
 cipher.c \
 cleanup.c \
 compat.c \
-crc32.c \
 dh.c \
 dispatch.c \
 dns.c \
@@ -38,7 +40,7 @@ kexecdh.c \
 kexgen.c \
 kexgex.c \
 kexgexc.c \
-kexsntrup4591761x25519.c \
+kexsntrup761x25519.c \
 krl.c \
 log.c \
 mac.c \
@@ -54,13 +56,16 @@ readpass.c \
 recallocarray.c \
 sc25519.c \
 smult_curve25519_ref.c \
-sntrup4591761.c \
+sntrup761.c \
 ssh-ed25519.c \
+ssh-ed25519-sk.c \
 ssh-pkcs11.c \
+ssh-sk-client.c \
 ssh-xmss.c \
 sshbuf-getput-basic.c \
 sshbuf-getput-crypto.c \
 sshbuf-misc.c \
+sshbuf-io.c \
 sshbuf.c \
 ssherr.c \
 sshkey-xmss.c \
@@ -70,7 +75,6 @@ uidswap.c \
 umac.c \
 umac128.c \
 utf8.c \
-uuencode.c \
 verify.c \
 xmalloc.c \
 xmss_commons.c \
@@ -84,6 +88,7 @@ digest-openssl.c \
 kexc25519.c \
 ssh-dss.c \
 ssh-ecdsa.c \
+ssh-ecdsa-sk.c \
 ssh-rsa.c
 
 SRCS+=	fmt_scaled.c
@@ -92,7 +97,7 @@ COPTS.monitor_fdpass.c+=-Wno-stack-protector
 COPTS.xmss_fast.c+=	-Wno-stack-protector
 COPTS.xmss_hash.c+=	-Wno-stack-protector
 COPTS.xmss_wots.c+=	-Wno-stack-protector
-COPTS.sntrup4591761.c+=	-Wno-stack-protector
+COPTS.sntrup761.c+=	-Wno-stack-protector
 
 .if WITH_OPENSSL
 SRCS+=		${OPENSSL_SRCS}
@@ -121,5 +126,8 @@ COPTS.channels.c+=	-fno-strict-aliasing
 COPTS.poly1305.c+=	-O0
 COPTS.umac.c+=		-O0
 .endif
+
+COPTS.hostfile.c+=	${GCC_NO_FORMAT_TRUNCATION}
+COPTS.sshkey.c+=	${GCC_NO_FORMAT_TRUNCATION}
 
 .include <bsd.lib.mk>

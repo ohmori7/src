@@ -1,4 +1,4 @@
-/*	$NetBSD: pmap.h,v 1.29 2018/04/19 21:50:07 christos Exp $	*/
+/*	$NetBSD: pmap.h,v 1.34 2021/03/02 01:47:44 thorpej Exp $	*/
 
 /*-
  * Copyright (C) 1995, 1996 Wolfgang Solfrank.
@@ -38,12 +38,13 @@
 #error use assym.h instead
 #endif
 
-#if defined(_LKM) || defined(_MODULE)
+#ifdef _MODULE
 #error this file should not be included by loadable kernel modules
 #endif
 
 #ifdef _KERNEL_OPT
 #include "opt_ppcarch.h"
+#include "opt_modular.h"
 #endif
 #include <powerpc/oea/pte.h>
 
@@ -106,6 +107,8 @@ struct pmap_ops {
 	void (*pmapop_pvo_verify)(void);
 	vaddr_t (*pmapop_steal_memory)(vsize_t, vaddr_t *, vaddr_t *);
 	void (*pmapop_bootstrap)(paddr_t, paddr_t);
+	void (*pmapop_bootstrap1)(paddr_t, paddr_t);
+	void (*pmapop_bootstrap2)(void);
 };
 
 #ifdef	_KERNEL
@@ -128,10 +131,11 @@ extern int pmap_use_altivec;
 #define	pmap_wired_count(pmap)		((pmap)->pm_stats.wired_count)
 
 /* ARGSUSED */
-static __inline void
+static __inline bool
 pmap_remove_all(struct pmap *pmap)
 {
 	/* Nothing. */
+	return false;
 }
 
 #if (defined(PPC_OEA) + defined(PPC_OEA64) + defined(PPC_OEA64_BRIDGE)) != 1
@@ -143,6 +147,8 @@ extern unsigned int pmap_pteg_cnt;
 extern unsigned int pmap_pteg_mask;
 
 void pmap_bootstrap(vaddr_t, vaddr_t);
+void pmap_bootstrap1(vaddr_t, vaddr_t);
+void pmap_bootstrap2(void);
 bool pmap_extract(pmap_t, vaddr_t, paddr_t *);
 bool pmap_query_bit(struct vm_page *, int);
 bool pmap_clear_bit(struct vm_page *, int);

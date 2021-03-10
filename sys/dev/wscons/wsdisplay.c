@@ -1,4 +1,4 @@
-/* $NetBSD: wsdisplay.c,v 1.154 2019/02/07 06:10:29 mlelstv Exp $ */
+/* $NetBSD: wsdisplay.c,v 1.162 2020/12/27 16:09:33 tsutsui Exp $ */
 
 /*
  * Copyright (c) 1996, 1997 Christopher G. Demetriou.  All rights reserved.
@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: wsdisplay.c,v 1.154 2019/02/07 06:10:29 mlelstv Exp $");
+__KERNEL_RCSID(0, "$NetBSD: wsdisplay.c,v 1.162 2020/12/27 16:09:33 tsutsui Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_wsdisplay_compat.h"
@@ -71,6 +71,7 @@ __KERNEL_RCSID(0, "$NetBSD: wsdisplay.c,v 1.154 2019/02/07 06:10:29 mlelstv Exp 
 #include <dev/cons.h>
 
 #include "locators.h"
+#include "ioconf.h"
 
 #ifdef WSDISPLAY_MULTICONS
 static bool wsdisplay_multicons_enable = true;
@@ -120,15 +121,15 @@ struct wsscreen {
 #endif
 };
 
-struct wsscreen *wsscreen_attach(struct wsdisplay_softc *, int,
+static struct wsscreen *wsscreen_attach(struct wsdisplay_softc *, int,
 				 const char *,
 				 const struct wsscreen_descr *, void *,
 				 int, int, long);
-void wsscreen_detach(struct wsscreen *);
-int wsdisplay_addscreen(struct wsdisplay_softc *, int, const char *, const char *);
+static void wsscreen_detach(struct wsscreen *);
+static int wsdisplay_addscreen(struct wsdisplay_softc *, int, const char *, const char *);
 static void wsdisplay_addscreen_print(struct wsdisplay_softc *, int, int);
 static void wsdisplay_closescreen(struct wsdisplay_softc *, struct wsscreen *);
-int wsdisplay_delscreen(struct wsdisplay_softc *, int, int);
+static int wsdisplay_delscreen(struct wsdisplay_softc *, int, int);
 
 #define WSDISPLAY_MAXSCREEN 8
 
@@ -176,8 +177,6 @@ struct wsdisplay_scroll_data wsdisplay_default_scroll_values = {
 	2,
 };
 #endif
-
-extern struct cfdriver wsdisplay_cd;
 
 /* Autoconfiguration definitions. */
 static int wsdisplay_emul_match(device_t , cfdata_t, void *);
@@ -255,8 +254,11 @@ static int (*wsdisplay_cons_kbd_getc)(dev_t);
 static void (*wsdisplay_cons_kbd_pollc)(dev_t, int);
 
 static struct consdev wsdisplay_cons = {
-	NULL, NULL, wsdisplay_getc, wsdisplay_cnputc,
-	wsdisplay_pollc, NULL, NULL, NULL, NODEV, CN_NORMAL
+	.cn_getc = wsdisplay_getc,
+	.cn_putc = wsdisplay_cnputc,
+	.cn_pollc = wsdisplay_pollc,
+	.cn_dev = NODEV,
+	.cn_pri = CN_NORMAL
 };
 
 #ifndef WSDISPLAY_DEFAULTSCREENS
@@ -277,6 +279,19 @@ static int wsdisplay_dosync(struct wsdisplay_softc *, int);
 int wsdisplay_clearonclose;
 
 #ifdef WSDISPLAY_MULTICONS
+/*
+ * Replace cn_isconsole() so that we can enter DDB from old console.
+ */
+bool
+wsdisplay_cn_isconsole(dev_t dev)
+{
+
+	return (cn_tab != NULL && cn_tab->cn_dev == dev) ||
+	    (cn_tab == &wsdisplay_cons && !wsdisplay_multicons_suspended &&
+	    wsdisplay_multicons_enable && wsdisplay_ocn != NULL &&
+	    wsdisplay_ocn->cn_dev == dev);
+}
+
 static void
 wsscreen_getc_poll(void *priv)
 {
@@ -298,7 +313,7 @@ wsscreen_getc_poll(void *priv)
 }
 #endif
 
-struct wsscreen *
+static struct wsscreen *
 wsscreen_attach(struct wsdisplay_softc *sc, int console, const char *emul,
 	const struct wsscreen_descr *type, void *cookie, int ccol,
 	int crow, long defattr)
@@ -360,7 +375,7 @@ wsscreen_attach(struct wsdisplay_softc *sc, int console, const char *emul,
 	return (scr);
 }
 
-void
+static void
 wsscreen_detach(struct wsscreen *scr)
 {
 	u_int ccol, crow; /* XXX */
@@ -420,7 +435,7 @@ wsdisplay_addscreen_print(struct wsdisplay_softc *sc, int idx, int count)
 	aprint_verbose(")\n");
 }
 
-int
+static int
 wsdisplay_addscreen(struct wsdisplay_softc *sc, int idx,
 	const char *screentype, const char *emul)
 {
@@ -447,9 +462,7 @@ wsdisplay_addscreen(struct wsdisplay_softc *sc, int idx,
 	 */
 	if (scrdesc->capabilities & WSSCREEN_RESIZE) {
 		/* we want per screen wsscreen_descr */
-		scrdescr2 = malloc(sizeof(struct wsscreen_descr), M_DEVBUF, M_NOWAIT);
-		if (scrdescr2 == NULL)
-			return ENOMEM;
+		scrdescr2 = malloc(sizeof(struct wsscreen_descr), M_DEVBUF, M_WAITOK);
 		memcpy(scrdescr2, scrdesc, sizeof(struct wsscreen_descr));
 		scrdescr2->capabilities |= WSSCREEN_FREE;
 		scrdesc = scrdescr2;
@@ -541,7 +554,7 @@ wsdisplay_scroll(void *arg, int op)
 }
 #endif
 
-int
+static int
 wsdisplay_delscreen(struct wsdisplay_softc *sc, int idx, int flags)
 {
 	struct wsscreen *scr;
@@ -832,9 +845,6 @@ wsdisplay_common_attach(struct wsdisplay_softc *sc, int console, int kbdmux,
 		mux = wsmux_getmux(kbdmux);
 	else
 		mux = wsmux_create("dmux", device_unit(sc->sc_dev));
-	/* XXX panic()ing isn't nice, but attach cannot fail */
-	if (mux == NULL)
-		panic("wsdisplay_common_attach: no memory");
 	sc->sc_input = &mux->sc_base;
 	mux->sc_base.me_dispdv = sc->sc_dev;
 	aprint_normal(" kbdmux %d", kbdmux);
@@ -932,6 +942,10 @@ wsdisplay_cnattach(const struct wsscreen_descr *type, void *cookie,
 
 	if (cn_tab != &wsdisplay_cons)
 		wsdisplay_ocn = cn_tab;
+
+	if (wsdisplay_ocn != NULL && wsdisplay_ocn->cn_halt != NULL)
+		wsdisplay_ocn->cn_halt(wsdisplay_ocn->cn_dev);
+
 	cn_tab = &wsdisplay_cons;
 	wsdisplay_console_initted = 2;
 }
@@ -960,6 +974,10 @@ wsdisplay_preattach(const struct wsscreen_descr *type, void *cookie,
 
 	if (cn_tab != &wsdisplay_cons)
 		wsdisplay_ocn = cn_tab;
+
+	if (wsdisplay_ocn != NULL && wsdisplay_ocn->cn_halt != NULL)
+		wsdisplay_ocn->cn_halt(wsdisplay_ocn->cn_dev);
+
 	cn_tab = &wsdisplay_cons;
 	wsdisplay_console_initted = 1;
 }

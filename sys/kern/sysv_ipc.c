@@ -1,4 +1,4 @@
-/*	$NetBSD: sysv_ipc.c,v 1.39 2019/04/10 10:03:50 pgoyette Exp $	*/
+/*	$NetBSD: sysv_ipc.c,v 1.41 2020/02/21 00:26:22 joerg Exp $	*/
 
 /*-
  * Copyright (c) 1998, 2007 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: sysv_ipc.c,v 1.39 2019/04/10 10:03:50 pgoyette Exp $");
+__KERNEL_RCSID(0, "$NetBSD: sysv_ipc.c,v 1.41 2020/02/21 00:26:22 joerg Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_sysv.h"
@@ -132,8 +132,6 @@ MODULE(MODULE_CLASS_EXEC, sysv_ipc, NULL);
  
 SYSCTL_SETUP_PROTO(sysctl_ipc_setup);
 
-static struct sysctllog *sysctl_sysvipc_clog = NULL;
-
 static const struct syscall_package sysvipc_syscalls[] = {
 #if defined(SYSVSHM)
 	{ SYS___shmctl50, 0, (sy_call_t *)sys___shmctl50 },
@@ -180,12 +178,12 @@ sysv_ipc_modcmd(modcmd_t cmd, void *arg)
 		 * sysctl data
 		 */
 #ifdef SYSVSHM
-		error = shminit(&sysctl_sysvipc_clog);
+		error = shminit();
 		if (error != 0)
 			return error;
 #endif
 #ifdef SYSVSEM
-		error = seminit(&sysctl_sysvipc_clog);
+		error = seminit();
 		if (error != 0) {
 #ifdef SYSVSHM
 			shmfini();
@@ -194,7 +192,7 @@ sysv_ipc_modcmd(modcmd_t cmd, void *arg)
 		}
 #endif
 #ifdef SYSVMSG
-		error = msginit(&sysctl_sysvipc_clog);
+		error = msginit();
 		if (error != 0) {
 #ifdef SYSVSEM
 			semfini();
@@ -204,11 +202,6 @@ sysv_ipc_modcmd(modcmd_t cmd, void *arg)
 #endif
 			return error;
 		}
-#endif
-
-#ifdef _MODULE
-		/* Set up the common sysctl tree */
-		sysctl_ipc_setup(&sysctl_sysvipc_clog);
 #endif
 		break;
 	case MODULE_CMD_FINI:
@@ -228,7 +221,7 @@ sysv_ipc_modcmd(modcmd_t cmd, void *arg)
 #ifdef SYSVSEM
 		if (semfini()) {
 #ifdef SYSVSHM
-			shminit(NULL);
+			shminit();
 #endif
 			return EBUSY;
 		}
@@ -236,20 +229,14 @@ sysv_ipc_modcmd(modcmd_t cmd, void *arg)
 #ifdef SYSVMSG
 		if (msgfini()) {
 #ifdef SYSVSEM
-			seminit(NULL);
+			seminit();
 #endif
 #ifdef SYSVSHM
-			shminit(NULL);
+			shminit();
 #endif
 			return EBUSY;
 		}
 #endif
-
-#ifdef _MODULE
-		/* Remove the sysctl sub-trees */
-		sysctl_teardown(&sysctl_sysvipc_clog);
-#endif
-
 		/* Unlink the system calls. */
 		error = syscall_disestablish(NULL, sysvipc_syscalls);
 		if (error)
@@ -276,7 +263,7 @@ sysvipc_listener_cb(kauth_cred_t cred, kauth_action_t action, void *cookie,
 	int mode;
 	enum kauth_system_req req;
 
-	req = (enum kauth_system_req)arg0;
+	req = (enum kauth_system_req)(uintptr_t)arg0;
 
 	if (!(action == KAUTH_SYSTEM_SYSVIPC &&
 	      req == KAUTH_REQ_SYSTEM_SYSVIPC_BYPASS))

@@ -1,5 +1,5 @@
 /* Standard problems for dataflow support routines.
-   Copyright (C) 1999-2016 Free Software Foundation, Inc.
+   Copyright (C) 1999-2018 Free Software Foundation, Inc.
    Originally contributed by Michael P. Hayes
              (m.hayes@elec.canterbury.ac.nz, mhayes@redhat.com)
    Major rewrite contributed by Danny Berlin (dberlin@dberlin.org)
@@ -28,6 +28,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "target.h"
 #include "rtl.h"
 #include "df.h"
+#include "memmodel.h"
 #include "tm_p.h"
 #include "insn-config.h"
 #include "cfganal.h"
@@ -460,19 +461,17 @@ df_rd_confluence_n (edge e)
       bitmap dense_invalidated = &problem_data->dense_invalidated_by_call;
       bitmap_iterator bi;
       unsigned int regno;
-      bitmap_head tmp;
 
-      bitmap_initialize (&tmp, &df_bitmap_obstack);
-      bitmap_and_compl (&tmp, op2, dense_invalidated);
+      auto_bitmap tmp (&df_bitmap_obstack);
+      bitmap_and_compl (tmp, op2, dense_invalidated);
 
       EXECUTE_IF_SET_IN_BITMAP (sparse_invalidated, 0, regno, bi)
  	{
- 	  bitmap_clear_range (&tmp,
+	  bitmap_clear_range (tmp,
  			      DF_DEFS_BEGIN (regno),
  			      DF_DEFS_COUNT (regno));
 	}
-      changed |= bitmap_ior_into (op1, &tmp);
-      bitmap_clear (&tmp);
+      changed |= bitmap_ior_into (op1, tmp);
       return changed;
     }
   else
@@ -668,7 +667,7 @@ df_rd_bottom_dump (basic_block bb, FILE *file)
 
 /* All of the information associated with every instance of the problem.  */
 
-static struct df_problem problem_RD =
+static const struct df_problem problem_RD =
 {
   DF_RD,                      /* Problem id.  */
   DF_FORWARD,                 /* Direction.  */
@@ -1190,7 +1189,7 @@ df_lr_verify_solution_end (void)
 
 /* All of the information associated with every instance of the problem.  */
 
-static struct df_problem problem_LR =
+static const struct df_problem problem_LR =
 {
   DF_LR,                      /* Problem id.  */
   DF_BACKWARD,                /* Direction.  */
@@ -1718,7 +1717,7 @@ df_live_verify_solution_end (void)
 
 /* All of the information associated with every instance of the problem.  */
 
-static struct df_problem problem_LIVE =
+static const struct df_problem problem_LIVE =
 {
   DF_LIVE,                      /* Problem id.  */
   DF_FORWARD,                   /* Direction.  */
@@ -2169,7 +2168,7 @@ df_mir_verify_solution_end (void)
 
 /* All of the information associated with every instance of the problem.  */
 
-static struct df_problem problem_MIR =
+static const struct df_problem problem_MIR =
 {
   DF_MIR,                       /* Problem id.  */
   DF_FORWARD,                   /* Direction.  */
@@ -2641,7 +2640,7 @@ df_chain_insn_bottom_dump (const rtx_insn *insn, FILE *file)
     }
 }
 
-static struct df_problem problem_CHAIN =
+static const struct df_problem problem_CHAIN =
 {
   DF_CHAIN,                   /* Problem id.  */
   DF_NONE,                    /* Direction.  */
@@ -2816,11 +2815,11 @@ df_word_lr_mark_ref (df_ref ref, bool is_set, regset live)
   regno = REGNO (reg);
   reg_mode = GET_MODE (reg);
   if (regno < FIRST_PSEUDO_REGISTER
-      || GET_MODE_SIZE (reg_mode) != 2 * UNITS_PER_WORD)
+      || maybe_ne (GET_MODE_SIZE (reg_mode), 2 * UNITS_PER_WORD))
     return true;
 
   if (GET_CODE (orig_reg) == SUBREG
-      && df_read_modify_subreg_p (orig_reg))
+      && read_modify_subreg_p (orig_reg))
     {
       gcc_assert (DF_REF_FLAGS_IS_SET (ref, DF_REF_PARTIAL));
       if (subreg_lowpart_p (orig_reg))
@@ -3008,7 +3007,7 @@ df_word_lr_bottom_dump (basic_block bb, FILE *file)
 
 /* All of the information associated with every instance of the problem.  */
 
-static struct df_problem problem_WORD_LR =
+static const struct df_problem problem_WORD_LR =
 {
   DF_WORD_LR,                      /* Problem id.  */
   DF_BACKWARD,                     /* Direction.  */
@@ -3683,7 +3682,7 @@ df_note_free (void)
 
 /* All of the information associated every instance of the problem.  */
 
-static struct df_problem problem_NOTE =
+static const struct df_problem problem_NOTE =
 {
   DF_NOTE,                    /* Problem id.  */
   DF_NONE,                    /* Direction.  */
@@ -4693,7 +4692,7 @@ df_md_bottom_dump (basic_block bb, FILE *file)
   df_print_regset (file, &bb_info->out);
 }
 
-static struct df_problem problem_MD =
+static const struct df_problem problem_MD =
 {
   DF_MD,                      /* Problem id.  */
   DF_FORWARD,                 /* Direction.  */

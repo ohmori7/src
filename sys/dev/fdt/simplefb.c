@@ -1,4 +1,4 @@
-/* $NetBSD: simplefb.c,v 1.7 2019/01/30 00:55:04 jmcneill Exp $ */
+/* $NetBSD: simplefb.c,v 1.14 2021/03/02 11:51:00 jmcneill Exp $ */
 
 /*-
  * Copyright (c) 2017 Jared McNeill <jmcneill@invisible.ca>
@@ -29,7 +29,7 @@
 #include "opt_wsdisplay_compat.h"
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: simplefb.c,v 1.7 2019/01/30 00:55:04 jmcneill Exp $");
+__KERNEL_RCSID(0, "$NetBSD: simplefb.c,v 1.14 2021/03/02 11:51:00 jmcneill Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -40,9 +40,9 @@ __KERNEL_RCSID(0, "$NetBSD: simplefb.c,v 1.7 2019/01/30 00:55:04 jmcneill Exp $"
 
 #include <dev/wsfb/genfbvar.h>
 
-static const char * const compatible[] = {
-	"simple-framebuffer",
-	NULL
+static const struct device_compatible_entry compat_data[] = {
+	{ .compat = "simple-framebuffer" },
+	DEVICE_COMPAT_EOL
 };
 
 struct simplefb_softc {
@@ -114,10 +114,11 @@ simplefb_mmap(void *v, void *vs, off_t off, int prot)
 {
 	struct simplefb_softc * const sc = v;
 
-	if (off < 0 || off >= sc->sc_gen.sc_fbsize)
+	if (off < 0 || off >= (sc->sc_paddr & PAGE_MASK) +
+	    sc->sc_gen.sc_fbsize)
 		return -1;
 
-	return bus_space_mmap(sc->sc_bst, sc->sc_paddr, off, prot,
+	return bus_space_mmap(sc->sc_bst, trunc_page(sc->sc_paddr), off, prot,
 	    BUS_SPACE_MAP_LINEAR | BUS_SPACE_MAP_PREFETCHABLE);
 }
 
@@ -131,6 +132,7 @@ simplefb_attach_genfb(struct simplefb_softc *sc)
 	uint32_t width, height, stride;
 	uint16_t depth;
 	const char *format;
+	uint64_t sfb_addr;
 	bus_addr_t addr;
 	bus_size_t size;
 
@@ -156,11 +158,26 @@ simplefb_attach_genfb(struct simplefb_softc *sc)
 	if (strcmp(format, "a8b8g8r8") == 0 ||
 	    strcmp(format, "x8r8g8b8") == 0) {
 		depth = 32;
+	} else if (strcmp(format, "r8g8b8a8") == 0 ||
+		   strcmp(format, "b8g8r8x8") == 0) {
+		depth = 32;
+		prop_dictionary_set_bool(dict, "is_swapped", true);
 	} else if (strcmp(format, "r5g6b5") == 0) {
 		depth = 16;
 	} else {
 		aprint_error(": unsupported format '%s'\n", format);
 		return ENXIO;
+	}
+
+	if (size < stride * height) {
+		aprint_error(": incorrect size\n");
+		return ENXIO;
+	}
+
+	/* Device may have been reconfigured. MD code will tell us. */
+	if (prop_dictionary_get_uint64(dict, "simplefb-physaddr", &sfb_addr) &&
+	    sfb_addr != 0) {
+		addr = (bus_addr_t)sfb_addr;
 	}
 
 	if (bus_space_map(sc->sc_bst, addr, size,
@@ -219,7 +236,7 @@ simplefb_match(device_t parent, cfdata_t cf, void *aux)
 {
 	struct fdt_attach_args * const faa = aux;
 
-	return of_match_compatible(faa->faa_phandle, compatible);
+	return of_compatible_match(faa->faa_phandle, compat_data);
 }
 
 static void
@@ -243,7 +260,7 @@ CFATTACH_DECL_NEW(simplefb, sizeof(struct simplefb_softc),
 static int
 simplefb_console_match(int phandle)
 {
-	return of_match_compatible(phandle, compatible);
+	return of_compatible_match(phandle, compat_data);
 }
 
 static void

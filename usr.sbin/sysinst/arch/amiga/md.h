@@ -1,4 +1,4 @@
-/*	$NetBSD: md.h,v 1.3 2018/11/18 10:34:45 martin Exp $	*/
+/*	$NetBSD: md.h,v 1.5 2019/12/11 19:25:50 martin Exp $	*/
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -51,7 +51,7 @@
 /*
  *  Default filesets to fetch and install during installation
  *  or upgrade. The standard sets are:
- *      base etc comp games man misc tests text xbase xcomp xetc xfont xserver
+ *      base etc comp games man misc rescue tests text xbase xcomp xetc xfont xserver
  */
 
 #define SET_KERNEL_1_NAME	"kern-GENERIC"
@@ -69,6 +69,13 @@
  */
 /* #define DISKLABEL_CMD "disklabel -w -r" */
 
+
+/*
+ * We rely on kernel support to translate native RDB partitions
+ * to in-core disklabels, so we can not check for existance of "real"
+ * disklabels on-disk before offering disklabel partitions.
+ */
+#define	DISKLABEL_NO_ONDISK_VERIFY	1
 
 /*
  *  prototypes for MD code.

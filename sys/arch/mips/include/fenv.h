@@ -1,4 +1,4 @@
-/*	$NetBSD: fenv.h,v 1.4 2017/03/22 23:11:09 chs Exp $	*/
+/*	$NetBSD: fenv.h,v 1.6 2020/07/26 08:08:41 simonb Exp $	*/
 
 /*-
  * Copyright (c) 2004-2005 David Schultz <das@FreeBSD.ORG>
@@ -68,7 +68,7 @@ extern const fenv_t	__fe_dfl_env;
 
 /* We need to be able to map status flag positions to mask flag positions */
 #define	_ENABLE_MASK	(FE_ALL_EXCEPT << _ENABLE_SHIFT)
-#define _ENABLE_SHIFT    5
+#define	_ENABLE_SHIFT    5
 
 static inline fpu_control_t
 __rfs(void)
@@ -85,6 +85,11 @@ __wfs(fpu_control_t __fpsr)
 
 	__asm __volatile("ctc1 %0,$31" : : "r" (__fpsr));
 }
+
+#if __GNUC_PREREQ__(8, 0)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wshadow"
+#endif
 
 __fenv_static inline int
 feclearexcept(int __excepts)
@@ -200,6 +205,10 @@ feupdateenv(const fenv_t *__envp)
 	feraiseexcept(__fpsr & FE_ALL_EXCEPT);
 	return (0);
 }
+
+#if __GNUC_PREREQ__(8, 0)
+#pragma GCC diagnostic pop
+#endif
 
 #if defined(_NETBSD_SOURCE) || defined(_GNU_SOURCE)
 

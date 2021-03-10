@@ -1,4 +1,4 @@
-/*	$NetBSD: can.c,v 1.6 2018/11/15 10:23:56 maxv Exp $	*/
+/*	$NetBSD: can.c,v 1.9 2020/01/29 05:20:26 thorpej Exp $	*/
 
 /*-
  * Copyright (c) 2003, 2017 The NetBSD Foundation, Inc.
@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: can.c,v 1.6 2018/11/15 10:23:56 maxv Exp $");
+__KERNEL_RCSID(0, "$NetBSD: can.c,v 1.9 2020/01/29 05:20:26 thorpej Exp $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -75,6 +75,12 @@ int	can_recvspace = 40 * (1024 + sizeof(struct sockaddr_can));
 #define	CANHASHSIZE	128
 #endif
 int	canhashsize = CANHASHSIZE;
+
+#ifdef MBUFTRACE
+static struct mowner can_mowner = MOWNER_INIT("can", "");
+static struct mowner can_rx_mowner = MOWNER_INIT("can", "rx");
+static struct mowner can_tx_mowner = MOWNER_INIT("can", "tx");
+#endif
 
 static int can_output(struct mbuf *, struct canpcb *);
 
@@ -243,7 +249,7 @@ can_output(struct mbuf *m, struct canpcb *canp)
 		
 	sotag = m_tag_get(PACKET_TAG_SO, sizeof(struct socket *), PR_NOWAIT);
 	if (sotag == NULL) {
-		ifp->if_oerrors++;
+		if_statinc(ifp, if_oerrors);
 		return ENOMEM;
 	}
 	mutex_enter(&canp->canp_mtx);
@@ -301,8 +307,7 @@ can_input(struct ifnet *ifp, struct mbuf *m)
 	} else {
 		IF_ENQUEUE(inq, m);
 		IFQ_UNLOCK(inq);
-		ifp->if_ipackets++;
-		ifp->if_ibytes += m->m_pkthdr.len;
+		if_statadd2(ifp, if_ipackets, 1, if_ibytes, m->m_pkthdr.len);
 		schednetisr(NETISR_CAN);
 	}
 }
@@ -924,9 +929,7 @@ can_raw_setop(struct canpcb *canp, struct sockopt *sopt)
 		int nfilters = sopt->sopt_size / sizeof(struct can_filter);
 		if (sopt->sopt_size % sizeof(struct can_filter) != 0)
 			return EINVAL;
-		mutex_enter(&canp->canp_mtx);
 		error = can_pcbsetfilter(canp, sopt->sopt_data, nfilters);
-		mutex_exit(&canp->canp_mtx);
 		break;
 		}
 	default:

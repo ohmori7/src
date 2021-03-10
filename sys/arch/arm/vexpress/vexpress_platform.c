@@ -1,4 +1,4 @@
-/* $NetBSD: vexpress_platform.c,v 1.14 2019/01/31 13:16:31 skrll Exp $ */
+/* $NetBSD: vexpress_platform.c,v 1.21 2021/02/05 08:07:14 skrll Exp $ */
 
 /*-
  * Copyright (c) 2017 Jared McNeill <jmcneill@invisible.ca>
@@ -30,7 +30,7 @@
 #include "opt_console.h"
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: vexpress_platform.c,v 1.14 2019/01/31 13:16:31 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: vexpress_platform.c,v 1.21 2021/02/05 08:07:14 skrll Exp $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -58,12 +58,9 @@ __KERNEL_RCSID(0, "$NetBSD: vexpress_platform.c,v 1.14 2019/01/31 13:16:31 skrll
 
 #include <libfdt.h>
 
-#define	VEXPRESS_CLCD_NODE_PATH	\
-	"/smb@8000000/motherboard/iofpga@3,00000000/clcd@1f0000"
 #define	VEXPRESS_REF_FREQ	24000000
 
 extern struct bus_space armv7_generic_bs_tag;
-extern struct bus_space armv7_generic_a4x_bs_tag;
 extern struct arm32_bus_dma_tag arm_generic_dma_tag;
 
 #define	SYSREG_BASE		0x1c010000
@@ -94,7 +91,7 @@ static bus_space_handle_t sysreg_bsh;
 
 void vexpress_platform_early_putchar(char);
 
-void
+void __noasan
 vexpress_platform_early_putchar(char c)
 {
 #ifdef CONSADDR
@@ -107,7 +104,7 @@ vexpress_platform_early_putchar(char c)
 		continue;
 
 	uartaddr[PL01XCOM_DR / 4] = htole32(c);
-	arm_dsb();
+	dsb(sy);
 
 	while ((le32toh(uartaddr[PL01XCOM_FR / 4]) & PL01X_FR_TXFE) == 0)
 		continue;
@@ -122,11 +119,6 @@ vexpress_a15_smp_init(void)
 #ifdef MULTIPROCESSOR
 	bus_space_tag_t gicd_bst = &armv7_generic_bs_tag;
 	bus_space_handle_t gicd_bsh;
-	int started = 0;
-
-	/* Bitmask of CPUs (non-BSP) to start */
-	for (int i = 1; i < arm_cpu_max; i++)
-		started |= __BIT(i);
 
 	/* Write init vec to SYS_FLAGS register */
 	SYSREG_WRITE(SYS_FLAGSCLR, 0xffffffff);
@@ -144,16 +136,19 @@ vexpress_a15_smp_init(void)
 	const uint32_t sgir = GICD_SGIR_TargetListFilter_NotMe;
 	bus_space_write_4(gicd_bst, gicd_bsh, GICD_SGIR, sgir);
 
-	/* Wait for APs to start */
-	u_int i;
-	for (i = 0x10000000; i > 0; i--) {
-		arm_dmb();
-		if (arm_cpu_hatched == started)
-			break;
-	}
-	if (i == 0) {
-		aprint_error("WARNING: AP failed to start\n");
-		ret++;
+	/* Bitmask of CPUs (non-BSP) to start */
+	for (u_int cpuindex = 1; cpuindex < arm_cpu_max; cpuindex++) {
+		u_int i;
+		for (i = 0x10000000; i > 0; i--) {
+			if (cpu_hatched_p(cpuindex))
+				break;
+		}
+
+		if (i == 0) {
+			ret++;
+			aprint_error("cpu%d: WARNING: AP failed to start\n",
+			    cpuindex);
+		}
 	}
 
 	/* Disable GIC distributor */
@@ -188,27 +183,19 @@ vexpress_platform_bootstrap(void)
 #ifdef MULTIPROCESSOR
 	arm_cpu_max = 1 + __SHIFTOUT(armreg_l2ctrl_read(), L2CTRL_NUMCPU);
 #endif
-
-	if (match_bootconf_option(boot_args, "console", "fb")) {
-		void *fdt_data = __UNCONST(fdtbus_get_data());
-		const int chosen_off = fdt_path_offset(fdt_data, "/chosen");
-		if (chosen_off >= 0)
-			fdt_setprop_string(fdt_data, chosen_off, "stdout-path",
-			    VEXPRESS_CLCD_NODE_PATH);
-	}
 }
 
 static void
 vexpress_platform_init_attach_args(struct fdt_attach_args *faa)
 {
 	faa->faa_bst = &armv7_generic_bs_tag;
-	faa->faa_a4x_bst = &armv7_generic_a4x_bs_tag;
 	faa->faa_dmat = &arm_generic_dma_tag;
 }
 
 static void
 vexpress_platform_device_register(device_t self, void *aux)
 {
+	fdtbus_device_register(self, aux);
 }
 
 static void

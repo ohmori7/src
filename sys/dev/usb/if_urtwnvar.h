@@ -1,4 +1,4 @@
-/*	$NetBSD: if_urtwnvar.h,v 1.13 2019/06/15 04:00:17 msaitoh Exp $	*/
+/*	$NetBSD: if_urtwnvar.h,v 1.16 2020/03/15 23:04:51 thorpej Exp $	*/
 /*	$OpenBSD: if_urtwnreg.h,v 1.3 2010/11/16 18:02:59 damien Exp $	*/
 
 /*-
@@ -44,7 +44,7 @@ struct urtwn_rx_radiotap_header {
 	uint16_t	wr_chan_freq;
 	uint16_t	wr_chan_flags;
 	uint8_t		wr_dbm_antsignal;
-} __packed;
+};
 
 #define URTWN_RX_RADIOTAP_PRESENT			\
 	(1 << IEEE80211_RADIOTAP_FLAGS |		\
@@ -57,7 +57,7 @@ struct urtwn_tx_radiotap_header {
 	uint8_t		wt_flags;
 	uint16_t	wt_chan_freq;
 	uint16_t	wt_chan_flags;
-} __packed;
+};
 
 #define URTWN_TX_RADIOTAP_PRESENT			\
 	(1 << IEEE80211_RADIOTAP_FLAGS |		\
@@ -128,11 +128,13 @@ struct urtwn_softc {
 	callout_t			sc_scan_to;
 	callout_t			sc_calib_to;
 
+	kcondvar_t			sc_task_cv;
 	kmutex_t			sc_task_mtx;
 	kmutex_t			sc_fwcmd_mtx;
 	kmutex_t			sc_tx_mtx;
 	kmutex_t			sc_rx_mtx;
 	kmutex_t			sc_write_mtx;
+	kmutex_t			sc_media_mtx;	/* XXX */
 
 	struct usbd_pipe *		rx_pipe[R92C_MAX_EPIN];
 	int				rx_npipe;

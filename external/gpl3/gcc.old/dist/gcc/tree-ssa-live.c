@@ -1,5 +1,5 @@
 /* Liveness for SSA trees.
-   Copyright (C) 2003-2016 Free Software Foundation, Inc.
+   Copyright (C) 2003-2018 Free Software Foundation, Inc.
    Contributed by Andrew MacLeod <amacleod@redhat.com>
 
 This file is part of GCC.
@@ -38,6 +38,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-ssa.h"
 #include "ipa-utils.h"
 #include "cfgloop.h"
+#include "stringpool.h"
+#include "attribs.h"
 
 static void verify_live_on_entry (tree_live_info_p);
 
@@ -329,7 +331,7 @@ mark_all_vars_used_1 (tree *tp, int *walk_subtrees, void *data ATTRIBUTE_UNUSED)
 
   /* Only need to mark VAR_DECLS; parameters and return results are not
      eliminated as unused.  */
-  if (TREE_CODE (t) == VAR_DECL)
+  if (VAR_P (t))
     {
       /* When a global var becomes used for the first time also walk its
          initializer (non global ones don't have any).  */
@@ -425,7 +427,7 @@ remove_unused_scope_block_p (tree scope, bool in_ctor_dtor_block)
 	 SET_DEST overlaps with others, and if the value expr changes
 	 by virtual register instantiation, we may get end up with
 	 different results.  */
-      else if (TREE_CODE (*t) == VAR_DECL && DECL_HAS_VALUE_EXPR_P (*t))
+      else if (VAR_P (*t) && DECL_HAS_VALUE_EXPR_P (*t))
 	unused = false;
 
       /* Remove everything we don't generate debug info for.  */
@@ -546,10 +548,10 @@ remove_unused_scope_block_p (tree scope, bool in_ctor_dtor_block)
      }
    else if (BLOCK_VARS (scope) || BLOCK_NUM_NONLOCALIZED_VARS (scope))
      unused = false;
-   /* See if this block is important for representation of inlined function.
-      Inlined functions are always represented by block with
-      block_ultimate_origin being set to FUNCTION_DECL and DECL_SOURCE_LOCATION
-      set...  */
+   /* See if this block is important for representation of inlined
+      function.  Inlined functions are always represented by block
+      with block_ultimate_origin being set to FUNCTION_DECL and
+      DECL_SOURCE_LOCATION set, unless they expand to nothing...  */
    else if (inlined_function_outer_scope_p (scope))
      unused = false;
    else
@@ -613,7 +615,7 @@ clear_unused_block_pointer (void)
    indentation level and FLAGS is as in print_generic_expr.  */
 
 static void
-dump_scope_block (FILE *file, int indent, tree scope, int flags)
+dump_scope_block (FILE *file, int indent, tree scope, dump_flags_t flags)
 {
   tree var, t;
   unsigned int i;
@@ -638,6 +640,16 @@ dump_scope_block (FILE *file, int indent, tree scope, int flags)
 	    fprintf (file, "#%i", BLOCK_NUMBER (origin));
 	}
     }
+  if (BLOCK_FRAGMENT_ORIGIN (scope))
+    fprintf (file, " Fragment of : #%i",
+	     BLOCK_NUMBER (BLOCK_FRAGMENT_ORIGIN (scope)));
+  else if (BLOCK_FRAGMENT_CHAIN (scope))
+    {
+      fprintf (file, " Fragment chain :");
+      for (t = BLOCK_FRAGMENT_CHAIN (scope); t ;
+	   t = BLOCK_FRAGMENT_CHAIN (t))
+	fprintf (file, " #%i", BLOCK_NUMBER (t));
+    }
   fprintf (file, " \n");
   for (var = BLOCK_VARS (scope); var; var = DECL_CHAIN (var))
     {
@@ -661,7 +673,7 @@ dump_scope_block (FILE *file, int indent, tree scope, int flags)
    is as in print_generic_expr.  */
 
 DEBUG_FUNCTION void
-debug_scope_block (tree scope, int flags)
+debug_scope_block (tree scope, dump_flags_t flags)
 {
   dump_scope_block (stderr, 0, scope, flags);
 }
@@ -671,7 +683,7 @@ debug_scope_block (tree scope, int flags)
    FLAGS is as in print_generic_expr.  */
 
 void
-dump_scope_blocks (FILE *file, int flags)
+dump_scope_blocks (FILE *file, dump_flags_t flags)
 {
   dump_scope_block (file, 0, DECL_INITIAL (current_function_decl), flags);
 }
@@ -681,7 +693,7 @@ dump_scope_blocks (FILE *file, int flags)
    FLAGS is as in print_generic_expr.  */
 
 DEBUG_FUNCTION void
-debug_scope_blocks (int flags)
+debug_scope_blocks (dump_flags_t flags)
 {
   dump_scope_blocks (stderr, flags);
 }
@@ -722,6 +734,10 @@ remove_unused_locals (void)
 	  gimple *stmt = gsi_stmt (gsi);
 	  tree b = gimple_block (stmt);
 
+	  /* If we wanted to mark the block referenced by the inline
+	     entry point marker as used, this would be a good spot to
+	     do it.  If the block is not otherwise used, the stmt will
+	     be cleaned up in clean_unused_block_pointer.  */
 	  if (is_gimple_debug (stmt))
 	    continue;
 
@@ -791,7 +807,7 @@ remove_unused_locals (void)
 		tree base = get_base_address (lhs);
 		/* Remove clobbers referencing unused vars, or clobbers
 		   with MEM_REF lhs referencing uninitialized pointers.  */
-		if ((TREE_CODE (base) == VAR_DECL && !is_used_p (base))
+		if ((VAR_P (base) && !is_used_p (base))
 		    || (TREE_CODE (lhs) == MEM_REF
 			&& TREE_CODE (TREE_OPERAND (lhs, 0)) == SSA_NAME
 			&& SSA_NAME_IS_DEFAULT_DEF (TREE_OPERAND (lhs, 0))
@@ -825,7 +841,7 @@ remove_unused_locals (void)
   for (srcidx = 0, dstidx = 0; srcidx < num; srcidx++)
     {
       var = (*cfun->local_decls)[srcidx];
-      if (TREE_CODE (var) == VAR_DECL)
+      if (VAR_P (var))
 	{
 	  if (!is_used_p (var))
 	    {
@@ -842,9 +858,7 @@ remove_unused_locals (void)
 	      continue;
 	    }
 	}
-      if (TREE_CODE (var) == VAR_DECL
-	  && DECL_HARD_REGISTER (var)
-	  && !is_global_var (var))
+      if (VAR_P (var) && DECL_HARD_REGISTER (var) && !is_global_var (var))
 	cfun->has_local_explicit_reg_vars = true;
 
       if (srcidx != dstidx)
@@ -975,7 +989,7 @@ live_worklist (tree_live_info_p live)
 {
   unsigned b;
   basic_block bb;
-  sbitmap visited = sbitmap_alloc (last_basic_block_for_fn (cfun) + 1);
+  auto_sbitmap visited (last_basic_block_for_fn (cfun) + 1);
 
   bitmap_clear (visited);
 
@@ -990,8 +1004,6 @@ live_worklist (tree_live_info_p live)
       b = *--(live->stack_top);
       loe_visit_block (live, BASIC_BLOCK_FOR_FN (cfun, b), visited);
     }
-
-  sbitmap_free (visited);
 }
 
 
@@ -1277,22 +1289,6 @@ debug (tree_live_info_d *ptr)
     debug (*ptr);
   else
     fprintf (stderr, "<nil>\n");
-}
-
-
-/* Verify that SSA_VAR is a non-virtual SSA_NAME.  */
-
-void
-register_ssa_partition_check (tree ssa_var)
-{
-  gcc_assert (TREE_CODE (ssa_var) == SSA_NAME);
-  if (virtual_operand_p (ssa_var))
-    {
-      fprintf (stderr, "Illegally registering a virtual SSA name :");
-      print_generic_expr (stderr, ssa_var, TDF_SLIM);
-      fprintf (stderr, " in the SSA->Normal phase.\n");
-      internal_error ("SSA corruption");
-    }
 }
 
 

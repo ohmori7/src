@@ -1,4 +1,4 @@
-/*	$NetBSD: udl.c,v 1.22 2018/09/03 16:29:34 riastradh Exp $	*/
+/*	$NetBSD: udl.c,v 1.25 2020/09/05 16:30:11 riastradh Exp $	*/
 
 /*-
  * Copyright (c) 2009 FUKAUMI Naoki.
@@ -53,7 +53,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: udl.c,v 1.22 2018/09/03 16:29:34 riastradh Exp $");
+__KERNEL_RCSID(0, "$NetBSD: udl.c,v 1.25 2020/09/05 16:30:11 riastradh Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_usb.h"
@@ -67,10 +67,11 @@ __KERNEL_RCSID(0, "$NetBSD: udl.c,v 1.22 2018/09/03 16:29:34 riastradh Exp $");
 #include <sys/kmem.h>
 #include <sys/kthread.h>
 #include <sys/condvar.h>
-#include <uvm/uvm.h>
 
 #include <sys/bus.h>
 #include <sys/endian.h>
+
+#include <uvm/uvm_extern.h>
 
 #include <dev/usb/usb.h>
 #include <dev/usb/usbdi.h>
@@ -369,6 +370,7 @@ udl_attach(device_t parent, device_t self, void *aux)
 
 	sc->sc_dev = self;
 	sc->sc_udev = uaa->uaa_device;
+	sc->sc_init_state = UDL_INIT_NONE;
 
 	devinfop = usbd_devinfo_alloc(sc->sc_udev, 0);
 	aprint_normal_dev(sc->sc_dev, "%s\n", devinfop);
@@ -399,9 +401,6 @@ udl_attach(device_t parent, device_t self, void *aux)
 	if (error != USBD_NORMAL_COMPLETION)
 		return;
 
-	/*
-	 * Allocate bulk command queue.
-	 */
 #ifdef UDL_EVENT_COUNTERS
 	evcnt_attach_dynamic(&sc->sc_ev_cmdq_get, EVCNT_TYPE_MISC, NULL,
 	    device_xname(sc->sc_dev), "udl_cmdq_get");
@@ -412,12 +411,15 @@ udl_attach(device_t parent, device_t self, void *aux)
 	evcnt_attach_dynamic(&sc->sc_ev_cmdq_timeout, EVCNT_TYPE_MISC, NULL,
 	    device_xname(sc->sc_dev), "udl_cmdq_timeout");
 #endif
-
-	if (udl_cmdq_alloc(sc) != 0)
-		return;
-
 	cv_init(&sc->sc_cv, device_xname(sc->sc_dev));
 	mutex_init(&sc->sc_mtx, MUTEX_DEFAULT, IPL_TTY); /* XXX for tty_lock */
+	sc->sc_init_state = UDL_INIT_MIDWAY;
+
+	/*
+	 * Allocate bulk command queue.
+	 */
+	if (udl_cmdq_alloc(sc) != 0)
+		return;
 
 	if ((sc->sc_cmd_cur = udl_cmdq_get(sc)) == NULL)
 		return;
@@ -483,6 +485,8 @@ udl_attach(device_t parent, device_t self, void *aux)
 	sc->sc_thread_stop = true;
 	kthread_create(PRI_BIO, KTHREAD_MPSAFE | KTHREAD_MUSTJOIN, NULL,
 	    udl_update_thread, sc, &sc->sc_thread, "udlupd");
+
+	sc->sc_init_state = UDL_INIT_INITED;
 }
 
 static int
@@ -497,11 +501,13 @@ udl_detach(device_t self, int flags)
 		usbd_abort_pipe(sc->sc_tx_pipeh);
 	}
 
-	/*
-	 * Free command xfer buffers.
-	 */
-	udl_cmdq_flush(sc);
-	udl_cmdq_free(sc);
+	if (sc->sc_init_state >= UDL_INIT_MIDWAY) {
+		/*
+		 * Free command xfer buffers.
+		 */
+		udl_cmdq_flush(sc);
+		udl_cmdq_free(sc);
+	}
 
 	if (sc->sc_tx_pipeh != NULL) {
 		usbd_close_pipe(sc->sc_tx_pipeh);
@@ -512,36 +518,45 @@ udl_detach(device_t self, int flags)
 	 */
 	udl_comp_unload(sc);
 
-	/*
-	 * Free framebuffer memory.
-	 */
-	udl_fbmem_free(sc);
+	if (sc->sc_init_state >= UDL_INIT_INITED) {
+		/*
+		 * Free framebuffer memory.
+		 */
+		udl_fbmem_free(sc);
 
-	mutex_enter(&sc->sc_thread_mtx);
-	sc->sc_dying = true;
-	cv_broadcast(&sc->sc_thread_cv);
-	mutex_exit(&sc->sc_thread_mtx);
-	kthread_join(sc->sc_thread);
+		mutex_enter(&sc->sc_thread_mtx);
+		sc->sc_dying = true;
+		cv_broadcast(&sc->sc_thread_cv);
+		mutex_exit(&sc->sc_thread_mtx);
+		kthread_join(sc->sc_thread);
+		cv_destroy(&sc->sc_thread_cv);
+		mutex_destroy(&sc->sc_thread_mtx);
+	}
 
-	cv_destroy(&sc->sc_cv);
-	mutex_destroy(&sc->sc_mtx);
-	cv_destroy(&sc->sc_thread_cv);
-	mutex_destroy(&sc->sc_thread_mtx);
+	if (sc->sc_init_state >= UDL_INIT_MIDWAY) {
+		cv_destroy(&sc->sc_cv);
+		mutex_destroy(&sc->sc_mtx);
+	}
 
-	/*
-	 * Detach wsdisplay.
-	 */
-	if (sc->sc_wsdisplay != NULL)
-		config_detach(sc->sc_wsdisplay, DETACH_FORCE);
+	if (sc->sc_init_state >= UDL_INIT_INITED) {
+		/*
+		 * Detach wsdisplay.
+		 */
+		if (sc->sc_wsdisplay != NULL)
+			config_detach(sc->sc_wsdisplay, DETACH_FORCE);
 
-	usbd_add_drv_event(USB_EVENT_DRIVER_DETACH, sc->sc_udev, sc->sc_dev);
+		usbd_add_drv_event(USB_EVENT_DRIVER_DETACH, sc->sc_udev,
+		    sc->sc_dev);
+	}
 
+	if (sc->sc_init_state >= UDL_INIT_MIDWAY) {
 #ifdef UDL_EVENT_COUNTERS
-	evcnt_detach(&sc->sc_ev_cmdq_get);
-	evcnt_detach(&sc->sc_ev_cmdq_put);
-	evcnt_detach(&sc->sc_ev_cmdq_wait);
-	evcnt_detach(&sc->sc_ev_cmdq_timeout);
+		evcnt_detach(&sc->sc_ev_cmdq_get);
+		evcnt_detach(&sc->sc_ev_cmdq_put);
+		evcnt_detach(&sc->sc_ev_cmdq_wait);
+		evcnt_detach(&sc->sc_ev_cmdq_timeout);
 #endif
+	}
 
 	return 0;
 }
@@ -633,7 +648,7 @@ udl_ioctl(void *v, void *vs, u_long cmd, void *data, int flag, struct lwp *l)
 	 * UDLIO_DAMAGE for the damage extension ops of X servers.
 	 * Before blindly pulling such interfaces, probably we should
 	 * discuss how such devices should be handled which have
-	 * in-direct framebuffer memories that should be transfered
+	 * in-direct framebuffer memories that should be transferred
 	 * per updated rectangle regions via MI wscons APIs.
 	 */
 	case UDLIO_DAMAGE:

@@ -4,7 +4,7 @@
 #
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# file, you can obtain one at https://mozilla.org/MPL/2.0/.
 #
 # See the COPYRIGHT file distributed with this work for additional
 # information regarding copyright ownership.
@@ -14,8 +14,6 @@ set -eu
 SYSTEMTESTTOP=..
 . $SYSTEMTESTTOP/conf.sh
 
-$SHELL clean.sh
-
 touch empty
 
 Z=cds.test
@@ -24,9 +22,9 @@ keyz=`$KEYGEN -q -a RSASHA256 $Z`
 key1=`$KEYGEN -q -a RSASHA256 -f KSK $Z`
 key2=`$KEYGEN -q -a RSASHA256 -f KSK $Z`
 
-idz=`echo $keyz | sed 's/.*+0*//'`
-id1=`echo $key1 | sed 's/.*+0*//'`
-id2=`echo $key2 | sed 's/.*+0*//'`
+idz=$(keyfile_to_key_id $keyz)
+id1=$(keyfile_to_key_id $key1)
+id2=$(keyfile_to_key_id $key2)
 
 cat <<EOF >vars.sh
 Z=$Z
@@ -44,7 +42,7 @@ tac() {
 convert() {
 	key=$1
 	n=$2
-	$DSFROMKEY $key >DS.$n
+	$DSFROMKEY -12 $key >DS.$n
 	grep ' 8 1 ' DS.$n >DS.$n-1
 	grep ' 8 2 ' DS.$n >DS.$n-2
 	sed 's/ IN DS / IN CDS /' <DS.$n >>CDS.$n
@@ -84,7 +82,7 @@ sed 's/ add \(.*\) IN DS / add \1 3600 IN DS /' <UP.swap >UP.swapttl
 
 sign() {
 	cat >db.$1
-	$SIGNER >/dev/null 2>&1 \
+	$SIGNER >/dev/null \
 		 -S -O full -o $Z -f sig.$1 db.$1
 }
 

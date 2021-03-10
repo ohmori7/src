@@ -1,5 +1,5 @@
 /* Interprocedural Identical Code Folding pass
-   Copyright (C) 2014-2016 Free Software Foundation, Inc.
+   Copyright (C) 2014-2018 Free Software Foundation, Inc.
 
    Contributed by Jan Hubicka <hubicka@ucw.cz> and Martin Liska <mliska@suse.cz>
 
@@ -74,7 +74,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-cfg.h"
 #include "symbol-summary.h"
 #include "ipa-prop.h"
-#include "ipa-inline.h"
+#include "ipa-fnsummary.h"
 #include "except.h"
 #include "attribs.h"
 #include "print-tree.h"
@@ -83,6 +83,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "ipa-icf.h"
 #include "stor-layout.h"
 #include "dbgcnt.h"
+#include "tree-vector-builder.h"
 
 using namespace ipa_icf_gimple;
 
@@ -195,8 +196,8 @@ sem_item::dump (void)
 {
   if (dump_file)
     {
-      fprintf (dump_file, "[%s] %s (%u) (tree:%p)\n", type == FUNC ? "func" : "var",
-	       node->name(), node->order, (void *) node->decl);
+      fprintf (dump_file, "[%s] %s (tree:%p)\n", type == FUNC ? "func" : "var",
+	       node->dump_name (), (void *) node->decl);
       fprintf (dump_file, "  hash: %u\n", get_hash ());
       fprintf (dump_file, "  references: ");
 
@@ -286,10 +287,11 @@ sem_function::get_hash (void)
 
       /* Add common features of declaration itself.  */
       if (DECL_FUNCTION_SPECIFIC_TARGET (decl))
-        hstate.add_wide_int
+        hstate.add_hwi
 	 (cl_target_option_hash
 	   (TREE_TARGET_OPTION (DECL_FUNCTION_SPECIFIC_TARGET (decl))));
       if (DECL_FUNCTION_SPECIFIC_OPTIMIZATION (decl))
+	hstate.add_hwi
 	 (cl_optimization_hash
 	   (TREE_OPTIMIZATION (DECL_FUNCTION_SPECIFIC_OPTIMIZATION (decl))));
       hstate.add_flag (DECL_CXX_CONSTRUCTOR_P (decl));
@@ -538,9 +540,8 @@ sem_function::param_used_p (unsigned int i)
 
   struct ipa_node_params *parms_info = IPA_NODE_REF (get_node ());
 
-  if (parms_info->descriptors.is_empty ()
-      || parms_info->descriptors.length () <= i)
-     return true;
+  if (vec_safe_length (parms_info->descriptors) <= i)
+    return true;
 
   return ipa_is_param_used (IPA_NODE_REF (get_node ()), i);
 }
@@ -869,13 +870,9 @@ sem_function::equals (sem_item *item,
 
   if (dump_file && (dump_flags & TDF_DETAILS))
     fprintf (dump_file,
-	     "Equals called for:%s:%s (%u:%u) (%s:%s) with result: %s\n\n",
-	     xstrdup_for_dump (node->name()),
-	     xstrdup_for_dump (item->node->name ()),
-	     node->order,
-	     item->node->order,
-	     xstrdup_for_dump (node->asm_name ()),
-	     xstrdup_for_dump (item->node->asm_name ()),
+	     "Equals called for: %s:%s with result: %s\n\n",
+	     node->dump_name (),
+	     item->node->dump_name (),
 	     eq ? "true" : "false");
 
   return eq;
@@ -1201,8 +1198,8 @@ sem_function::merge (sem_item *alias_item)
 	    fprintf (dump_file,
 		     "can not create wrapper of stdarg function.\n");
 	}
-      else if (inline_summaries
-	       && inline_summaries->get (alias)->self_size <= 2)
+      else if (ipa_fn_summaries
+	       && ipa_fn_summaries->get (alias)->self_size <= 2)
 	{
 	  if (dump_file)
 	    fprintf (dump_file, "Wrapper creation is not "
@@ -1343,7 +1340,8 @@ sem_function::merge (sem_item *alias_item)
       alias->icf_merged = true;
       local_original->icf_merged = true;
 
-      ipa_merge_profiles (local_original, alias, true);
+      /* FIXME update local_original counts.  */
+      ipa_merge_profiles (original, alias, true);
       alias->create_wrapper (local_original);
 
       if (dump_file)
@@ -1436,6 +1434,7 @@ sem_function::init (void)
 	      }
 	  }
 
+	hstate.commit_flag ();
 	gcode_hash = hstate.end ();
 	bb_sizes.safe_push (nondbg_stmt_count);
 
@@ -1451,8 +1450,8 @@ sem_function::init (void)
     {
       cfg_checksum = 0;
       inchash::hash hstate;
-      hstate.add_wide_int (cnode->thunk.fixed_offset);
-      hstate.add_wide_int (cnode->thunk.virtual_value);
+      hstate.add_hwi (cnode->thunk.fixed_offset);
+      hstate.add_hwi (cnode->thunk.virtual_value);
       hstate.add_flag (cnode->thunk.this_adjusting);
       hstate.add_flag (cnode->thunk.virtual_offset_p);
       hstate.add_flag (cnode->thunk.add_pointer_bounds_args);
@@ -1499,7 +1498,7 @@ sem_item::add_expr (const_tree exp, inchash::hash &hstate)
 	unsigned HOST_WIDE_INT idx;
 	tree value;
 
-	hstate.add_wide_int (int_size_in_bytes (TREE_TYPE (exp)));
+	hstate.add_hwi (int_size_in_bytes (TREE_TYPE (exp)));
 
 	FOR_EACH_CONSTRUCTOR_VALUE (CONSTRUCTOR_ELTS (exp), idx, value)
 	  if (value)
@@ -1514,7 +1513,7 @@ sem_item::add_expr (const_tree exp, inchash::hash &hstate)
     case VAR_DECL:
     case CONST_DECL:
     case PARM_DECL:
-      hstate.add_wide_int (int_size_in_bytes (TREE_TYPE (exp)));
+      hstate.add_hwi (int_size_in_bytes (TREE_TYPE (exp)));
       break;
     case MEM_REF:
     case POINTER_PLUS_EXPR:
@@ -1532,7 +1531,7 @@ sem_item::add_expr (const_tree exp, inchash::hash &hstate)
       }
       break;
     CASE_CONVERT:
-      hstate.add_wide_int (int_size_in_bytes (TREE_TYPE (exp)));
+      hstate.add_hwi (int_size_in_bytes (TREE_TYPE (exp)));
       return add_expr (TREE_OPERAND (exp, 0), hstate);
     default:
       break;
@@ -1603,11 +1602,11 @@ sem_item::add_type (const_tree type, inchash::hash &hstate)
 
 	  hstate2.add_int (nf);
 	  hash = hstate2.end ();
-	  hstate.add_wide_int (hash);
+	  hstate.add_hwi (hash);
 	  optimizer->m_type_hash_cache.put (type, hash);
 	}
       else
-        hstate.add_wide_int (*val);
+        hstate.add_hwi (*val);
     }
 }
 
@@ -1645,7 +1644,7 @@ sem_function::hash_stmt (gimple *stmt, inchash::hash &hstate)
 	  add_type (TREE_TYPE (gimple_assign_lhs (stmt)), two);
 	  break;
 	}
-      /* ... fall through ... */
+      /* fall through */
     case GIMPLE_CALL:
     case GIMPLE_ASM:
     case GIMPLE_COND:
@@ -1658,6 +1657,11 @@ sem_function::hash_stmt (gimple *stmt, inchash::hash &hstate)
 	  if (gimple_op (stmt, i))
 	    add_type (TREE_TYPE (gimple_op (stmt, i)), hstate);
 	}
+      /* Consider nocf_check attribute in hash as it affects code
+ 	 generation.  */
+      if (code == GIMPLE_CALL
+	  && flag_cf_protection & CF_BRANCH)
+	hstate.add_flag (gimple_call_nocf_check_p (as_a <gcall *> (stmt)));
     default:
       break;
     }
@@ -1697,6 +1701,10 @@ sem_function::parse (cgraph_node *node, bitmap_obstack *stack)
     return NULL;
 
   if (lookup_attribute_by_prefix ("omp ", DECL_ATTRIBUTES (node->decl)) != NULL)
+    return NULL;
+
+  if (lookup_attribute_by_prefix ("oacc ",
+				  DECL_ATTRIBUTES (node->decl)) != NULL)
     return NULL;
 
   /* PR ipa/70306.  */
@@ -1894,12 +1902,9 @@ sem_variable::equals (sem_item *item,
 			      DECL_INITIAL (item->node->decl));
   if (dump_file && (dump_flags & TDF_DETAILS))
     fprintf (dump_file,
-	     "Equals called for vars:%s:%s (%u:%u) (%s:%s) with result: %s\n\n",
-	     xstrdup_for_dump (node->name()),
-	     xstrdup_for_dump (item->node->name ()),
-	     node->order, item->node->order,
-	     xstrdup_for_dump (node->asm_name ()),
-	     xstrdup_for_dump (item->node->asm_name ()), ret ? "true" : "false");
+	     "Equals called for vars: %s:%s with result: %s\n\n",
+	     node->dump_name (), item->node->dump_name (),
+	     ret ? "true" : "false");
 
   return ret;
 }
@@ -2031,17 +2036,17 @@ sem_variable::equals (tree t1, tree t2)
 						&TREE_REAL_CST (t2)));
     case VECTOR_CST:
       {
-	unsigned i;
+	if (maybe_ne (VECTOR_CST_NELTS (t1), VECTOR_CST_NELTS (t2)))
+	  return return_false_with_msg ("VECTOR_CST nelts mismatch");
 
-        if (VECTOR_CST_NELTS (t1) != VECTOR_CST_NELTS (t2))
-          return return_false_with_msg ("VECTOR_CST nelts mismatch");
+	unsigned int count
+	  = tree_vector_builder::binary_encoded_nelts (t1, t2);
+	for (unsigned int i = 0; i < count; ++i)
+	  if (!sem_variable::equals (VECTOR_CST_ENCODED_ELT (t1, i),
+				     VECTOR_CST_ENCODED_ELT (t2, i)))
+	    return false;
 
-	for (i = 0; i < VECTOR_CST_NELTS (t1); ++i)
-	  if (!sem_variable::equals (VECTOR_CST_ELT (t1, i),
-				     VECTOR_CST_ELT (t2, i)))
-	    return 0;
-
-	return 1;
+	return true;
       }
     case ARRAY_REF:
     case ARRAY_RANGE_REF:
@@ -2121,7 +2126,7 @@ sem_variable::get_hash (void)
 
   hstate.add_int (456346417);
   if (DECL_SIZE (decl) && tree_fits_shwi_p (DECL_SIZE (decl)))
-    hstate.add_wide_int (tree_to_shwi (DECL_SIZE (decl)));
+    hstate.add_hwi (tree_to_shwi (DECL_SIZE (decl)));
   add_expr (ctor, hstate);
   set_hash (hstate.end ());
 
@@ -2157,7 +2162,6 @@ sem_variable::merge (sem_item *alias_item)
   varpool_node *alias = alias_var->get_node ();
   bool original_discardable = false;
 
-  bool original_address_matters = original->address_matters_p ();
   bool alias_address_matters = alias->address_matters_p ();
 
   /* See if original is in a section that can be discarded if the main
@@ -2200,13 +2204,11 @@ sem_variable::merge (sem_item *alias_item)
     }
 
   /* We can not merge if address comparsion metters.  */
-  if (original_address_matters && alias_address_matters
-      && flag_merge_constants < 2)
+  if (alias_address_matters && flag_merge_constants < 2)
     {
       if (dump_file)
 	fprintf (dump_file,
-		 "Not unifying; "
-		 "adress of original and alias may be compared.\n\n");
+		 "Not unifying; address of original may be compared.\n\n");
       return false;
     }
 
@@ -2253,11 +2255,9 @@ sem_variable::merge (sem_item *alias_item)
 
       varpool_node::create_alias (alias_var->decl, decl);
       alias->resolve_alias (original);
-      if (DECL_PT_UID_SET_P (original->decl))
-	SET_DECL_PT_UID (alias->decl, DECL_PT_UID (original->decl));
 
       if (dump_file)
-	fprintf (dump_file, "Unified; Variable alias has been created.\n\n");
+	fprintf (dump_file, "Unified; Variable alias has been created.\n");
 
       return true;
     }
@@ -2278,7 +2278,7 @@ unsigned int sem_item_optimizer::class_id = 0;
 
 sem_item_optimizer::sem_item_optimizer ()
 : worklist (0), m_classes (0), m_classes_count (0), m_cgraph_node_hooks (NULL),
-  m_varpool_node_hooks (NULL)
+  m_varpool_node_hooks (NULL), m_merged_variables ()
 {
   m_items.create (0);
   bitmap_obstack_initialize (&m_bmstack);
@@ -2289,7 +2289,8 @@ sem_item_optimizer::~sem_item_optimizer ()
   for (unsigned int i = 0; i < m_items.length (); i++)
     delete m_items[i];
 
-  for (hash_table<congruence_class_group_hash>::iterator it = m_classes.begin ();
+
+  for (hash_table<congruence_class_hash>::iterator it = m_classes.begin ();
        it != m_classes.end (); ++it)
     {
       for (unsigned int i = 0; i < (*it)->classes.length (); i++)
@@ -2302,6 +2303,7 @@ sem_item_optimizer::~sem_item_optimizer ()
   m_items.release ();
 
   bitmap_obstack_release (&m_bmstack);
+  m_merged_variables.release ();
 }
 
 /* Write IPA ICF summary for symbols.  */
@@ -2358,8 +2360,8 @@ void
 sem_item_optimizer::read_section (lto_file_decl_data *file_data,
 				  const char *data, size_t len)
 {
-  const lto_function_header *header =
-    (const lto_function_header *) data;
+  const lto_function_header *header
+    = (const lto_function_header *) data;
   const int cfg_offset = sizeof (lto_function_header);
   const int main_offset = cfg_offset + header->cfg_size;
   const int string_offset = main_offset + header->main_size;
@@ -2370,9 +2372,9 @@ sem_item_optimizer::read_section (lto_file_decl_data *file_data,
   lto_input_block ib_main ((const char *) data + main_offset, 0,
 			   header->main_size, file_data->mode_table);
 
-  data_in =
-    lto_data_in_create (file_data, (const char *) data + string_offset,
-			header->string_size, vNULL);
+  data_in
+    = lto_data_in_create (file_data, (const char *) data + string_offset,
+			  header->string_size, vNULL);
 
   count = streamer_read_uhwi (&ib_main);
 
@@ -2391,8 +2393,8 @@ sem_item_optimizer::read_section (lto_file_decl_data *file_data,
       gcc_assert (node->definition);
 
       if (dump_file)
-	fprintf (dump_file, "Symbol added:%s (tree: %p, uid:%u)\n",
-		 node->asm_name (), (void *) node->decl, node->order);
+	fprintf (dump_file, "Symbol added: %s (tree: %p)\n",
+		 node->dump_asm_name (), (void *) node->decl);
 
       if (is_a<cgraph_node *> (node))
 	{
@@ -2470,9 +2472,9 @@ sem_item_optimizer::add_class (congruence_class *cls)
 {
   gcc_assert (cls->members.length ());
 
-  congruence_class_group *group = get_group_by_hash (
-				    cls->members[0]->get_hash (),
-				    cls->members[0]->type);
+  congruence_class_group *group
+    = get_group_by_hash (cls->members[0]->get_hash (),
+			 cls->members[0]->type);
   group->classes.safe_push (cls);
 }
 
@@ -2521,7 +2523,7 @@ sem_item_optimizer::varpool_removal_hook (varpool_node *node, void *data)
 void
 sem_item_optimizer::remove_symtab_node (symtab_node *node)
 {
-  gcc_assert (!m_classes.elements());
+  gcc_assert (!m_classes.elements ());
 
   m_removed_items_set.add (node);
 }
@@ -2636,7 +2638,7 @@ sem_item_optimizer::execute (void)
   bool merged_p = merge_classes (prev_class_count);
 
   if (dump_file && (dump_flags & TDF_DETAILS))
-    symtab_node::dump_table (dump_file);
+    symtab->dump (dump_file);
 
   return merged_p;
 }
@@ -2719,7 +2721,7 @@ sem_item_optimizer::update_hash_by_addr_refs ()
 
 		if (TYPE_NAME (class_type)
 		     && DECL_ASSEMBLER_NAME_SET_P (TYPE_NAME (class_type)))
-		  hstate.add_wide_int
+		  hstate.add_hwi
 		    (IDENTIFIER_HASH_VALUE
 		       (DECL_ASSEMBLER_NAME (TYPE_NAME (class_type))));
 
@@ -2749,8 +2751,8 @@ sem_item_optimizer::build_hash_based_classes (void)
     {
       sem_item *item = m_items[i];
 
-      congruence_class_group *group = get_group_by_hash (item->get_hash (),
-				      item->type);
+      congruence_class_group *group
+	= get_group_by_hash (item->get_hash (), item->type);
 
       if (!group->classes.length ())
 	{
@@ -2824,8 +2826,10 @@ sem_item_optimizer::parse_nonsingleton_classes (void)
       }
 
   if (dump_file)
-    fprintf (dump_file, "Init called for %u items (%.2f%%).\n", init_called_count,
-	     m_items.length () ? 100.0f * init_called_count / m_items.length (): 0.0f);
+    fprintf (dump_file, "Init called for %u items (%.2f%%).\n",
+	     init_called_count,
+	     m_items.length () ? 100.0f * init_called_count / m_items.length ()
+			       : 0.0f);
 }
 
 /* Equality function for semantic items is used to subdivide existing
@@ -2834,14 +2838,14 @@ sem_item_optimizer::parse_nonsingleton_classes (void)
 void
 sem_item_optimizer::subdivide_classes_by_equality (bool in_wpa)
 {
-  for (hash_table <congruence_class_group_hash>::iterator it = m_classes.begin ();
+  for (hash_table <congruence_class_hash>::iterator it = m_classes.begin ();
        it != m_classes.end (); ++it)
     {
       unsigned int class_count = (*it)->classes.length ();
 
       for (unsigned i = 0; i < class_count; i++)
 	{
-	  congruence_class *c = (*it)->classes [i];
+	  congruence_class *c = (*it)->classes[i];
 
 	  if (c->members.length() > 1)
 	    {
@@ -2856,8 +2860,9 @@ sem_item_optimizer::subdivide_classes_by_equality (bool in_wpa)
 		{
 		  sem_item *item = c->members[j];
 
-		  bool equals = in_wpa ? first->equals_wpa (item,
-				m_symtab_node_map) : first->equals (item, m_symtab_node_map);
+		  bool equals
+		    = in_wpa ? first->equals_wpa (item, m_symtab_node_map)
+			     : first->equals (item, m_symtab_node_map);
 
 		  if (equals)
 		    new_vector.safe_push (item);
@@ -2865,11 +2870,13 @@ sem_item_optimizer::subdivide_classes_by_equality (bool in_wpa)
 		    {
 		      bool integrated = false;
 
-		      for (unsigned k = class_split_first; k < (*it)->classes.length (); k++)
+		      for (unsigned k = class_split_first;
+			   k < (*it)->classes.length (); k++)
 			{
 			  sem_item *x = (*it)->classes[k]->members[0];
-			  bool equals = in_wpa ? x->equals_wpa (item,
-								m_symtab_node_map) : x->equals (item, m_symtab_node_map);
+			  bool equals
+			    = in_wpa ? x->equals_wpa (item, m_symtab_node_map)
+				     : x->equals (item, m_symtab_node_map);
 
 			  if (equals)
 			    {
@@ -2882,7 +2889,8 @@ sem_item_optimizer::subdivide_classes_by_equality (bool in_wpa)
 
 		      if (!integrated)
 			{
-			  congruence_class *c = new congruence_class (class_id++);
+			  congruence_class *c
+			    = new congruence_class (class_id++);
 			  m_classes_count++;
 			  add_item_to_class (c, item);
 
@@ -2891,7 +2899,8 @@ sem_item_optimizer::subdivide_classes_by_equality (bool in_wpa)
 		    }
 		}
 
-	      // we replace newly created new_vector for the class we've just splitted
+	      // We replace newly created new_vector for the class we've just
+	      // splitted.
 	      c->members.release ();
 	      c->members.create (new_vector.length ());
 
@@ -2916,7 +2925,7 @@ sem_item_optimizer::subdivide_classes_by_sensitive_refs ()
 
   unsigned newly_created_classes = 0;
 
-  for (hash_table <congruence_class_group_hash>::iterator it = m_classes.begin ();
+  for (hash_table <congruence_class_hash>::iterator it = m_classes.begin ();
        it != m_classes.end (); ++it)
     {
       unsigned int class_count = (*it)->classes.length ();
@@ -2924,7 +2933,7 @@ sem_item_optimizer::subdivide_classes_by_sensitive_refs ()
 
       for (unsigned i = 0; i < class_count; i++)
 	{
-	  congruence_class *c = (*it)->classes [i];
+	  congruence_class *c = (*it)->classes[i];
 
 	  if (c->members.length() > 1)
 	    {
@@ -2934,11 +2943,12 @@ sem_item_optimizer::subdivide_classes_by_sensitive_refs ()
 	        {
 		  sem_item *source_node = c->members[j];
 
-		  symbol_compare_collection *collection = new symbol_compare_collection (source_node->node);
+		  symbol_compare_collection *collection
+		    = new symbol_compare_collection (source_node->node);
 
 		  bool existed;
-		  vec <sem_item *> *slot = &split_map.get_or_insert (collection,
-								     &existed);
+		  vec <sem_item *> *slot
+		    = &split_map.get_or_insert (collection, &existed);
 		  gcc_checking_assert (slot);
 
 		  slot->safe_push (source_node);
@@ -2947,8 +2957,8 @@ sem_item_optimizer::subdivide_classes_by_sensitive_refs ()
 		    delete collection;
 	        }
 
-	       /* If the map contains more than one key, we have to split the map
-		  appropriately.  */
+	       /* If the map contains more than one key, we have to split
+		  the map appropriately.  */
 	      if (split_map.elements () != 1)
 	        {
 		  bool first_class = true;
@@ -3009,7 +3019,7 @@ sem_item_optimizer::checking_verify_classes (void)
 void
 sem_item_optimizer::verify_classes (void)
 {
-  for (hash_table <congruence_class_group_hash>::iterator it = m_classes.begin ();
+  for (hash_table<congruence_class_hash>::iterator it = m_classes.begin ();
        it != m_classes.end (); ++it)
     {
       for (unsigned int i = 0; i < (*it)->classes.length (); i++)
@@ -3029,8 +3039,8 @@ sem_item_optimizer::verify_classes (void)
 	      for (unsigned k = 0; k < item->usages.length (); k++)
 		{
 		  sem_usage_pair *usage = item->usages[k];
-		  gcc_assert (usage->item->index_in_class <
-			      usage->item->cls->members.length ());
+		  gcc_assert (usage->item->index_in_class
+			      < usage->item->cls->members.length ());
 		}
 	    }
 	}
@@ -3058,7 +3068,8 @@ sem_item_optimizer::release_split_map (congruence_class * const &,
 
 bool
 sem_item_optimizer::traverse_congruence_split (congruence_class * const &cls,
-    bitmap const &b, traverse_split_pair *pair)
+					       bitmap const &b,
+					       traverse_split_pair *pair)
 {
   sem_item_optimizer *optimizer = pair->optimizer;
   const congruence_class *splitter_cls = pair->cls;
@@ -3100,7 +3111,7 @@ sem_item_optimizer::traverse_congruence_split (congruence_class * const &cls,
       g.hash = cls->members[0]->get_hash ();
       g.type = cls->members[0]->type;
 
-      congruence_class_group *slot = optimizer->m_classes.find(&g);
+      congruence_class_group *slot = optimizer->m_classes.find (&g);
 
       for (unsigned int i = 0; i < slot->classes.length (); i++)
 	if (slot->classes[i] == cls)
@@ -3123,9 +3134,10 @@ sem_item_optimizer::traverse_congruence_split (congruence_class * const &cls,
 	  optimizer->worklist_push (newclasses[i]);
       else /* Just smaller class is inserted.  */
 	{
-	  unsigned int smaller_index = newclasses[0]->members.length () <
-				       newclasses[1]->members.length () ?
-				       0 : 1;
+	  unsigned int smaller_index
+	    = (newclasses[0]->members.length ()
+	       < newclasses[1]->members.length ()
+	       ? 0 : 1);
 	  optimizer->worklist_push (newclasses[smaller_index]);
 	}
 
@@ -3148,12 +3160,28 @@ sem_item_optimizer::traverse_congruence_split (congruence_class * const &cls,
   return true;
 }
 
+/* Compare function for sorting pairs in do_congruence_step_f.  */
+
+int
+sem_item_optimizer::sort_congruence_split (const void *a_, const void *b_)
+{
+  const std::pair<congruence_class *, bitmap> *a
+    = (const std::pair<congruence_class *, bitmap> *)a_;
+  const std::pair<congruence_class *, bitmap> *b
+    = (const std::pair<congruence_class *, bitmap> *)b_;
+  if (a->first->id < b->first->id)
+    return -1;
+  else if (a->first->id > b->first->id)
+    return 1;
+  return 0;
+}
+
 /* Tests if a class CLS used as INDEXth splits any congruence classes.
    Bitmap stack BMSTACK is used for bitmap allocation.  */
 
 void
 sem_item_optimizer::do_congruence_step_for_index (congruence_class *cls,
-    unsigned int index)
+						  unsigned int index)
 {
   hash_map <congruence_class *, bitmap> split_map;
 
@@ -3181,24 +3209,31 @@ sem_item_optimizer::do_congruence_step_for_index (congruence_class *cls,
 	    b = *slot;
 
 	  gcc_checking_assert (usage->item->cls);
-	  gcc_checking_assert (usage->item->index_in_class <
-			       usage->item->cls->members.length ());
+	  gcc_checking_assert (usage->item->index_in_class
+			       < usage->item->cls->members.length ());
 
 	  bitmap_set_bit (b, usage->item->index_in_class);
 	}
     }
+
+  auto_vec<std::pair<congruence_class *, bitmap> > to_split;
+  to_split.reserve_exact (split_map.elements ());
+  for (hash_map <congruence_class *, bitmap>::iterator i = split_map.begin ();
+       i != split_map.end (); ++i)
+    to_split.safe_push (*i);
+  to_split.qsort (sort_congruence_split);
 
   traverse_split_pair pair;
   pair.optimizer = this;
   pair.cls = cls;
 
   splitter_class_removed = false;
-  split_map.traverse
-  <traverse_split_pair *, sem_item_optimizer::traverse_congruence_split> (&pair);
+  for (unsigned i = 0; i < to_split.length (); ++i)
+    traverse_congruence_split (to_split[i].first, to_split[i].second, &pair);
 
   /* Bitmap clean-up.  */
-  split_map.traverse
-  <traverse_split_pair *, sem_item_optimizer::release_split_map> (NULL);
+  split_map.traverse <traverse_split_pair *,
+		      sem_item_optimizer::release_split_map> (NULL);
 }
 
 /* Every usage of a congruence class CLS is a candidate that can split the
@@ -3219,8 +3254,8 @@ sem_item_optimizer::do_congruence_step (congruence_class *cls)
   EXECUTE_IF_SET_IN_BITMAP (usage, 0, i, bi)
   {
     if (dump_file && (dump_flags & TDF_DETAILS))
-      fprintf (dump_file, "  processing congruence step for class: %u, index: %u\n",
-	       cls->id, i);
+      fprintf (dump_file, "  processing congruence step for class: %u, "
+	       "index: %u\n", cls->id, i);
 
     do_congruence_step_for_index (cls, i);
 
@@ -3278,7 +3313,7 @@ sem_item_optimizer::worklist_pop (void)
 void
 sem_item_optimizer::process_cong_reduction (void)
 {
-  for (hash_table<congruence_class_group_hash>::iterator it = m_classes.begin ();
+  for (hash_table<congruence_class_hash>::iterator it = m_classes.begin ();
        it != m_classes.end (); ++it)
     for (unsigned i = 0; i < (*it)->classes.length (); i++)
       if ((*it)->classes[i]->is_class_used ())
@@ -3314,16 +3349,16 @@ sem_item_optimizer::dump_cong_classes (void)
     return;
 
   fprintf (dump_file,
-	   "Congruence classes: %u (unique hash values: %lu), with total: %u items\n",
-	   m_classes_count, (unsigned long) m_classes.elements(), m_items.length ());
+	   "Congruence classes: %u (unique hash values: %lu), with total: "
+	   "%u items\n", m_classes_count,
+	   (unsigned long) m_classes.elements (), m_items.length ());
 
   /* Histogram calculation.  */
   unsigned int max_index = 0;
   unsigned int* histogram = XCNEWVEC (unsigned int, m_items.length () + 1);
 
-  for (hash_table<congruence_class_group_hash>::iterator it = m_classes.begin ();
+  for (hash_table<congruence_class_hash>::iterator it = m_classes.begin ();
        it != m_classes.end (); ++it)
-
     for (unsigned i = 0; i < (*it)->classes.length (); i++)
       {
 	unsigned int c = (*it)->classes[i]->members.length ();
@@ -3334,7 +3369,8 @@ sem_item_optimizer::dump_cong_classes (void)
       }
 
   fprintf (dump_file,
-	   "Class size histogram [num of members]: number of classe number of classess\n");
+	   "Class size histogram [num of members]: number of classe number "
+	   "of classess\n");
 
   for (unsigned int i = 0; i <= max_index; i++)
     if (histogram[i])
@@ -3342,23 +3378,83 @@ sem_item_optimizer::dump_cong_classes (void)
 
   fprintf (dump_file, "\n\n");
 
-
   if (dump_flags & TDF_DETAILS)
-    for (hash_table<congruence_class_group_hash>::iterator it = m_classes.begin ();
-	 it != m_classes.end (); ++it)
+  for (hash_table<congruence_class_hash>::iterator it = m_classes.begin ();
+       it != m_classes.end (); ++it)
       {
-	fprintf (dump_file, "  group: with %u classes:\n", (*it)->classes.length ());
+	fprintf (dump_file, "  group: with %u classes:\n",
+		 (*it)->classes.length ());
 
 	for (unsigned i = 0; i < (*it)->classes.length (); i++)
 	  {
 	    (*it)->classes[i]->dump (dump_file, 4);
 
-	    if(i < (*it)->classes.length () - 1)
+	    if (i < (*it)->classes.length () - 1)
 	      fprintf (dump_file, " ");
 	  }
       }
 
   free (histogram);
+}
+
+/* Sort pair of sem_items A and B by DECL_UID.  */
+
+static int
+sort_sem_items_by_decl_uid (const void *a, const void *b)
+{
+  const sem_item *i1 = *(const sem_item * const *)a;
+  const sem_item *i2 = *(const sem_item * const *)b;
+
+  int uid1 = DECL_UID (i1->decl);
+  int uid2 = DECL_UID (i2->decl);
+
+  if (uid1 < uid2)
+    return -1;
+  else if (uid1 > uid2)
+    return 1;
+  else
+    return 0;
+}
+
+/* Sort pair of congruence_classes A and B by DECL_UID of the first member.  */
+
+static int
+sort_congruence_classes_by_decl_uid (const void *a, const void *b)
+{
+  const congruence_class *c1 = *(const congruence_class * const *)a;
+  const congruence_class *c2 = *(const congruence_class * const *)b;
+
+  int uid1 = DECL_UID (c1->members[0]->decl);
+  int uid2 = DECL_UID (c2->members[0]->decl);
+
+  if (uid1 < uid2)
+    return -1;
+  else if (uid1 > uid2)
+    return 1;
+  else
+    return 0;
+}
+
+/* Sort pair of congruence_class_groups A and B by
+   DECL_UID of the first member of a first group.  */
+
+static int
+sort_congruence_class_groups_by_decl_uid (const void *a, const void *b)
+{
+  const congruence_class_group *g1
+    = *(const congruence_class_group * const *)a;
+  const congruence_class_group *g2
+    = *(const congruence_class_group * const *)b;
+
+  int uid1 = DECL_UID (g1->classes[0]->members[0]->decl);
+  int uid2 = DECL_UID (g2->classes[0]->members[0]->decl);
+
+  if (uid1 < uid2)
+    return -1;
+  else if (uid1 > uid2)
+    return 1;
+  else
+    return 0;
 }
 
 /* After reduction is done, we can declare all items in a group
@@ -3378,7 +3474,23 @@ sem_item_optimizer::merge_classes (unsigned int prev_class_count)
 
   bool merged_p = false;
 
-  for (hash_table<congruence_class_group_hash>::iterator it = m_classes.begin ();
+  /* PR lto/78211
+     Sort functions in congruence classes by DECL_UID and do the same
+     for the classes to not to break -fcompare-debug.  */
+
+  for (hash_table<congruence_class_hash>::iterator it = m_classes.begin ();
+       it != m_classes.end (); ++it)
+    {
+      for (unsigned int i = 0; i < (*it)->classes.length (); i++)
+	{
+	  congruence_class *c = (*it)->classes[i];
+	  c->members.qsort (sort_sem_items_by_decl_uid);
+	}
+
+      (*it)->classes.qsort (sort_congruence_classes_by_decl_uid);
+    }
+
+  for (hash_table<congruence_class_hash>::iterator it = m_classes.begin ();
        it != m_classes.end (); ++it)
     for (unsigned int i = 0; i < (*it)->classes.length (); i++)
       {
@@ -3389,6 +3501,13 @@ sem_item_optimizer::merge_classes (unsigned int prev_class_count)
 	    non_singular_classes_sum += c->members.length ();
 	  }
       }
+
+  auto_vec <congruence_class_group *> classes (m_classes.elements ());
+  for (hash_table<congruence_class_hash>::iterator it = m_classes.begin ();
+       it != m_classes.end (); ++it)
+    classes.quick_push (*it);
+
+  classes.qsort (sort_congruence_class_groups_by_decl_uid);
 
   if (dump_file)
     {
@@ -3407,11 +3526,12 @@ sem_item_optimizer::merge_classes (unsigned int prev_class_count)
 	       item_count ? 100.0f * equal_items / item_count : 0.0f);
     }
 
-  for (hash_table<congruence_class_group_hash>::iterator it = m_classes.begin ();
-       it != m_classes.end (); ++it)
-    for (unsigned int i = 0; i < (*it)->classes.length (); i++)
+  unsigned int l;
+  congruence_class_group *it;
+  FOR_EACH_VEC_ELT (classes, l, it)
+    for (unsigned int i = 0; i < it->classes.length (); i++)
       {
-	congruence_class *c = (*it)->classes[i];
+	congruence_class *c = it->classes[i];
 
 	if (c->members.length () == 1)
 	  continue;
@@ -3458,11 +3578,101 @@ sem_item_optimizer::merge_classes (unsigned int prev_class_count)
 	      }
 
 	    if (dbg_cnt (merged_ipa_icf))
-	      merged_p |= source->merge (alias);
+	      {
+		bool merged = source->merge (alias);
+		merged_p |= merged;
+
+		if (merged && alias->type == VAR)
+		  {
+		    symtab_pair p = symtab_pair (source->node, alias->node);
+		    m_merged_variables.safe_push (p);
+		  }
+	      }
 	  }
       }
 
+  if (!m_merged_variables.is_empty ())
+    fixup_points_to_sets ();
+
   return merged_p;
+}
+
+/* Fixup points to set PT.  */
+
+void
+sem_item_optimizer::fixup_pt_set (struct pt_solution *pt)
+{
+  if (pt->vars == NULL)
+    return;
+
+  unsigned i;
+  symtab_pair *item;
+  FOR_EACH_VEC_ELT (m_merged_variables, i, item)
+    if (bitmap_bit_p (pt->vars, DECL_UID (item->second->decl)))
+      bitmap_set_bit (pt->vars, DECL_UID (item->first->decl));
+}
+
+/* Set all points-to UIDs of aliases pointing to node N as UID.  */
+
+static void
+set_alias_uids (symtab_node *n, int uid)
+{
+  ipa_ref *ref;
+  FOR_EACH_ALIAS (n, ref)
+    {
+      if (dump_file)
+	fprintf (dump_file, "  Setting points-to UID of [%s] as %d\n",
+		 xstrdup_for_dump (ref->referring->asm_name ()), uid);
+
+      SET_DECL_PT_UID (ref->referring->decl, uid);
+      set_alias_uids (ref->referring, uid);
+    }
+}
+
+/* Fixup points to analysis info.  */
+
+void
+sem_item_optimizer::fixup_points_to_sets (void)
+{
+  /* TODO: remove in GCC 9 and trigger PTA re-creation after IPA passes.  */
+  cgraph_node *cnode;
+
+  FOR_EACH_DEFINED_FUNCTION (cnode)
+    {
+      tree name;
+      unsigned i;
+      function *fn = DECL_STRUCT_FUNCTION (cnode->decl);
+      if (!gimple_in_ssa_p (fn))
+	continue;
+
+      FOR_EACH_SSA_NAME (i, name, fn)
+	if (POINTER_TYPE_P (TREE_TYPE (name))
+	    && SSA_NAME_PTR_INFO (name))
+	  fixup_pt_set (&SSA_NAME_PTR_INFO (name)->pt);
+      fixup_pt_set (&fn->gimple_df->escaped);
+
+       /* The above get's us to 99% I guess, at least catching the
+	  address compares.  Below also gets us aliasing correct
+	  but as said we're giving leeway to the situation with
+	  readonly vars anyway, so ... */
+       basic_block bb;
+       FOR_EACH_BB_FN (bb, fn)
+	for (gimple_stmt_iterator gsi = gsi_start_bb (bb); !gsi_end_p (gsi);
+	     gsi_next (&gsi))
+	  {
+	    gcall *call = dyn_cast<gcall *> (gsi_stmt (gsi));
+	    if (call)
+	      {
+		fixup_pt_set (gimple_call_use_set (call));
+		fixup_pt_set (gimple_call_clobber_set (call));
+	      }
+	  }
+    }
+
+  unsigned i;
+  symtab_pair *item;
+  FOR_EACH_VEC_ELT (m_merged_variables, i, item)
+    set_alias_uids (item->first, DECL_UID (item->first->decl));
 }
 
 /* Dump function prints all class members to a FILE with an INDENT.  */
@@ -3475,9 +3685,7 @@ congruence_class::dump (FILE *file, unsigned int indent) const
 
   FPUTS_SPACES (file, indent + 2, "");
   for (unsigned i = 0; i < members.length (); i++)
-    fprintf (file, "%s(%p/%u) ", members[i]->node->asm_name (),
-	     (void *) members[i]->decl,
-	     members[i]->node->order);
+    fprintf (file, "%s ", members[i]->node->dump_asm_name ());
 
   fprintf (file, "\n");
 }

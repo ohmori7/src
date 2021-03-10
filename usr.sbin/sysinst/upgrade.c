@@ -1,4 +1,4 @@
-/*	$NetBSD: upgrade.c,v 1.7 2019/06/12 06:20:18 martin Exp $	*/
+/*	$NetBSD: upgrade.c,v 1.17 2020/11/04 14:29:40 martin Exp $	*/
 
 /*
  * Copyright 1997 Piermont Information Systems Inc.
@@ -54,7 +54,7 @@ static int merge_X(const char *);
 void
 do_upgrade(void)
 {
-	struct install_partition_desc install;
+	struct install_partition_desc install = {};
 	int retcode = 0;
 	partman_go = 0;
 
@@ -62,22 +62,27 @@ do_upgrade(void)
 	if (!ask_noyes(NULL))
 		return;
 
-	get_ramsize();
-
-	if (find_disks(msg_string(MSG_upgrade)) < 0)
+	if (find_disks(msg_string(MSG_upgrade), !root_is_read_only()) < 0)
 		return;
 
-	/* XXX - build install_partition_desc from existing partitions
-	 * and pass that here and below instead of NULL */
-	if (set_swap_if_low_ram(NULL) < 0)
+	if (pm->parts == NULL && !pm->cur_system && !pm->no_part) {
+		hit_enter_to_continue(MSG_noroot, NULL);
 		return;
-
-	if (pm->parts->pscheme->pre_update_verify) {
-		if (pm->parts->pscheme->pre_update_verify(pm->parts))
-			pm->parts->pscheme->write_to_disk(pm->parts);
 	}
 
-	install_desc_from_parts(&install, pm->parts);
+	if (!pm->cur_system && pm->parts != NULL) {
+		if (pm->parts->pscheme->pre_update_verify) {
+			if (pm->parts->pscheme->pre_update_verify(pm->parts))
+				pm->parts->pscheme->write_to_disk(pm->parts);
+		}
+
+		install_desc_from_parts(&install, pm->parts);
+	} else if (pm->cur_system) {
+		install.cur_system = true;
+	}
+
+	if (set_swap_if_low_ram(&install) < 0)
+		return;
 
 	if (md_pre_update(&install) < 0)
 		goto free_install;
@@ -99,7 +104,6 @@ do_upgrade(void)
 #endif
 	/* Do any md updating of the file systems ... e.g. bootblocks,
 	   copy file systems ... */
-	/* XXX pass install here too */
 	if (!md_update(&install))
 		goto free_install;
 
@@ -144,9 +148,10 @@ save_X(const char *xroot)
 	/* Only care for X if it's a symlink */
 	if (target_symlink_exists_p(newx)) {
 		if (target_symlink_exists_p(oldx)) {
-			msg_display(MSG_X_oldexists, xroot, xroot, xroot,
+			msg_fmt_display(MSG_X_oldexists,
+			    "%s%s%s%s%s%s%s%s%s%s%s",
 			    xroot, xroot, xroot, xroot, xroot, xroot, xroot,
-			    xroot);
+			    xroot, xroot, xroot, xroot);
 			hit_enter_to_continue(NULL, NULL);
 			return EEXIST;
 		}
@@ -189,29 +194,38 @@ merge_X(const char *xroot)
  * Unpacks sets,  clobbering existing contents.
  */
 void
-do_reinstall_sets(struct install_partition_desc *install)
+do_reinstall_sets()
 {
+	struct install_partition_desc install = {};
 	int retcode = 0;
+	partman_go = 0;
 
 	unwind_mounts();
 	msg_display(MSG_reinstallusure);
 	if (!ask_noyes(NULL))
 		return;
 
-	if (find_disks(msg_string(MSG_reinstall)) < 0)
+	if (find_disks(msg_string(MSG_reinstall), !root_is_read_only()) < 0)
 		return;
 
-	/* XXX find proper pm pointer and pass it here, make sure we have
-	 * read partitions and provide "infos" in there */
-	if (mount_disks(install) != 0)
-		return;
+	if (!pm->cur_system && pm->parts != NULL) {
+		install_desc_from_parts(&install, pm->parts);
+	} else if (pm->cur_system) {
+		install.cur_system = true;
+	}
+
+	if (mount_disks(&install) != 0)
+		goto free_install;
 
 	/* Unpack the distribution. */
 	process_menu(MENU_distset, &retcode);
 	if (retcode == 0)
-		return;
+		goto free_install;
 	if (get_and_unpack_sets(0, NULL, MSG_unpackcomplete, MSG_abortunpack) != 0)
-		return;
+		goto free_install;
 
 	sanity_check();
+
+free_install:
+	free_install_desc(&install);
 }

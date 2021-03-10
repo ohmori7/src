@@ -1,5 +1,5 @@
 /* Perform instruction reorganizations for delay slot filling.
-   Copyright (C) 1992-2017 Free Software Foundation, Inc.
+   Copyright (C) 1992-2019 Free Software Foundation, Inc.
    Contributed by Richard Kenner (kenner@vlsi1.ultra.nyu.edu).
    Hacked by Michael Tiemann (tiemann@cygnus.com).
 
@@ -137,7 +137,20 @@ skip_consecutive_labels (rtx label_or_return)
 
   rtx_insn *label = as_a <rtx_insn *> (label_or_return);
 
-  for (insn = label; insn != 0 && !INSN_P (insn); insn = NEXT_INSN (insn))
+  /* __builtin_unreachable can create a CODE_LABEL followed by a BARRIER.
+
+     Since reaching the CODE_LABEL is undefined behavior, we can return
+     any code label and we're OK at runtime.
+
+     However, if we return a CODE_LABEL which leads to a shrinked wrapped
+     epilogue, but the path does not have a prologue, then we will trip
+     a sanity check in the dwarf2 cfi code which wants to verify that
+     the CFIs are all the same on the traces leading to the epilogue.
+
+     So we explicitly disallow looking through BARRIERS here.  */
+  for (insn = label;
+       insn != 0 && !INSN_P (insn) && !BARRIER_P (insn);
+       insn = NEXT_INSN (insn))
     if (LABEL_P (insn))
       label = insn;
 
@@ -276,6 +289,7 @@ stop_search_p (rtx_insn *insn, int labels_p)
     {
     case NOTE:
     case CALL_INSN:
+    case DEBUG_INSN:
       return 0;
 
     case CODE_LABEL:
@@ -396,7 +410,8 @@ find_end_label (rtx kind)
   while (NOTE_P (insn)
 	 || (NONJUMP_INSN_P (insn)
 	     && (GET_CODE (PATTERN (insn)) == USE
-		 || GET_CODE (PATTERN (insn)) == CLOBBER)))
+		 || GET_CODE (PATTERN (insn)) == CLOBBER
+		 || GET_CODE (PATTERN (insn)) == CLOBBER_HIGH)))
     insn = PREV_INSN (insn);
 
   /* When a target threads its epilogue we might already have a
@@ -840,7 +855,8 @@ mostly_true_jump (rtx jump_insn)
   rtx note = find_reg_note (jump_insn, REG_BR_PROB, 0);
   if (note)
     {
-      int prob = XINT (note, 0);
+      int prob = profile_probability::from_reg_br_prob_note (XINT (note, 0))
+			.to_reg_br_prob_base ();
 
       if (prob >= REG_BR_PROB_BASE * 9 / 10)
 	return 2;
@@ -1061,10 +1077,10 @@ steal_delay_list_from_target (rtx_insn *insn, rtx condition, rtx_sequence *seq,
      ??? It may be possible to move other sets into INSN in addition to
      moving the instructions in the delay slots.
 
-     We can not steal the delay list if one of the instructions in the
+     We cannot steal the delay list if one of the instructions in the
      current delay_list modifies the condition codes and the jump in the
-     sequence is a conditional jump. We can not do this because we can
-     not change the direction of the jump because the condition codes
+     sequence is a conditional jump. We cannot do this because we cannot
+     change the direction of the jump because the condition codes
      will effect the direction of the jump in the sequence.  */
 
   CLEAR_RESOURCE (&cc_set);
@@ -1295,7 +1311,8 @@ try_merge_delay_insns (rtx_insn *insn, rtx_insn *thread)
 
       /* TRIAL must be a CALL_INSN or INSN.  Skip USE and CLOBBER.  */
       if (NONJUMP_INSN_P (trial)
-	  && (GET_CODE (pat) == USE || GET_CODE (pat) == CLOBBER))
+	  && (GET_CODE (pat) == USE || GET_CODE (pat) == CLOBBER
+	      || GET_CODE (pat) == CLOBBER_HIGH))
 	continue;
 
       if (GET_CODE (next_to_match) == GET_CODE (trial)
@@ -1489,7 +1506,11 @@ redundant_insn (rtx insn, rtx_insn *target, const vec<rtx_insn *> &delay_list)
       --insns_to_search;
 
       pat = PATTERN (trial);
-      if (GET_CODE (pat) == USE || GET_CODE (pat) == CLOBBER)
+      if (GET_CODE (pat) == USE || GET_CODE (pat) == CLOBBER
+	  || GET_CODE (pat) == CLOBBER_HIGH)
+	continue;
+
+      if (GET_CODE (trial) == DEBUG_INSN)
 	continue;
 
       if (rtx_sequence *seq = dyn_cast <rtx_sequence *> (pat))
@@ -1584,7 +1605,11 @@ redundant_insn (rtx insn, rtx_insn *target, const vec<rtx_insn *> &delay_list)
       --insns_to_search;
 
       pat = PATTERN (trial);
-      if (GET_CODE (pat) == USE || GET_CODE (pat) == CLOBBER)
+      if (GET_CODE (pat) == USE || GET_CODE (pat) == CLOBBER
+	  || GET_CODE (pat) == CLOBBER_HIGH)
+	continue;
+
+      if (GET_CODE (trial) == DEBUG_INSN)
 	continue;
 
       if (rtx_sequence *seq = dyn_cast <rtx_sequence *> (pat))
@@ -1693,7 +1718,8 @@ own_thread_p (rtx thread, rtx label, int allow_fallthrough)
 	|| LABEL_P (insn)
 	|| (NONJUMP_INSN_P (insn)
 	    && GET_CODE (PATTERN (insn)) != USE
-	    && GET_CODE (PATTERN (insn)) != CLOBBER))
+	    && GET_CODE (PATTERN (insn)) != CLOBBER
+	    && GET_CODE (PATTERN (insn)) != CLOBBER_HIGH))
       return 0;
 
   return 1;
@@ -2016,7 +2042,12 @@ fill_simple_delay_slots (int non_jumps_p)
 	      pat = PATTERN (trial);
 
 	      /* Stand-alone USE and CLOBBER are just for flow.  */
-	      if (GET_CODE (pat) == USE || GET_CODE (pat) == CLOBBER)
+	      if (GET_CODE (pat) == USE || GET_CODE (pat) == CLOBBER
+		  || GET_CODE (pat) == CLOBBER_HIGH)
+		continue;
+
+	      /* And DEBUG_INSNs never go into delay slots.  */
+	      if (GET_CODE (trial) == DEBUG_INSN)
 		continue;
 
 	      /* Check for resource conflict first, to avoid unnecessary
@@ -2138,7 +2169,12 @@ fill_simple_delay_slots (int non_jumps_p)
 	      pat = PATTERN (trial);
 
 	      /* Stand-alone USE and CLOBBER are just for flow.  */
-	      if (GET_CODE (pat) == USE || GET_CODE (pat) == CLOBBER)
+	      if (GET_CODE (pat) == USE || GET_CODE (pat) == CLOBBER
+		  || GET_CODE (pat) == CLOBBER_HIGH)
+		continue;
+
+	      /* And DEBUG_INSNs do not go in delay slots.  */
+	      if (GET_CODE (trial) == DEBUG_INSN)
 		continue;
 
 	      /* If this already has filled delay slots, get the insn needing
@@ -2210,8 +2246,8 @@ fill_simple_delay_slots (int non_jumps_p)
 	      && ! can_throw_internal (trial))
 	    {
 	      /* See comment in relax_delay_slots about necessity of using
-		 next_real_insn here.  */
-	      rtx_insn *new_label = next_real_insn (next_trial);
+		 next_real_nondebug_insn here.  */
+	      rtx_insn *new_label = next_real_nondebug_insn (next_trial);
 
 	      if (new_label != 0)
 		new_label = get_label_before (new_label, JUMP_LABEL (trial));
@@ -2402,7 +2438,11 @@ fill_slots_from_thread (rtx_jump_insn *insn, rtx condition,
 	}
 
       pat = PATTERN (trial);
-      if (GET_CODE (pat) == USE || GET_CODE (pat) == CLOBBER)
+      if (GET_CODE (pat) == USE || GET_CODE (pat) == CLOBBER
+	  || GET_CODE (pat) == CLOBBER_HIGH)
+	continue;
+
+      if (GET_CODE (trial) == DEBUG_INSN)
 	continue;
 
       /* If TRIAL conflicts with the insns ahead of it, we lose.  Also,
@@ -3207,7 +3247,7 @@ relax_delay_slots (rtx_insn *first)
 	  && (other = prev_active_insn (insn)) != 0
 	  && any_condjump_p (other)
 	  && no_labels_between_p (other, insn)
-	  && 0 > mostly_true_jump (other))
+	  && mostly_true_jump (other) < 0)
 	{
 	  rtx other_target = JUMP_LABEL (other);
 	  target_label = JUMP_LABEL (insn);
@@ -3308,10 +3348,10 @@ relax_delay_slots (rtx_insn *first)
 
       /* If the first insn at TARGET_LABEL is redundant with a previous
 	 insn, redirect the jump to the following insn and process again.
-	 We use next_real_insn instead of next_active_insn so we
+	 We use next_real_nondebug_insn instead of next_active_insn so we
 	 don't skip USE-markers, or we'll end up with incorrect
 	 liveness info.  */
-      trial = next_real_insn (target_label);
+      trial = next_real_nondebug_insn (target_label);
       if (trial && GET_CODE (PATTERN (trial)) != SEQUENCE
 	  && redundant_insn (trial, insn, vNULL)
 	  && ! can_throw_internal (trial))
@@ -3326,7 +3366,7 @@ relax_delay_slots (rtx_insn *first)
 	    {
 	      /* Insert the special USE insn and update dataflow info.
 		 We know "trial" is an insn here as it is the output of
-		 next_real_insn () above.  */
+		 next_real_nondebug_insn () above.  */
 	      update_block (as_a <rtx_insn *> (trial), tmp);
 	      
 	      /* Now emit a label before the special USE insn, and
@@ -3348,26 +3388,27 @@ relax_delay_slots (rtx_insn *first)
 	  && simplejump_or_return_p (trial_seq->insn (0))
 	  && redundant_insn (trial_seq->insn (1), insn, vNULL))
 	{
-	  target_label = JUMP_LABEL (trial_seq->insn (0));
-	  if (ANY_RETURN_P (target_label))
-	    target_label = find_end_label (target_label);
+	  rtx temp_label = JUMP_LABEL (trial_seq->insn (0));
+	  if (ANY_RETURN_P (temp_label))
+	    temp_label = find_end_label (temp_label);
 	  
-	  if (target_label
+	  if (temp_label
 	      && redirect_with_delay_slots_safe_p (delay_jump_insn,
-						   target_label, insn))
+						   temp_label, insn))
 	    {
 	      update_block (trial_seq->insn (1), insn);
-	      reorg_redirect_jump (delay_jump_insn, target_label);
+	      reorg_redirect_jump (delay_jump_insn, temp_label);
 	      next = insn;
 	      continue;
 	    }
 	}
 
       /* See if we have a simple (conditional) jump that is useless.  */
-      if (! INSN_ANNULLED_BRANCH_P (delay_jump_insn)
-	  && ! condjump_in_parallel_p (delay_jump_insn)
+      if (!CROSSING_JUMP_P (delay_jump_insn)
+	  && !INSN_ANNULLED_BRANCH_P (delay_jump_insn)
+	  && !condjump_in_parallel_p (delay_jump_insn)
 	  && prev_active_insn (as_a<rtx_insn *> (target_label)) == insn
-	  && ! BARRIER_P (prev_nonnote_insn (as_a<rtx_insn *> (target_label)))
+	  && !BARRIER_P (prev_nonnote_insn (as_a<rtx_insn *> (target_label)))
 	  /* If the last insn in the delay slot sets CC0 for some insn,
 	     various code assumes that it is in a delay slot.  We could
 	     put it back where it belonged and delete the register notes,
@@ -3610,13 +3651,13 @@ make_return_insns (rtx_insn *first)
 	 insns for its delay slots, if it needs some.  */
       if (ANY_RETURN_P (PATTERN (jump_insn)))
 	{
-	  rtx_insn *prev = PREV_INSN (insn);
+	  rtx_insn *after = PREV_INSN (insn);
 
 	  delete_related_insns (insn);
-	  for (i = 1; i < XVECLEN (pat, 0); i++)
-	    prev = emit_insn_after (PATTERN (XVECEXP (pat, 0, i)), prev);
-
-	  insn = emit_jump_insn_after (PATTERN (jump_insn), prev);
+	  insn = jump_insn;
+	  for (i = 1; i < pat->len (); i++)
+	    after = emit_copy_of_insn_after (pat->insn (i), after);
+	  add_insn_after (insn, after, NULL);
 	  emit_barrier_after (insn);
 
 	  if (slots)
@@ -3793,7 +3834,8 @@ dbr_schedule (rtx_insn *first)
 	  if (! insn->deleted ()
 	      && NONJUMP_INSN_P (insn)
 	      && GET_CODE (PATTERN (insn)) != USE
-	      && GET_CODE (PATTERN (insn)) != CLOBBER)
+	      && GET_CODE (PATTERN (insn)) != CLOBBER
+	      && GET_CODE (PATTERN (insn)) != CLOBBER_HIGH)
 	    {
 	      if (GET_CODE (PATTERN (insn)) == SEQUENCE)
 		{

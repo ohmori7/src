@@ -1,4 +1,4 @@
-/*	$NetBSD: vmbusvar.h,v 1.2 2019/05/24 14:28:48 nonaka Exp $	*/
+/*	$NetBSD: vmbusvar.h,v 1.6 2020/07/14 00:45:53 yamaguchi Exp $	*/
 /*	$OpenBSD: hypervvar.h,v 1.13 2017/06/23 19:05:42 mikeb Exp $	*/
 
 /*
@@ -24,6 +24,7 @@
 #include <sys/device.h>
 #include <sys/atomic.h>
 #include <sys/bus.h>
+#include <sys/condvar.h>
 #include <sys/evcnt.h>
 #include <sys/kcpuset.h>
 #include <sys/mutex.h>
@@ -43,6 +44,7 @@
 typedef void (*vmbus_channel_callback_t)(void *);
 
 struct vmbus_softc;
+struct vmbus_channel;
 
 struct vmbus_msg {
 	uint64_t			msg_flags;
@@ -57,11 +59,23 @@ struct vmbus_msg {
 __CTASSERT((offsetof(struct vmbus_msg, msg_req) % 8) == 0);
 TAILQ_HEAD(vmbus_queue, vmbus_msg);
 
-struct vmbus_offer {
-	struct vmbus_chanmsg_choffer	co_chan;
-	SIMPLEQ_ENTRY(vmbus_offer)	co_entry;
+struct vmbus_chev {
+	int				vce_type;
+#define VMBUS_CHEV_TYPE_OFFER		0
+#define VMBUS_CHEV_TYPE_RESCIND		1
+	void				*vce_arg;
+	SIMPLEQ_ENTRY(vmbus_chev)	vce_entry;
 };
-SIMPLEQ_HEAD(vmbus_offers, vmbus_offer);
+SIMPLEQ_HEAD(vmbus_chevq, vmbus_chev);
+
+struct vmbus_dev {
+	int					vd_type;
+#define VMBUS_DEV_TYPE_ATTACH			0
+#define VMBUS_DEV_TYPE_DETACH			1
+	struct vmbus_channel			*vd_chan;
+	SIMPLEQ_ENTRY(vmbus_dev)		vd_entry;
+};
+SIMPLEQ_HEAD(vmbus_devq, vmbus_dev);
 
 struct vmbus_ring_data {
 	struct vmbus_bufring		*rd_ring;
@@ -72,7 +86,6 @@ struct vmbus_ring_data {
 	uint32_t			rd_dsize;
 };
 
-struct vmbus_channel;
 TAILQ_HEAD(vmbus_channels, vmbus_channel);
 
 struct vmbus_channel {
@@ -111,12 +124,14 @@ struct vmbus_channel {
 	uint32_t			ch_flags;
 #define  CHF_BATCHED			__BIT(0)
 #define  CHF_MONITOR			__BIT(1)
+#define  CHF_REVOKED			__BIT(2)
 
 	uint8_t				ch_mgroup;
 	uint8_t				ch_mindex;
 	struct hyperv_mon_param		*ch_monprm;
 	struct hyperv_dma		ch_monprm_dma;
 
+	TAILQ_ENTRY(vmbus_channel)	ch_prientry;
 	TAILQ_ENTRY(vmbus_channel)	ch_entry;
 
 	kmutex_t			ch_subchannel_lock;
@@ -137,20 +152,15 @@ struct vmbus_attach_args {
 	bus_space_tag_t			aa_memt;
 };
 
-struct vmbus_dev {
-	struct vmbus_attach_args	dv_aa;
-	SLIST_ENTRY(vmbus_dev)		dv_entry;
-};
-SLIST_HEAD(vmbus_devices, vmbus_dev);
-
 struct vmbus_percpu_data {
 	void			*simp;	/* Synthetic Interrupt Message Page */
 	void			*siep;	/* Synthetic Interrupt Event Flags Page */
-	uint32_t		vcpuid;	/* Virtual cpuid */
 
 	/* Rarely used fields */
 	struct hyperv_dma	simp_dma;
 	struct hyperv_dma	siep_dma;
+
+	void			*md_cookie;
 } __aligned(CACHE_LINE_SIZE);
 
 struct vmbus_softc {
@@ -191,19 +201,25 @@ struct vmbus_softc {
 	struct vmbus_queue 	sc_rsps;	/* Response queue */
 	kmutex_t		sc_rsp_lock;
 
-	struct vmbus_offers	sc_offers;
-	kmutex_t		sc_offer_lock;
+	struct vmbus_chevq	sc_chevq;
+	kmutex_t		sc_chevq_lock;
+	kcondvar_t		sc_chevq_cv;
+
+	struct vmbus_devq	sc_devq;
+	kmutex_t		sc_devq_lock;
+	kcondvar_t		sc_devq_cv;
+
+	struct vmbus_devq	sc_subch_devq;
+	kmutex_t		sc_subch_devq_lock;
+	kcondvar_t		sc_subch_devq_cv;
+
+	struct vmbus_channels	sc_prichans;
+	kmutex_t		sc_prichan_lock;
 
 	struct vmbus_channels	sc_channels;
 	kmutex_t		sc_channel_lock;
 
 	volatile uint32_t	sc_handle;
-
-	struct vmbus_devices	sc_icdevs;
-	kmutex_t		sc_icdev_lock;
-
-	struct vmbus_devices	sc_devs;
-	kmutex_t		sc_dev_lock;
 };
 
 static __inline void
@@ -269,6 +285,7 @@ int	vmbus_channel_recv(struct vmbus_channel *, void *, uint32_t, uint32_t *,
 	    uint64_t *, int);
 void	vmbus_channel_cpu_set(struct vmbus_channel *, int);
 void	vmbus_channel_cpu_rr(struct vmbus_channel *);
+bool	vmbus_channel_is_revoked(struct vmbus_channel *);
 
 struct vmbus_channel **
 	vmbus_subchannel_get(struct vmbus_channel *, int);

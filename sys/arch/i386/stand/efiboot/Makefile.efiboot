@@ -1,4 +1,4 @@
-# $NetBSD: Makefile.efiboot,v 1.14 2018/07/25 23:45:32 kamil Exp $
+# $NetBSD: Makefile.efiboot,v 1.18 2020/09/06 07:20:29 mrg Exp $
 
 S=		${.CURDIR}/../../../../..
 
@@ -18,7 +18,10 @@ SOURCES+= efidisk.c efidisk_ll.c efigetsecs.c efimemory.c
 SOURCES+= efinet.c efipxe.c
 LIBI386SRCS= biosdisk.c bootinfo.c bootinfo_biosgeom.c bootmenu.c
 LIBI386SRCS+= diskbuf.c exec.c menuutils.c parseutils.c pread.c
-SRCS= ${SOURCES} ${EXTRA_SOURCES} ${LIBI386SRCS}
+LIBI386SRCS+= exec_multiboot1.c exec_multiboot2.c
+# use our own nfs implementation
+LIBSASRCS+= nfs.c
+SRCS= ${SOURCES} ${EXTRA_SOURCES} ${LIBI386SRCS} ${LIBSASRCS}
 
 .include <bsd.init.mk>
 
@@ -35,8 +38,10 @@ BINMODE=444
 
 .PATH:	${.CURDIR} ${.CURDIR}/..
 .PATH:	${.CURDIR}/../../lib
+.PATH:	${.CURDIR}/../../libsa
 
 LDSCRIPT?= ${.CURDIR}/ldscript
+LDFLAGS+= --no-dynamic-linker --noinhibit-exec
 LDFLAGS+= -nostdlib -T${LDSCRIPT} -Bsymbolic -shared -nocombreloc
 CPPFLAGS+= -I$S -I${.CURDIR} -I${.CURDIR}/.. -I$S/lib/libsa
 CPPFLAGS+= -I${.OBJDIR}
@@ -60,7 +65,7 @@ CPPFLAGS+= -DSUPPORT_EXT2FS
 CPPFLAGS+= -DSUPPORT_BOOTP
 CPPFLAGS+= -DSUPPORT_DHCP
 CPPFLAGS+= -DSUPPORT_NFS
-#CPPFLAGS+= -DSUPPORT_TFTP
+CPPFLAGS+= -DSUPPORT_TFTP
 CPPFLAGS+= -DPASS_BIOSGEOM
 CPPFLAGS+= -DBIOSDISK_DEFAULT_SECSIZE=2048	# for bootinfo_biosgeom.c
 CPPFLAGS+= -DLIBSA_ENABLE_LS_OP
@@ -137,6 +142,8 @@ ${PROG}.so: ${OBJS} ${LIBLIST} ${LDSCRIPT} ${.CURDIR}/../Makefile.efiboot
 	fi
 	rm -f ${.TARGET}
 	mv ${.TARGET}.tmp ${.TARGET}
+
+CWARNFLAGS.gcc+=	${GCC_NO_ADDR_OF_PACKED_MEMBER}
 
 KLINK_MACHINE?=	${MACHINE}
 .include <bsd.klinks.mk>

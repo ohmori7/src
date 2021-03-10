@@ -131,13 +131,12 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: mini2440_machdep.c,v 1.13 2018/10/28 14:30:32 skrll Exp $");
+__KERNEL_RCSID(0, "$NetBSD: mini2440_machdep.c,v 1.18 2020/04/18 11:00:40 skrll Exp $");
 
 #include "opt_arm_debug.h"
 #include "opt_console.h"
 #include "opt_ddb.h"
 #include "opt_kgdb.h"
-#include "opt_pmap_debug.h"
 #include "opt_md.h"
 
 #include <sys/param.h>
@@ -235,10 +234,6 @@ int max_processes = 64;		/* Default number */
 #endif				/* !PMAP_STATIC_L1S */
 
 paddr_t msgbufphys;
-
-#ifdef PMAP_DEBUG
-extern int pmap_debug_level;
-#endif
 
 #define KERNEL_PT_SYS		0	/* L2 table for mapping zero page */
 #define KERNEL_PT_KERNEL	1	/* L2 table for mapping kernel */
@@ -425,7 +420,7 @@ read_ttb(void)
 #define	ioreg_write32(a,v)  	(*(volatile uint32_t *)(a)=(v))
 
 /*
- * u_int initarm(...)
+ * vaddr_t initarm(...)
  *
  * Initial entry point on startup. This gets called before main() is
  * entered.
@@ -438,7 +433,7 @@ read_ttb(void)
  *   Relocating the kernel to the bottom of physical memory
  */
 
-u_int
+vaddr_t
 initarm(void *arg)
 {
 	int loop;
@@ -546,7 +541,7 @@ initarm(void *arg)
 
 	/*
 	 * Set up the variables that define the availablilty of
-	 * physical memory. 
+	 * physical memory.
          * We use the 2MB between the physical start and the kernel to
          * begin with. Allocating from 0x30200000 and downwards
 	 * If we get too close to the bottom of SDRAM, we
@@ -929,7 +924,7 @@ initarm(void *arg)
 	evbarm_device_register = mini2440_device_register;
 
 	/* We return the new stack pointer address */
-	return (kernelstack.pv_va + USPACE_SVC_STACK_TOP);
+	return kernelstack.pv_va + USPACE_SVC_STACK_TOP;
 }
 
 void
@@ -1026,9 +1021,7 @@ s3c2xx0_bus_dma_init(struct arm32_bus_dma_tag *dma_tag_template)
 #if 1
 	dmat = dma_tag_template;
 #else
-	dmat = malloc(sizeof *dmat, M_DEVBUF, M_NOWAIT);
-	if (dmat == NULL)
-		return NULL;
+	dmat = malloc(sizeof *dmat, M_DEVBUF, M_WAITOK);
 	*dmat =  *dma_tag_template;
 #endif
 

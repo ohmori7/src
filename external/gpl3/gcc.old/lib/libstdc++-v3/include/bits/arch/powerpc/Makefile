@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.4 2018/11/11 22:50:04 mrg Exp $
+#	$NetBSD: Makefile,v 1.6 2019/09/26 08:03:57 mrg Exp $
 
 GCC_MACHINE_ARCH=powerpc
 .include "../Makefile.arch_bits"

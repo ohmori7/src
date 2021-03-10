@@ -1,4 +1,4 @@
-# $NetBSD: Makefile,v 1.17 2018/09/29 14:41:37 rmind Exp $
+# $NetBSD: Makefile,v 1.19 2020/09/06 07:20:26 mrg Exp $
 
 .include <bsd.own.mk>
 
@@ -22,15 +22,12 @@ CPPFLAGS+=-DWITH_PF
 .if (${MKNPF} != "no")
 SRCS+=	npf.c
 CPPFLAGS+=-DWITH_NPF
-
-PROGDPLIBS+= nv ${NETBSDSRCDIR}/external/bsd/libnv/lib
-CPPFLAGS+= -I ${NETBSDSRCDIR}/sys/external/bsd/libnv/dist
-
 LDADD+=-lnpf
 DPADD+=${LIBNPF}
 .endif
 
 # XXX
 COPTS+=	-fno-strict-aliasing
+CWARNFLAGS.gcc+=	${GCC_NO_ADDR_OF_PACKED_MEMBER}
 
 .include <bsd.prog.mk>

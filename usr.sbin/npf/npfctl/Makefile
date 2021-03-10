@@ -1,4 +1,4 @@
-# $NetBSD: Makefile,v 1.13 2018/09/29 14:41:36 rmind Exp $
+# $NetBSD: Makefile,v 1.15 2020/05/30 14:16:56 rmind Exp $
 
 .include <bsd.own.mk>
 
@@ -6,15 +6,12 @@ PROG=		npfctl
 MAN=		npfctl.8 npf.conf.5
 BINDIR=		/sbin
 
-SRCS=		npfctl.c npf_var.c npf_data.c npf_build.c npf_extmod.c
-SRCS+=		npf_bpf_comp.c npf_show.c
+SRCS=		npfctl.c npf_cmd.c npf_var.c npf_data.c npf_build.c
+SRCS+=		npf_bpf_comp.c npf_show.c npf_extmod.c
 
 CPPFLAGS+=	-I${.CURDIR}
 SRCS+=		npf_scan.l npf_parse.y
 YHEADER=	1
-
-PROGDPLIBS+=	nv ${NETBSDSRCDIR}/external/bsd/libnv/lib
-CPPFLAGS+=	-I ${NETBSDSRCDIR}/sys/external/bsd/libnv/dist
 
 LDADD+=		-lnpf -lpcap -lutil -ly
 DPADD+=		${LIBNPF} ${LIBUTIL} ${LIBPCAP} ${LIBUTIL} ${LIBY}

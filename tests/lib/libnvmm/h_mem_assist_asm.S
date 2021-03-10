@@ -1,11 +1,10 @@
-/*	$NetBSD: h_mem_assist_asm.S,v 1.6 2019/03/19 19:23:39 maxv Exp $	*/
+/*	$NetBSD: h_mem_assist_asm.S,v 1.10 2020/12/27 20:56:14 reinoud Exp $	*/
 
 /*
- * Copyright (c) 2018 The NetBSD Foundation, Inc.
+ * Copyright (c) 2018-2020 Maxime Villard, m00nbsd.net
  * All rights reserved.
  *
- * This code is derived from software contributed to The NetBSD Foundation
- * by Maxime Villard.
+ * This code is part of the NVMM hypervisor.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -16,17 +15,17 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
- * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
- * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
- * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
  */
 
 	.globl	test1_begin, test1_end
@@ -43,6 +42,9 @@
 	.globl	test12_begin, test12_end
 	.globl	test13_begin, test13_end
 	.globl	test14_begin, test14_end
+	.globl	test_64bit_15_begin, test_64bit_15_end
+	.globl	test_64bit_16_begin, test_64bit_16_end
+	.globl	test17_begin, test17_end
 	.text
 	.code64
 
@@ -293,3 +295,138 @@ test14_begin:
 	movq	$0,(%rax)
 	TEST_END
 test14_end:
+
+	.align	64
+test_64bit_15_begin:
+	movq	$0x1000,%rax
+	movq	$0x120000,%rbx
+	movq	$0x003400,%rcx
+	movq	$0x000056,%rdx
+
+	xchgq	%rbx,(%rax)
+	xchgw	(%rax),%cx
+	xchgb	%dl,(%rax)
+
+	TEST_END
+test_64bit_15_end:
+
+	.align	64
+test_64bit_16_begin:
+	movq	$0x1000,%rax
+	movq	$0x000000,%rbx
+	movq	$0x000000,%rcx
+	movq	$0x000000,%rdx
+
+	movq	$0x123456,(%rax)
+	xchgq	%rbx,(%eax)
+	movq	$0,(%rax)
+	xchgq	%rbx,(%eax)
+
+	TEST_END
+test_64bit_16_end:
+
+	.align	64
+test17_begin:
+	movq	$0x1000,%rax
+	movq	$0xdeadbeefcafe, %rbx
+	movq	%rbx,0x00(%rax)
+	movq	%rbx,0x08(%rax)
+
+	movq	$0xdeadbeefcafe, %rbx
+	movq	%rbx,0x20(%rax)
+	movq	$0, %rbx
+	movq	%rbx,0x28(%rax)
+
+	movq	$0x1000,%rsi
+	movq	$0x1020,%rdi
+
+	movq	$3,%rcx
+	repe cmpsq
+
+	movq	%rcx,(%rax)
+	TEST_END
+test17_end:
+
+/* -------------------------------------------------------------------------- */
+
+	.globl	test_16bit_1_begin, test_16bit_1_end
+	.globl	test_16bit_2_begin, test_16bit_2_end
+	.globl	test_16bit_3_begin, test_16bit_3_end
+	.globl	test_16bit_4_begin, test_16bit_4_end
+	.globl	test_16bit_5_begin, test_16bit_5_end
+	.globl	test_16bit_6_begin, test_16bit_6_end
+
+#define TEST16_END	\
+	rdmsr
+
+	.code16
+
+	.align	64
+test_16bit_1_begin:
+	movw	$0x10f1,%bx
+	movw	$0x123,%dx
+
+	movb	%dl,(%bx)
+
+	TEST16_END
+test_16bit_1_end:
+
+	.align	64
+test_16bit_2_begin:
+	movw	$0x10f1,%bx
+	movw	$2,%di
+	movw	$0x123,%dx
+
+	movw	%dx,(%bx,%di)
+
+	TEST16_END
+test_16bit_2_end:
+
+	.align	64
+test_16bit_3_begin:
+	movw	$0x10f1,%bp
+	movw	$2,%si
+	movw	$0x678,%dx
+
+	movw	%dx,-2(%bp,%si)
+
+	TEST16_END
+test_16bit_3_end:
+
+	.align	64
+test_16bit_4_begin:
+	movw	$0x10f0,%bp
+	movw	$2,%si
+	movw	$2+4+4,%di
+	movw	$0xFFFF,%dx
+	movl	$0x0001,%eax
+	movl	$0x0010,%ebx
+	movl	$0x1000,%ecx
+
+	movw	%dx,4(%bp,%si)		/* 16bit opr 16bit adr */
+	andl	%eax,4(%bp,%si)		/* 32bit opr 16bit adr */
+	orw	%bx,4(%ebp,%esi)	/* 16bit opr 32bit adr */
+	orl	%ecx,-4(%bp,%di)	/* 32bit opr 16bit adr, negative */
+
+	TEST16_END
+test_16bit_4_end:
+
+	.align	64
+test_16bit_5_begin:
+	movb	$0x12,0x1234
+
+	TEST16_END
+test_16bit_5_end:
+
+	.align	64
+test_16bit_6_begin:
+	movw	$0x1234,%bp
+	movw	$4,%di
+	movw	$0x1200,%bx
+	movw	$0x0034,%cx
+
+	xchgw	%bx,(%bp)
+	xchgb	-4(%bp,%di),%cl
+
+	TEST16_END
+test_16bit_6_end:

@@ -1,4 +1,4 @@
-/*	$NetBSD: st.c,v 1.238 2019/05/19 19:06:53 kardel Exp $ */
+/*	$NetBSD: st.c,v 1.240 2019/12/27 09:41:51 msaitoh Exp $ */
 
 /*-
  * Copyright (c) 1998, 2004 The NetBSD Foundation, Inc.
@@ -50,7 +50,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: st.c,v 1.238 2019/05/19 19:06:53 kardel Exp $");
+__KERNEL_RCSID(0, "$NetBSD: st.c,v 1.240 2019/12/27 09:41:51 msaitoh Exp $");
 
 #ifdef _KERNEL_OPT
 #include "opt_scsi.h"
@@ -2283,7 +2283,7 @@ st_interpret_sense(struct scsipi_xfer *xs)
 				retval = EIO;
 				/*
 				 * If we return an error we can't claim to
-				 * have transfered all data.
+				 * have transferred all data.
 				 */
 				if (xs->resid == 0)
 					xs->resid = xs->datalen;
@@ -2426,10 +2426,7 @@ st_touch_tape(struct st_softc *st)
 	int readsize;
 	int error;
 
-	bf = malloc(1024, M_TEMP, M_NOWAIT);
-	if (bf == NULL)
-		return ENOMEM;
-
+	bf = malloc(1024, M_TEMP, M_WAITOK);
 	if ((error = st->ops(st, ST_OPS_MODESENSE, 0)) != 0)
 		goto bad;
 

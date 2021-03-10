@@ -1,4 +1,4 @@
-/*	$NetBSD: linux_socket.c,v 1.145 2019/04/18 17:45:12 christos Exp $	*/
+/*	$NetBSD: linux_socket.c,v 1.152 2020/11/03 22:08:44 christos Exp $	*/
 
 /*-
  * Copyright (c) 1995, 1998, 2008 The NetBSD Foundation, Inc.
@@ -35,7 +35,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: linux_socket.c,v 1.145 2019/04/18 17:45:12 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD: linux_socket.c,v 1.152 2020/11/03 22:08:44 christos Exp $");
 
 #if defined(_KERNEL_OPT)
 #include "opt_inet.h"
@@ -546,6 +546,8 @@ linux_sys_sendmsg(struct lwp *l, const struct linux_sys_sendmsg_args *uap, regis
 
 				case LINUX_SCM_CREDENTIALS:
 					/* no native equivalent, just drop it */
+					if (control != mtod(ctl_mbuf, void *))
+						free(control, M_MBUF);
 					m_free(ctl_mbuf);
 					ctl_mbuf = NULL;
 					msg.msg_control = NULL;
@@ -568,14 +570,15 @@ linux_sys_sendmsg(struct lwp *l, const struct linux_sys_sendmsg_args *uap, regis
 			/* Check the buffer is big enough */
 			if (__predict_false(cidx + cspace > clen)) {
 				u_int8_t *nc;
+				size_t nclen;
 
-				clen = cidx + cspace;
-				if (clen >= PAGE_SIZE) {
+				nclen = cidx + cspace;
+				if (nclen >= PAGE_SIZE) {
 					error = EINVAL;
 					goto done;
 				}
 				nc = realloc(clen <= MLEN ? NULL : control,
-						clen, M_TEMP, M_WAITOK);
+						nclen, M_TEMP, M_WAITOK);
 				if (!nc) {
 					error = ENOMEM;
 					goto done;
@@ -584,6 +587,7 @@ linux_sys_sendmsg(struct lwp *l, const struct linux_sys_sendmsg_args *uap, regis
 					/* Old buffer was in mbuf... */
 					memcpy(nc, control, cidx);
 				control = nc;
+				clen = nclen;
 			}
 
 			/* Copy header */
@@ -605,7 +609,7 @@ linux_sys_sendmsg(struct lwp *l, const struct linux_sys_sendmsg_args *uap, regis
 
 			resid -= LINUX_CMSG_ALIGN(l_cmsg.cmsg_len);
 			cidx += cspace;
-		} while ((l_cc = LINUX_CMSG_NXTHDR(&msg, l_cc)) && resid > 0);
+		} while ((l_cc = LINUX_CMSG_NXTHDR(&msg, l_cc, &l_cmsg)) && resid > 0);
 
 		/* If we allocated a buffer, attach to mbuf */
 		if (cidx > MLEN) {
@@ -857,11 +861,11 @@ linux_to_bsd_so_sockopt(int lopt)
 		return SO_DEBUG;
 	case LINUX_SO_REUSEADDR:
 		/*
-		 * Linux does not implement SO_REUSEPORT, but allows reuse of a
-		 * host:port pair through SO_REUSEADDR even if the address is not a
-		 * multicast-address.  Effectively, this means that we should use
-		 * SO_REUSEPORT to allow Linux applications to not exit with
-		 * EADDRINUSE
+		 * Linux does not implement SO_REUSEPORT, but allows reuse of
+		 * a host:port pair through SO_REUSEADDR even if the address
+		 * is not a multicast-address. Effectively, this means that we
+		 * should use SO_REUSEPORT to allow Linux applications to not
+		 * exit with EADDRINUSE
 		 */
 		return SO_REUSEPORT;
 	case LINUX_SO_TYPE:
@@ -876,20 +880,51 @@ linux_to_bsd_so_sockopt(int lopt)
 		return SO_SNDBUF;
 	case LINUX_SO_RCVBUF:
 		return SO_RCVBUF;
-	case LINUX_SO_SNDLOWAT:
-		return SO_SNDLOWAT;
-	case LINUX_SO_RCVLOWAT:
-		return SO_RCVLOWAT;
 	case LINUX_SO_KEEPALIVE:
 		return SO_KEEPALIVE;
 	case LINUX_SO_OOBINLINE:
 		return SO_OOBINLINE;
+	case LINUX_SO_NO_CHECK:
+	case LINUX_SO_PRIORITY:
+		return -1;
 	case LINUX_SO_LINGER:
 		return SO_LINGER;
+	case LINUX_SO_BSDCOMPAT:
+	case LINUX_SO_PASSCRED:
+	case LINUX_SO_PEERCRED:
+		return -1;
+	case LINUX_SO_RCVLOWAT:
+		return SO_RCVLOWAT;
+	case LINUX_SO_SNDLOWAT:
+		return SO_SNDLOWAT;
+	case LINUX_SO_RCVTIMEO:
+		return SO_RCVTIMEO;
+	case LINUX_SO_SNDTIMEO:
+		return SO_SNDTIMEO;
+	case LINUX_SO_SECURITY_AUTHENTICATION:
+	case LINUX_SO_SECURITY_ENCRYPTION_TRANSPORT:
+	case LINUX_SO_SECURITY_ENCRYPTION_NETWORK:
+	case LINUX_SO_BINDTODEVICE:
+	case LINUX_SO_ATTACH_FILTER:
+	case LINUX_SO_DETACH_FILTER:
+	case LINUX_SO_PEERNAME:
+		return -1;
+	case LINUX_SO_TIMESTAMP:
+		return SO_TIMESTAMP;
 	case LINUX_SO_ACCEPTCONN:
-		return SO_ACCEPTCONN;
-	case LINUX_SO_PRIORITY:
-	case LINUX_SO_NO_CHECK:
+	case LINUX_SO_PEERSEC:
+	case LINUX_SO_SNDBUFFORCE:
+	case LINUX_SO_RCVBUFFORCE:
+	case LINUX_SO_PASSSEC:
+	case LINUX_SO_TIMESTAMPNS:
+	case LINUX_SO_MARK:
+	case LINUX_SO_TIMESTAMPING:
+	case LINUX_SO_PROTOCOL:
+	case LINUX_SO_DOMAIN:
+	case LINUX_SO_RXQ_OVFL:
+	case LINUX_SO_WIFI_STATUS:
+	case LINUX_SO_PEEK_OFF:
+	case LINUX_SO_NOFCS:
 	default:
 		return -1;
 	}
@@ -1136,12 +1171,15 @@ linux_getifconf(struct lwp *l, register_t *retval, void *data)
 	if (error)
 		return error;
 
-	memset(&ifr, 0, sizeof(ifr));
 	docopy = ifc.ifc_req != NULL;
 	if (docopy) {
+		if (ifc.ifc_len < 0)
+			return EINVAL;
+
 		space = ifc.ifc_len;
 		ifrp = ifc.ifc_req;
 	}
+	memset(&ifr, 0, sizeof(ifr));
 
 	bound = curlwp_bind();
 	s = pserialize_read_enter();
@@ -1605,8 +1643,20 @@ linux_get_sa(struct lwp *l, int s, struct sockaddr_big *sb,
 		sin6->sin6_scope_id = 0;
 	}
 
-	if (bdom == AF_INET)
-		namelen = sizeof(struct sockaddr_in);
+	/*
+	 * Linux is less strict than NetBSD and permits namelen to be larger
+	 * than valid struct sockaddr_in*.  If this is the case, truncate
+	 * the value to the correct size, so that NetBSD networking does not
+	 * return an error.
+	 */
+	switch (bdom) {
+	case AF_INET:
+		namelen = MIN(namelen, sizeof(struct sockaddr_in));
+		break;
+	case AF_INET6:
+		namelen = MIN(namelen, sizeof(struct sockaddr_in6));
+		break;
+	}
 
 	sb->sb_family = bdom;
 	sb->sb_len = namelen;

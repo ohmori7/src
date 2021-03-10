@@ -1,4 +1,4 @@
-/*	$NetBSD: cdefs.h,v 1.141 2019/02/21 21:34:05 christos Exp $	*/
+/*	$NetBSD: cdefs.h,v 1.156 2021/01/16 23:51:51 chs Exp $	*/
 
 /* * Copyright (c) 1991, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -36,11 +36,6 @@
 #ifndef	_SYS_CDEFS_H_
 #define	_SYS_CDEFS_H_
 
-#ifdef _KERNEL_OPT
-#include "opt_diagnostic.h"
-#include "opt_kasan.h"
-#endif
-
 /*
  * Macro to test if we're using a GNU C compiler of a specific vintage
  * or later, for e.g. features that appeared in a particular version
@@ -58,6 +53,24 @@
 	 (__GNUC__ > (x)))
 #else
 #define	__GNUC_PREREQ__(x, y)	0
+#endif
+
+/*
+ * Macros to test Clang/LLVM features.
+ * Usage:
+ *
+ *	#if __has_feature(safe_stack)
+ *	...SafeStack specific code...
+ *	#else
+ *	..regular code...
+ *	#endif
+ */
+#ifndef __has_feature
+#define __has_feature(x)	0
+#endif
+
+#ifndef __has_extension
+#define __has_extension		__has_feature /* Compat with pre-3.0 Clang */
 #endif
 
 #include <machine/cdefs.h>
@@ -154,8 +167,11 @@
 #define	__CTASSERT99(x, a, b)	__CTASSERT0(x, __CONCAT(__ctassert,a), \
 					       __CONCAT(_,b))
 #endif
-#define	__CTASSERT0(x, y, z)	__CTASSERT1(x, y, z) 
-#define	__CTASSERT1(x, y, z)	typedef char y ## z[/*CONSTCOND*/(x) ? 1 : -1] __unused
+#define	__CTASSERT0(x, y, z)	__CTASSERT1(x, y, z)
+#define	__CTASSERT1(x, y, z)	\
+	struct y ## z ## _struct { \
+		unsigned int y ## z : /*CONSTCOND*/(x) ? 1 : -1; \
+	}
 
 /*
  * The following macro is used to remove const cast-away warnings
@@ -176,6 +192,12 @@
  * For the same reasons as above, we use unsigned long and not intptr_t.
  */
 #define __UNVOLATILE(a)	((void *)(unsigned long)(volatile void *)(a))
+
+/*
+ * The following macro is used to remove the the function type cast warnings
+ * from gcc -Wcast-function-type and as above should be used with caution.
+ */
+#define __FPTRCAST(t, f)	((t)(void *)(f))
 
 /*
  * GCC2 provides __extension__ to suppress warnings for various GNU C
@@ -244,6 +266,12 @@
 #define	__always_inline	/* nothing */
 #endif
 
+#if __GNUC_PREREQ__(4, 0) || defined(__lint__)
+#define	__null_sentinel	__attribute__((__sentinel__))
+#else
+#define	__null_sentinel	/* nothing */
+#endif
+
 #if __GNUC_PREREQ__(4, 1) || defined(__lint__)
 #define	__returns_twice	__attribute__((__returns_twice__))
 #else
@@ -307,12 +335,42 @@
 #define	__unreachable()	do {} while (/*CONSTCOND*/0)
 #endif
 
-#if defined(_KERNEL)
-#if __GNUC_PREREQ__(4, 9) && defined(KASAN)
+#if defined(_KERNEL) || defined(_RUMPKERNEL)
+#if defined(__clang__) && __has_feature(address_sanitizer)
+#define	__noasan	__attribute__((no_sanitize("kernel-address", "address")))
+#elif __GNUC_PREREQ__(4, 9) && defined(__SANITIZE_ADDRESS__)
 #define	__noasan	__attribute__((no_sanitize_address))
 #else
 #define	__noasan	/* nothing */
 #endif
+
+#if defined(__clang__) && __has_feature(thread_sanitizer)
+#define	__nocsan	__attribute__((no_sanitize("thread")))
+#elif __GNUC_PREREQ__(4, 9) && defined(__SANITIZE_THREAD__)
+#define	__nocsan	__attribute__((no_sanitize_thread))
+#else
+#define	__nocsan	/* nothing */
+#endif
+
+#if defined(__clang__) && __has_feature(memory_sanitizer)
+#define	__nomsan	__attribute__((no_sanitize("kernel-memory", "memory")))
+#else
+#define	__nomsan	/* nothing */
+#endif
+
+#if defined(__clang__) && __has_feature(undefined_behavior_sanitizer)
+#define __noubsan	__attribute__((no_sanitize("undefined")))
+#elif __GNUC_PREREQ__(4, 9) && defined(__SANITIZE_UNDEFINED__)
+#define __noubsan	__attribute__((no_sanitize_undefined))
+#else
+#define __noubsan	/* nothing */
+#endif
+#endif
+
+#if defined(__COVERITY__) ||						\
+    __has_feature(address_sanitizer) || defined(__SANITIZE_ADDRESS__) ||\
+    __has_feature(leak_sanitizer) || defined(__SANITIZE_LEAK__)
+#define	__NO_LEAKS
 #endif
 
 /*
@@ -425,12 +483,12 @@
 #endif
 #endif /* !(__STDC_VERSION__ >= 199901L) && !(__cplusplus - 0 >= 201103L) */
 
-#if defined(_KERNEL)
-#if defined(NO_KERNEL_RCSIDS)
-#undef __KERNEL_RCSID
-#define	__KERNEL_RCSID(_n, _s)		/* nothing */
-#endif /* NO_KERNEL_RCSIDS */
-#endif /* _KERNEL */
+#if defined(_KERNEL) && defined(NO_KERNEL_RCSIDS)
+#undef	__KERNEL_RCSID
+#define	__KERNEL_RCSID(_n, _s)	/* nothing */
+#undef	__RCSID
+#define	__RCSID(_s)		/* nothing */
+#endif
 
 #if !defined(_STANDALONE) && !defined(_KERNEL)
 #if defined(__GNUC__) || defined(__PCC__)

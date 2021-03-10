@@ -1,4 +1,4 @@
-/*	$NetBSD: xen_pmap.c,v 1.31 2019/03/10 16:30:01 maxv Exp $	*/
+/*	$NetBSD: xen_pmap.c,v 1.39 2020/09/06 02:18:53 riastradh Exp $	*/
 
 /*
  * Copyright (c) 2007 Manuel Bouyer.
@@ -101,9 +101,8 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: xen_pmap.c,v 1.31 2019/03/10 16:30:01 maxv Exp $");
+__KERNEL_RCSID(0, "$NetBSD: xen_pmap.c,v 1.39 2020/09/06 02:18:53 riastradh Exp $");
 
-#include "opt_user_ldt.h"
 #include "opt_lockdebug.h"
 #include "opt_multiprocessor.h"
 #include "opt_xen.h"
@@ -126,7 +125,6 @@ __KERNEL_RCSID(0, "$NetBSD: xen_pmap.c,v 1.31 2019/03/10 16:30:01 maxv Exp $");
 #include <machine/isa_machdep.h>
 #include <machine/cpuvar.h>
 
-#include <x86/pmap.h>
 #include <x86/pmap_pv.h>
 
 #include <x86/i82489reg.h>
@@ -177,10 +175,10 @@ pmap_kenter_ma(vaddr_t va, paddr_t ma, vm_prot_t prot, u_int flags)
 
 	npte = ma | ((prot & VM_PROT_WRITE) ? PTE_W : 0) | PTE_P;
 	if (flags & PMAP_NOCACHE)
-		npte |= PG_N;
+		npte |= PTE_PCD;
 
 	if ((cpu_feature[2] & CPUID_NOX) && !(prot & VM_PROT_EXECUTE))
-		npte |= PG_NX;
+		npte |= PTE_NX;
 
 	opte = pmap_pte_testset(pte, npte); /* zap! */
 
@@ -214,22 +212,28 @@ pmap_extract_ma(struct pmap *pmap, vaddr_t va, paddr_t *pap)
 	struct pmap *pmap2;
 	int lvl;
 
-	kpreempt_disable();
+	if (pmap != pmap_kernel()) {
+		mutex_enter(&pmap->pm_lock);
+	}
 	pmap_map_ptes(pmap, &pmap2, &ptes, &pdes);
 	if (!pmap_pdes_valid(va, pdes, &pde, &lvl)) {
 		pmap_unmap_ptes(pmap, pmap2);
-		kpreempt_enable();
+		if (pmap != pmap_kernel()) {
+			mutex_exit(&pmap->pm_lock);
+		}
 		return false;
 	}
 
 	KASSERT(lvl == 1);
 	pte = ptes[pl1_i(va)];
 	pmap_unmap_ptes(pmap, pmap2);
-	kpreempt_enable();
+	if (pmap != pmap_kernel()) {
+		mutex_exit(&pmap->pm_lock);
+	}
 
 	if (__predict_true((pte & PTE_P) != 0)) {
 		if (pap != NULL)
-			*pap = (pte & PG_FRAME) | (va & (NBPD_L1 - 1));
+			*pap = (pte & PTE_4KFRAME) | (va & (NBPD_L1 - 1));
 		return true;
 	}
 
@@ -305,7 +309,7 @@ pmap_unmap_recursive_entries(void)
 	 * XXX jym@ : find a way to drain per-CPU caches to. pool_cache_inv
 	 * does not do that.
 	 */
-	pool_cache_invalidate(&pmap_pdp_cache);
+	pool_cache_invalidate(&pmap_cache);
 
 	mutex_enter(&pmaps_lock);
 	LIST_FOREACH(pm, &pmaps, pm_list) {
@@ -327,7 +331,7 @@ pmap_unmap_recursive_entries(void)
 static __inline void
 pmap_kpm_setpte(struct cpu_info *ci, struct pmap *pmap, int index)
 {
-	KASSERT(mutex_owned(pmap->pm_lock));
+	KASSERT(mutex_owned(&pmap->pm_lock));
 	KASSERT(mutex_owned(&ci->ci_kpm_mtx));
 	if (pmap == pmap_kernel()) {
 		KASSERT(index >= PDIR_SLOT_KERN);

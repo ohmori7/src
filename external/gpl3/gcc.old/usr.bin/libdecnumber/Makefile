@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.7 2018/11/11 22:50:13 mrg Exp $
+#	$NetBSD: Makefile,v 1.9 2019/09/26 08:04:12 mrg Exp $
 
 DIST=		${GCCDIST}
 GNUHOSTDIST=	${DIST}
